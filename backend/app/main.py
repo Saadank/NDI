@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
@@ -13,7 +14,7 @@ from app.platform.routers import auth, users, invitations, tenants, products, au
 # Product: Data Sharing
 from app.products.data_sharing.routers import (
     share_requests, approvals, files, notifications,
-    workflows, connections, schemas, glossary, dsa, breaches, dsr,
+    workflows, connections, schemas,
 )
 
 
@@ -35,6 +36,16 @@ app = FastAPI(
 )
 
 
+# CORS — allow frontend to call API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 @app.exception_handler(BaseAppException)
 async def app_exception_handler(request: Request, exc: BaseAppException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
@@ -46,7 +57,7 @@ for r in [auth, users, invitations, tenants, products, audit]:
 
 # Product: Data Sharing — /api/v1/products/data-sharing/...
 for r in [share_requests, approvals, files, notifications,
-          workflows, connections, schemas, glossary, dsa, breaches, dsr]:
+          workflows, connections, schemas]:
     app.include_router(r.router, prefix="/api/v1/products/data-sharing")
 
 # Future products register here — zero changes to Platform Core needed

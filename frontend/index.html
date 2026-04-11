@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Sharing Platform — MVP</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy-900:#0a1628; --navy-800:#111d35; --navy-700:#1a2a4a; --navy-600:#243a5e;
+  --slate-400:#8896ab; --slate-300:#a8b5c8; --slate-200:#c8d1de; --slate-100:#e8ecf2; --slate-50:#f4f6f9;
+  --white:#fff;
+  --emerald-600:#0d7a4f; --emerald-500:#10a66c; --emerald-50:#e8faf0;
+  --amber-600:#b45309; --amber-500:#d97706; --amber-50:#fffbeb;
+  --red-600:#b91c1c; --red-500:#dc2626; --red-400:#f87171; --red-50:#fef2f2;
+  --blue-600:#1d4ed8; --blue-500:#3b82f6; --blue-50:#eff6ff;
+  --radius:6px; --font:'IBM Plex Sans',sans-serif; --mono:'IBM Plex Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--slate-50);color:var(--navy-900);font-size:13px;line-height:1.5}
+
+/* Layout */
+.app{display:flex;height:100vh}
+.sidebar{width:232px;background:var(--navy-900);color:var(--white);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-brand{padding:20px 18px 16px;border-bottom:1px solid var(--navy-700)}
+.sidebar-brand h2{font-size:14px;font-weight:700;letter-spacing:-.02em}
+.sidebar-brand .ar{font-family:'IBM Plex Sans Arabic',sans-serif;font-size:12px;color:var(--slate-400);direction:rtl;margin-top:2px}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px 0}
+.sidebar-nav .section{padding:12px 18px 4px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--slate-400)}
+.sidebar-nav button{width:100%;text-align:left;background:none;border:none;color:var(--slate-300);padding:7px 18px;font-size:12.5px;font-family:var(--font);cursor:pointer;transition:all .12s;display:flex;align-items:center;gap:8px}
+.sidebar-nav button:hover{background:var(--navy-800);color:var(--white)}
+.sidebar-nav button.active{background:var(--navy-700);color:var(--white);font-weight:600}
+.sidebar-nav button .ic{width:16px;text-align:center;opacity:.6;font-size:11px}
+.sidebar-user{padding:12px 18px;border-top:1px solid var(--navy-700);font-size:12px}
+.sidebar-user .name{font-weight:600;color:var(--white)}
+.sidebar-user .role{color:var(--slate-400);font-size:11px}
+.sidebar-user .out{background:none;border:none;color:var(--red-400);font-size:11px;cursor:pointer;margin-top:4px;font-family:var(--font)}
+
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{background:var(--white);border-bottom:1px solid var(--slate-100);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar h1{font-size:16px;font-weight:700;letter-spacing:-.02em}
+.topbar .meta{font-size:11px;color:var(--slate-400)}
+.content{flex:1;overflow-y:auto;padding:20px 24px 40px}
+
+/* Login */
+.login-wrap{display:flex;align-items:center;justify-content:center;height:100vh;width:100vw;background:var(--navy-900);position:relative}
+.login-wrap::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 30% 20%,var(--navy-700) 0%,transparent 50%),radial-gradient(ellipse at 70% 80%,rgba(16,166,108,.08) 0%,transparent 40%)}
+.login-card{position:relative;background:var(--white);border-radius:10px;padding:36px 32px;width:380px;box-shadow:0 24px 80px rgba(0,0,0,.4)}
+.login-card h1{font-size:20px;font-weight:700;letter-spacing:-.03em;margin-bottom:2px}
+.login-card .sub{color:var(--slate-400);font-size:12.5px;margin-bottom:24px}
+.login-card .accts{margin-top:20px;padding-top:16px;border-top:1px solid var(--slate-100);font-size:11px;color:var(--slate-400);line-height:1.6}
+.login-card .accts code{font-family:var(--mono);font-size:10.5px;background:var(--slate-50);padding:1px 5px;border-radius:3px}
+
+/* Forms */
+.fg{margin-bottom:12px}
+.fg label{display:block;font-size:11px;font-weight:600;color:var(--navy-600);margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
+.fg input,.fg select,.fg textarea{width:100%;padding:7px 10px;border:1px solid var(--slate-200);border-radius:var(--radius);font-size:13px;font-family:var(--font);background:var(--white);color:var(--navy-900);transition:border-color .15s}
+.fg input:focus,.fg select:focus,.fg textarea:focus{outline:none;border-color:var(--blue-500);box-shadow:0 0 0 2px rgba(59,130,246,.12)}
+.fg textarea{min-height:64px;resize:vertical}
+.fg input[type=checkbox]{width:auto;margin-right:6px}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
+/* Buttons */
+.btn{padding:7px 14px;border:1px solid transparent;border-radius:var(--radius);font-size:12.5px;font-weight:500;cursor:pointer;font-family:var(--font);transition:all .12s;display:inline-flex;align-items:center;gap:5px}
+.btn-p{background:var(--navy-800);color:var(--white)}.btn-p:hover{background:var(--navy-900)}
+.btn-g{background:var(--emerald-600);color:var(--white)}.btn-g:hover{background:var(--emerald-500)}
+.btn-r{background:var(--red-600);color:var(--white)}.btn-r:hover{background:var(--red-500)}
+.btn-a{background:var(--amber-600);color:var(--white)}.btn-a:hover{background:var(--amber-500)}
+.btn-o{background:transparent;color:var(--navy-600);border:1px solid var(--slate-200)}.btn-o:hover{background:var(--slate-50)}
+.btn-sm{padding:4px 9px;font-size:11.5px}
+.btn-block{width:100%;justify-content:center;padding:9px}
+.bg{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Tables */
+table{width:100%;border-collapse:collapse}
+thead th{text-align:left;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--slate-400);padding:8px 12px;border-bottom:2px solid var(--slate-100)}
+tbody td{padding:9px 12px;border-bottom:1px solid var(--slate-100);font-size:12.5px;vertical-align:middle}
+tbody tr:hover td{background:var(--slate-50)}
+.tw{background:var(--white);border-radius:8px;border:1px solid var(--slate-100);overflow:hidden}
+
+/* Cards */
+.card{background:var(--white);border-radius:8px;border:1px solid var(--slate-100);padding:18px;margin-bottom:14px}
+.card h3{font-size:13.5px;font-weight:700;letter-spacing:-.01em;margin-bottom:12px}
+
+/* Badges */
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:600}
+.badge-draft{background:var(--slate-100);color:var(--navy-600)}
+.badge-submitted{background:var(--blue-50);color:var(--blue-600)}
+.badge-in_review{background:var(--amber-50);color:var(--amber-600)}
+.badge-approved,.badge-completed{background:var(--emerald-50);color:var(--emerald-600)}
+.badge-rejected,.badge-cancelled{background:var(--red-50);color:var(--red-600)}
+.badge-pending{background:var(--amber-50);color:var(--amber-600)}
+.badge-expired{background:var(--slate-100);color:var(--slate-400)}
+.badge-active{background:var(--emerald-50);color:var(--emerald-600)}
+.badge-changes_requested{background:var(--amber-50);color:var(--amber-600)}
+
+/* Portal */
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.pcard{background:var(--white);border:1px solid var(--slate-100);border-radius:10px;padding:22px 20px;position:relative;overflow:hidden}
+.pcard::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--emerald-500)}
+.pcard h3{font-size:15px;font-weight:700;letter-spacing:-.02em}
+.pcard .ar{font-family:'IBM Plex Sans Arabic',sans-serif;font-size:13px;color:var(--slate-400);direction:rtl;margin-top:2px}
+.pcard .desc{font-size:12px;color:var(--slate-400);margin-top:8px;line-height:1.5}
+.pcard .rb{margin-top:10px;display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:600;background:var(--navy-800);color:var(--white)}
+
+/* Detail */
+.dg{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.di .lb{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--slate-400);margin-bottom:1px}
+.di .vl{font-size:13px}
+
+/* Steps */
+.strack{position:relative;padding-left:24px}
+.strack::before{content:'';position:absolute;left:11px;top:0;bottom:0;width:2px;background:var(--slate-100)}
+.si{position:relative;padding:10px 14px;margin-bottom:8px;background:var(--slate-50);border-radius:var(--radius);border:1px solid var(--slate-100)}
+.si::before{content:'';position:absolute;left:-17px;top:14px;width:10px;height:10px;border-radius:50%;background:var(--slate-200);border:2px solid var(--white)}
+.si.step-approved::before{background:var(--emerald-500)}
+.si.step-rejected::before{background:var(--red-500)}
+.si.step-pending::before{background:var(--amber-500)}
+.si.step-changes_requested::before{background:var(--amber-500)}
+.si .sn{font-weight:600;font-size:12.5px}
+.si .sm{font-size:11px;color:var(--slate-400);margin-top:3px}
+.si .sc{margin-top:6px;font-size:12px;color:var(--navy-600);background:var(--white);padding:6px 10px;border-radius:4px;border:1px solid var(--slate-100)}
+
+/* Misc */
+.empty{text-align:center;padding:40px 20px;color:var(--slate-400);font-size:13px}
+.fb{display:flex;justify-content:space-between;align-items:center}
+.mb{margin-bottom:14px}
+.mt{margin-top:10px}
+.mono{font-family:var(--mono);font-size:11px}
+.hidden{display:none!important}
+hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
+.panel{display:none}.panel.active{display:block}
+.toast{position:fixed;top:16px;right:16px;padding:10px 18px;border-radius:var(--radius);font-size:12.5px;font-weight:500;z-index:9999;display:none;box-shadow:0 8px 30px rgba(0,0,0,.15);color:var(--white)}
+.toast.ok{background:var(--emerald-600)}.toast.err{background:var(--red-600)}
+</style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<!-- LOGIN -->
+<div id="login-wrap" class="login-wrap">
+  <div class="login-card">
+    <h1>Data Sharing Platform</h1>
+    <p class="sub">PDPL-Compliant Governed Data Exchange</p>
+    <div class="fg"><label>Email</label><input id="l-email" value="ahmed@acme.local"></div>
+    <div class="fg"><label>Password</label><input id="l-pass" type="password" value="Test123!"></div>
+    <button class="btn btn-p btn-block" onclick="doLogin()">Sign In</button>
+    <div class="accts">
+      <strong>Test accounts</strong> (pw: <code>Test123!</code>)<br>
+      <code>ahmed@acme.local</code> requester &middot;
+      <code>fatima@</code> dpo &middot;
+      <code>omar@</code> data_owner<br>
+      <code>sara@</code> source &middot;
+      <code>khalid@</code> receiver &middot;
+      <code>noura@sda.gov.local</code><br>
+      <code>superadmin@datasharing.local</code> / <code>SuperAdmin123!</code>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="app hidden">
+  <div class="sidebar">
+    <div class="sidebar-brand"><h2>Data Sharing</h2><div class="ar">منصة مشاركة البيانات</div></div>
+    <nav class="sidebar-nav">
+      <div class="section">Main</div>
+      <button data-tab="portal" onclick="go('portal')"><span class="ic">◈</span> Portal</button>
+      <button data-tab="requests" onclick="go('requests')"><span class="ic">⬡</span> Share Requests</button>
+      <button data-tab="create-req" onclick="go('create-req')"><span class="ic">+</span> New Request</button>
+      <div class="section">Workflow</div>
+      <button data-tab="workflows" onclick="go('workflows')"><span class="ic">⟡</span> Templates</button>
+      <div class="section">Data</div>
+      <button data-tab="files" onclick="go('files')"><span class="ic">▤</span> Files</button>
+      <button data-tab="connections" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
+      <div class="section">System</div>
+      <button data-tab="notifications" onclick="go('notifications')"><span class="ic">◎</span> Notifications</button>
+      <button data-tab="audit" onclick="go('audit')"><span class="ic">☰</span> Audit Trail</button>
+    </nav>
+    <div class="sidebar-user">
+      <div class="name" id="u-name">—</div>
+      <div class="role" id="u-role">—</div>
+      <button class="out" onclick="doLogout()">Sign out →</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="topbar"><h1 id="pg-title">Portal</h1><div class="meta" id="pg-meta"></div></div>
+    <div class="content">
+
+      <!-- PORTAL -->
+      <div id="p-portal" class="panel active"><div id="portal-grid" class="pgrid"></div></div>
+
+      <!-- REQUESTS -->
+      <div id="p-requests" class="panel">
+        <div class="fb mb">
+          <select id="req-status" onchange="loadRequests()" style="padding:6px 10px;border:1px solid var(--slate-200);border-radius:var(--radius);font-size:12px;font-family:var(--font)">
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option><option value="submitted">Submitted</option><option value="in_review">In Review</option>
+            <option value="approved">Approved</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option>
+          </select>
+          <button class="btn btn-p btn-sm" onclick="go('create-req')">+ New Request</button>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Number</th><th>Title</th><th>Type</th><th>Classification</th><th>Personal</th><th>Status</th><th>Created</th><th></th></tr></thead>
+          <tbody id="req-tb"></tbody>
+        </table></div>
+        <div id="req-pg" class="mt" style="text-align:right"></div>
+      </div>
+
+      <!-- CREATE REQUEST -->
+      <div id="p-create-req" class="panel">
+        <div class="card">
+          <h3>Create Share Request</h3>
+          <div class="fg"><label>Title</label><input id="cr-title" placeholder="e.g. Employee Records for HR Audit"></div>
+          <div class="fg"><label>Purpose</label><textarea id="cr-purpose" placeholder="Describe the purpose and justification"></textarea></div>
+          <div class="fr">
+            <div class="fg"><label>Sharing Type</label><select id="cr-sharing"><option value="internal">Internal</option><option value="external">External</option></select></div>
+            <div class="fg"><label>Data Classification</label><select id="cr-class"><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="sensitive">Sensitive</option></select></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Legal Basis</label><select id="cr-legal"><option value="">— Select —</option><option value="consent">Consent</option><option value="contract">Contract</option><option value="legal_obligation">Legal Obligation</option><option value="vital_interest">Vital Interest</option><option value="public_interest">Public Interest</option><option value="legitimate_interest">Legitimate Interest</option></select></div>
+            <div class="fg"><label>Personal Data Involved</label><select id="cr-personal"><option value="false">No</option><option value="true">Yes</option></select></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Estimated Data Subjects</label><input id="cr-subjects" type="number" placeholder="e.g. 500"></div>
+            <div class="fg"><label>Receiving Tenant ID</label><input id="cr-recv" type="number" placeholder="For external sharing"></div>
+          </div>
+          <div class="fg"><label>Data Subject Categories (comma-separated)</label><input id="cr-cats" placeholder="e.g. employees, customers"></div>
+          <div class="fg"><label>Source Description</label><textarea id="cr-source" placeholder="Describe the data source"></textarea></div>
+          <div class="fg"><label style="display:inline;text-transform:none;font-size:12.5px;font-weight:500"><input type="checkbox" id="cr-dpia"> DPIA Confirmed (required for Sensitive)</label></div>
+          <div class="bg" style="margin-top:6px">
+            <button class="btn btn-p" onclick="createReq()">Save as Draft</button>
+            <button class="btn btn-o" onclick="go('requests')">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- REQUEST DETAIL -->
+      <div id="p-req-detail" class="panel"><div id="req-detail"></div></div>
+
+      <!-- WORKFLOWS -->
+      <div id="p-workflows" class="panel">
+        <div class="fb mb">
+          <h3 style="font-size:13.5px;font-weight:700">Workflow Templates</h3>
+          <button class="btn btn-p btn-sm" onclick="toggleEl('wf-form')">+ New Template</button>
+        </div>
+        <div id="wf-form" class="card hidden">
+          <h3>Create Template</h3>
+          <div class="fr3">
+            <div class="fg"><label>Name</label><input id="wf-name" placeholder="e.g. Full PDPL Review"></div>
+            <div class="fg"><label>Sharing Type</label><select id="wf-sharing"><option value="">Any</option><option value="internal">Internal</option><option value="external">External</option></select></div>
+            <div class="fg"><label>Data Classification</label><select id="wf-class"><option value="">Any</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="sensitive">Sensitive</option></select></div>
+          </div>
+          <div id="wf-steps" class="mb"></div>
+          <button class="btn btn-o btn-sm" onclick="addWfStep()">+ Add Step</button>
+          <div class="bg" style="margin-top:6px"><button class="btn btn-p" onclick="createWf()">Create Template</button></div>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Sharing Type</th><th>Classification</th><th>Active</th><th>Created</th></tr></thead>
+          <tbody id="wf-tb"></tbody>
+        </table></div>
+      </div>
+
+      <!-- FILES -->
+      <div id="p-files" class="panel">
+        <div class="card">
+          <h3>Upload File to Request</h3>
+          <div class="fr">
+            <div class="fg"><label>Request ID</label><input id="f-reqid" placeholder="UUID of share request"></div>
+            <div class="fg"><label>File</label><input type="file" id="f-input"></div>
+          </div>
+          <button class="btn btn-p btn-sm" onclick="uploadFile()">Initiate & Upload</button>
+        </div>
+        <div class="card">
+          <h3>Download / Delete File</h3>
+          <div class="fr">
+            <div class="fg"><label>File ID</label><input id="f-fileid" placeholder="UUID of file"></div>
+            <div class="fg" style="display:flex;align-items:flex-end;gap:6px">
+              <button class="btn btn-p btn-sm" onclick="getDownloadUrl()">Get Download URL</button>
+              <button class="btn btn-r btn-sm" onclick="deleteFile()">Delete</button>
+            </div>
+          </div>
+          <div id="f-result" class="mt mono" style="word-break:break-all"></div>
+        </div>
+      </div>
+
+      <!-- CONNECTIONS -->
+      <div id="p-connections" class="panel">
+        <div class="fb mb">
+          <h3 style="font-size:13.5px;font-weight:700">Database Connections</h3>
+          <button class="btn btn-p btn-sm" onclick="toggleEl('conn-form')">+ New Connection</button>
+        </div>
+        <div id="conn-form" class="card hidden">
+          <h3>Create Connection</h3>
+          <div class="fr3">
+            <div class="fg"><label>DB Type</label><select id="c-type"><option>postgresql</option><option>mysql</option><option>mariadb</option><option>mssql</option><option>oracle</option><option>clickhouse</option></select></div>
+            <div class="fg"><label>Host</label><input id="c-host" placeholder="e.g. db.internal"></div>
+            <div class="fg"><label>Port</label><input id="c-port" type="number" value="5432"></div>
+          </div>
+          <div class="fr3">
+            <div class="fg"><label>Database</label><input id="c-db" placeholder="mydb"></div>
+            <div class="fg"><label>Username</label><input id="c-user" placeholder="readonly_user"></div>
+            <div class="fg"><label>Password</label><input id="c-pass" type="password"></div>
+          </div>
+          <div class="fg"><label>Description</label><input id="c-desc" placeholder="Optional"></div>
+          <div class="bg" style="margin-top:6px"><button class="btn btn-p" onclick="createConn()">Create</button></div>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Type</th><th>Host</th><th>Database</th><th>Status</th><th>Created</th><th></th></tr></thead>
+          <tbody id="conn-tb"></tbody>
+        </table></div>
+      </div>
+
+      <!-- NOTIFICATIONS -->
+      <div id="p-notifications" class="panel">
+        <div class="fb mb">
+          <label style="font-size:12px"><input type="checkbox" id="n-unread" onchange="loadNotifications()"> Unread only</label>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Type</th><th>Title</th><th>Body</th><th>Read</th><th>Created</th><th></th></tr></thead>
+          <tbody id="n-tb"></tbody>
+        </table></div>
+      </div>
+
+      <!-- AUDIT -->
+      <div id="p-audit" class="panel">
+        <div class="fb mb">
+          <select id="au-action" onchange="loadAudit()" style="padding:5px 9px;border:1px solid var(--slate-200);border-radius:var(--radius);font-size:11.5px;font-family:var(--font)">
+            <option value="">All actions</option>
+            <option value="request.created">request.created</option>
+            <option value="request.submitted">request.submitted</option>
+            <option value="request.cancelled">request.cancelled</option>
+            <option value="step.approved">step.approved</option>
+            <option value="step.rejected">step.rejected</option>
+            <option value="step.changes_requested">step.changes_requested</option>
+            <option value="file.upload_initiated">file.upload_initiated</option>
+            <option value="file.uploaded">file.uploaded</option>
+            <option value="file.downloaded">file.downloaded</option>
+            <option value="file.deleted">file.deleted</option>
+          </select>
+          <div class="meta" id="au-meta"></div>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Action</th><th>Resource</th><th>Resource ID</th><th>Actor</th><th>Timestamp</th></tr></thead>
+          <tbody id="au-tb"></tbody>
+        </table></div>
+        <div id="au-pg" class="mt" style="text-align:right"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const API='http://localhost:8000', PF=`${API}/api/v1/platform`, DS=`${API}/api/v1/products/data-sharing`;
+let token=localStorage.getItem('ds_token'), refreshToken=localStorage.getItem('ds_refresh'), user=null;
+
+// Util
+const hdr=()=>({'Authorization':`Bearer ${token}`,'Content-Type':'application/json'});
+async function api(m,url,body){
+  const o={method:m,headers:hdr()};
+  if(body&&!(body instanceof FormData))o.body=JSON.stringify(body);
+  if(body instanceof FormData){o.body=body;o.headers={'Authorization':`Bearer ${token}`};}
+  const r=await fetch(url,o);
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||r.statusText);}
+  const t=await r.text();return t?JSON.parse(t):null;
+}
+function toast(msg,ok=true){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${ok?'ok':'err'}`;t.style.display='block';setTimeout(()=>t.style.display='none',3500)}
+function badge(s){return `<span class="badge badge-${s||'draft'}">${(s||'—').replace(/_/g,' ')}</span>`}
+function fmtDt(d){return d?new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})+' '+new Date(d).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}):'—'}
+function fmtD(d){return d?new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—'}
+function trunc(s,n=60){return s&&s.length>n?s.slice(0,n)+'…':(s||'—')}
+function toggleEl(id){document.getElementById(id).classList.toggle('hidden')}
+
+// Auth
+async function doLogin(){
+  try{
+    const r=await fetch(`${PF}/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('l-email').value,password:document.getElementById('l-pass').value})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'Login failed')}
+    const d=await r.json();
+    token=d.access_token;refreshToken=d.refresh_token;
+    localStorage.setItem('ds_token',token);localStorage.setItem('ds_refresh',refreshToken);
+    user=d.user;enterApp();
+  }catch(e){toast(e.message,false)}
+}
+function doLogout(){localStorage.removeItem('ds_token');localStorage.removeItem('ds_refresh');location.reload()}
+function enterApp(){
+  document.getElementById('login-wrap').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('u-name').textContent=`${user.first_name||''} ${user.last_name||''}`.trim()||user.email;
+  document.getElementById('u-role').textContent=user.platform_role;
+  go('portal');
+}
+
+// Nav
+function go(tab){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
+  const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
+  const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail'};
+  document.getElementById('pg-title').textContent=titles[tab]||tab;
+  document.getElementById('pg-meta').textContent='';
+  const load={portal:loadPortal,requests:loadRequests,workflows:loadWorkflows,connections:loadConnections,notifications:loadNotifications,audit:loadAudit};
+  if(load[tab])load[tab]().catch(e=>console.error(e));
+}
+
+// Portal
+async function loadPortal(){
+  const products=await api('GET',`${PF}/products/me`);
+  document.getElementById('portal-grid').innerHTML=products.map(p=>`
+    <div class="pcard"><h3>${p.name}</h3><div class="ar">${p.name_ar||''}</div>
+    <div class="desc">${trunc(p.description,120)}</div>
+    ${p.user_role?`<span class="rb">${p.user_role}</span>`:'<span style="font-size:11px;color:var(--slate-400);margin-top:10px;display:inline-block">No role assigned</span>'}
+    </div>`).join('')||'<div class="empty">No products enabled</div>';
+}
+
+// Requests
+async function loadRequests(page=1){
+  const s=document.getElementById('req-status').value;
+  const d=await api('GET',`${DS}/requests/?page=${page}&limit=15${s?'&status='+s:''}`);
+  document.getElementById('req-tb').innerHTML=d.data.map(r=>`<tr>
+    <td class="mono">${r.request_number}</td><td>${trunc(r.title,40)}</td><td>${r.sharing_type}</td>
+    <td>${r.data_classification}</td><td>${r.personal_data_involved?'<strong>Yes</strong>':'No'}</td>
+    <td>${badge(r.status)}</td><td>${fmtD(r.created_at)}</td>
+    <td><button class="btn btn-o btn-sm" onclick="viewReq('${r.id}')">View</button></td>
+  </tr>`).join('')||'<tr><td colspan="8" class="empty">No requests</td></tr>';
+  const pg=d.pagination;
+  document.getElementById('req-pg').innerHTML=pg.total_pages>1?`
+    ${pg.previous_page?`<button class="btn btn-o btn-sm" onclick="loadRequests(${pg.previous_page})">← Prev</button>`:''}
+    <span style="font-size:11px;color:var(--slate-400);margin:0 8px">Page ${pg.page}/${pg.total_pages}</span>
+    ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadRequests(${pg.next_page})">Next →</button>`:''}` :'';
+}
+async function createReq(){
+  const cats=document.getElementById('cr-cats').value;
+  try{
+    const r=await api('POST',`${DS}/requests/`,{
+      title:document.getElementById('cr-title').value,
+      purpose:document.getElementById('cr-purpose').value,
+      sharing_type:document.getElementById('cr-sharing').value,
+      data_classification:document.getElementById('cr-class').value,
+      legal_basis:document.getElementById('cr-legal').value,
+      personal_data_involved:document.getElementById('cr-personal').value==='true',
+      estimated_data_subjects:parseInt(document.getElementById('cr-subjects').value)||null,
+      data_subject_categories:cats?cats.split(',').map(s=>s.trim()):null,
+      source_description:document.getElementById('cr-source').value||null,
+      receiving_tenant_id:parseInt(document.getElementById('cr-recv').value)||null,
+      dpia_confirmed:document.getElementById('cr-dpia').checked,
+    });
+    toast(`Created ${r.request_number}`);go('requests');
+  }catch(e){toast(e.message,false)}
+}
+async function viewReq(id){
+  const r=await api('GET',`${DS}/requests/${id}`);
+  let steps=[];try{steps=await api('GET',`${DS}/workflows/requests/${id}/steps`)}catch(e){}
+  document.getElementById('req-detail').innerHTML=`
+    <div class="fb mb"><span class="mono" style="font-size:14px;font-weight:700">${r.request_number}</span>${badge(r.status)}</div>
+    <div class="card"><h3>${r.title}</h3>
+      <div class="dg">
+        <div class="di"><div class="lb">Sharing Type</div><div class="vl">${r.sharing_type}</div></div>
+        <div class="di"><div class="lb">Classification</div><div class="vl">${r.data_classification}</div></div>
+        <div class="di"><div class="lb">Legal Basis</div><div class="vl">${r.legal_basis||'—'}</div></div>
+        <div class="di"><div class="lb">Personal Data</div><div class="vl">${r.personal_data_involved?'<strong>Yes</strong>':'No'}</div></div>
+        <div class="di"><div class="lb">Data Subjects</div><div class="vl">${r.estimated_data_subjects||'—'}</div></div>
+        <div class="di"><div class="lb">DPIA Confirmed</div><div class="vl">${r.dpia_confirmed?'Yes':'No'}</div></div>
+        <div class="di"><div class="lb">Created</div><div class="vl">${fmtDt(r.created_at)}</div></div>
+        <div class="di"><div class="lb">Updated</div><div class="vl">${fmtDt(r.updated_at)}</div></div>
+        ${r.data_subject_categories?`<div class="di"><div class="lb">Categories</div><div class="vl">${r.data_subject_categories.join(', ')}</div></div>`:''}
+        ${r.receiving_tenant_id?`<div class="di"><div class="lb">Receiving Tenant</div><div class="vl">${r.receiving_tenant_id}</div></div>`:''}
+        ${r.expiry_at?`<div class="di"><div class="lb">Expires</div><div class="vl">${fmtDt(r.expiry_at)}</div></div>`:''}
+      </div>
+      <hr>
+      <div class="di"><div class="lb">Purpose</div><div class="vl">${r.purpose}</div></div>
+      ${r.source_description?`<div class="di" style="margin-top:6px"><div class="lb">Source</div><div class="vl">${r.source_description}</div></div>`:''}
+      ${r.conditions?`<div class="di" style="margin-top:6px"><div class="lb">Conditions</div><div class="vl">${r.conditions}</div></div>`:''}
+    </div>
+    <div class="bg mb">
+      ${r.status==='draft'?`<button class="btn btn-g" onclick="submitReq('${r.id}')">Submit for Review</button>`:''}
+      ${['draft','submitted','in_review'].includes(r.status)?`<button class="btn btn-r" onclick="cancelReq('${r.id}')">Cancel</button>`:''}
+      <button class="btn btn-o" onclick="go('requests')">← Back</button>
+    </div>
+    <div class="card"><h3>Workflow Steps</h3>
+      ${steps.length?`<div class="strack">${steps.map((s,i)=>`
+        <div class="si step-${s.status}">
+          <div class="fb"><span class="sn">${i+1}. ${s.name||s.step_type} ${badge(s.status)}</span></div>
+          <div class="sm">Role: ${s.assignee_role||'—'} · Type: ${s.step_type} · SLA: ${fmtDt(s.sla_deadline)}${s.completed_at?' · Done: '+fmtDt(s.completed_at):''}${s.escalated_at?' · <span style="color:var(--red-500)">Escalated</span>':''}</div>
+          ${s.comment?`<div class="sc">${s.comment}</div>`:''}
+          ${s.status==='pending'?`<div class="bg" style="margin-top:6px">
+            <button class="btn btn-g btn-sm" onclick="approveStep('${r.id}','${s.id}')">Approve</button>
+            <button class="btn btn-r btn-sm" onclick="rejectStep('${r.id}','${s.id}')">Reject</button>
+            <button class="btn btn-a btn-sm" onclick="reqChanges('${r.id}','${s.id}')">Request Changes</button>
+          </div>`:''}
+        </div>`).join('')}</div>`:'<div class="empty">No workflow steps — submit to generate</div>'}
+    </div>
+    <div class="card"><h3>Request ID</h3><div class="mono" style="user-select:all">${r.id}</div></div>`;
+  go('req-detail');
+}
+async function submitReq(id){try{await api('POST',`${DS}/requests/${id}/submit`);toast('Submitted');viewReq(id)}catch(e){toast(e.message,false)}}
+async function cancelReq(id){try{await api('POST',`${DS}/requests/${id}/cancel`);toast('Cancelled');viewReq(id)}catch(e){toast(e.message,false)}}
+async function approveStep(rid,sid){const c=prompt('Comment (optional):');try{await api('POST',`${DS}/requests/${rid}/steps/${sid}/approve`,{comment:c||null});toast('Approved');viewReq(rid)}catch(e){toast(e.message,false)}}
+async function rejectStep(rid,sid){const c=prompt('Rejection reason (required):');if(!c)return toast('Comment required',false);try{await api('POST',`${DS}/requests/${rid}/steps/${sid}/reject`,{comment:c});toast('Rejected');viewReq(rid)}catch(e){toast(e.message,false)}}
+async function reqChanges(rid,sid){const c=prompt('Changes needed (required):');if(!c)return toast('Comment required',false);try{await api('POST',`${DS}/requests/${rid}/steps/${sid}/request-changes`,{comment:c});toast('Changes requested');viewReq(rid)}catch(e){toast(e.message,false)}}
+
+// Workflows
+let wfN=0;
+function addWfStep(){wfN++;document.getElementById('wf-steps').innerHTML+=`
+  <div class="fr" style="margin-top:6px;padding:8px;background:var(--slate-50);border-radius:var(--radius)">
+    <div class="fg"><label>Step ${wfN} Type</label><select id="ws-t-${wfN}"><option>approval</option><option>review</option><option>upload</option><option>notification</option><option>acknowledgement</option></select></div>
+    <div class="fg"><label>Name</label><input id="ws-n-${wfN}" placeholder="Step name"></div>
+    <div class="fg"><label>Assignee Role</label><select id="ws-r-${wfN}"><option value="">—</option><option>dpo</option><option>data_owner</option><option>source</option><option>requester</option><option>receiver</option></select></div>
+    <div class="fg"><label>SLA (days)</label><input id="ws-s-${wfN}" type="number" value="3"></div>
+  </div>`}
+async function loadWorkflows(){const d=await api('GET',`${DS}/workflows/templates`);document.getElementById('wf-tb').innerHTML=d.map(w=>`<tr>
+  <td>${w.name}</td><td>${w.sharing_type||'Any'}</td><td>${w.data_classification||'Any'}</td><td>${badge(w.is_active?'active':'draft')}</td><td>${fmtD(w.created_at)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No templates</td></tr>'}
+async function createWf(){
+  const steps=[];for(let i=1;i<=wfN;i++)steps.push({step_type:document.getElementById(`ws-t-${i}`).value,name:document.getElementById(`ws-n-${i}`).value,assignee_role:document.getElementById(`ws-r-${i}`).value||null,sla_days:parseInt(document.getElementById(`ws-s-${i}`).value)||3,execution_mode:'sequential',condition_expr:null});
+  try{await api('POST',`${DS}/workflows/templates`,{name:document.getElementById('wf-name').value,sharing_type:document.getElementById('wf-sharing').value||null,data_classification:document.getElementById('wf-class').value||null,steps});toast('Template created');wfN=0;document.getElementById('wf-steps').innerHTML='';toggleEl('wf-form');loadWorkflows()}catch(e){toast(e.message,false)}
+}
+
+// Files
+async function uploadFile(){
+  const reqId=document.getElementById('f-reqid').value,file=document.getElementById('f-input').files[0];
+  if(!reqId||!file)return toast('Request ID and file required',false);
+  try{
+    const hashBuf=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    const hash=Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    const init=await api('POST',`${DS}/files/initiate`,{request_id:reqId,filename:file.name,size:file.size,mime_type:file.type||null,sha256_hash:hash});
+    toast(`Initiated: ${init.id}`);
+    const fd=new FormData();fd.append('file',file);
+    const r=await fetch(`${DS}/files/${init.id}/upload?sha256_hash=${hash}`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`},body:fd});
+    if(r.ok)toast('Uploaded!');else{const e=await r.json().catch(()=>({}));toast(e.detail||'Failed',false)}
+  }catch(e){toast(e.message,false)}
+}
+async function getDownloadUrl(){try{const d=await api('GET',`${DS}/files/${document.getElementById('f-fileid').value}/download-url`);document.getElementById('f-result').innerHTML=`<a href="${d.download_url}" target="_blank" style="color:var(--blue-600)">${d.download_url}</a>`}catch(e){toast(e.message,false)}}
+async function deleteFile(){try{await api('DELETE',`${DS}/files/${document.getElementById('f-fileid').value}?reason=manual`);toast('Deleted')}catch(e){toast(e.message,false)}}
+
+// Connections
+async function loadConnections(){const d=await api('GET',`${DS}/connections/`);document.getElementById('conn-tb').innerHTML=d.map(c=>`<tr>
+  <td class="mono">${c.db_type}</td><td>${c.host}:${c.port}</td><td>${c.database||'—'}</td><td>${badge(c.status)}</td><td>${fmtD(c.created_at)}</td>
+  <td class="bg"><button class="btn btn-o btn-sm" onclick="testConn('${c.id}')">Test</button><button class="btn btn-r btn-sm" onclick="delConn('${c.id}')">Del</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">No connections</td></tr>'}
+async function createConn(){try{await api('POST',`${DS}/connections/`,{db_type:document.getElementById('c-type').value,host:document.getElementById('c-host').value,port:parseInt(document.getElementById('c-port').value),database:document.getElementById('c-db').value||null,username:document.getElementById('c-user').value,password:document.getElementById('c-pass').value,description:document.getElementById('c-desc').value||null});toast('Created');toggleEl('conn-form');loadConnections()}catch(e){toast(e.message,false)}}
+async function testConn(id){try{const r=await api('POST',`${DS}/connections/${id}/test`);toast(r.success?'Connection OK':r.error,r.success)}catch(e){toast(e.message,false)}}
+async function delConn(id){await api('DELETE',`${DS}/connections/${id}`);toast('Deleted');loadConnections()}
+
+// Notifications
+async function loadNotifications(){const d=await api('GET',`${DS}/notifications/?unread_only=${document.getElementById('n-unread').checked}`);document.getElementById('n-tb').innerHTML=d.map(n=>`<tr>
+  <td class="mono">${n.type}</td><td>${n.title}</td><td>${trunc(n.body,50)}</td><td>${n.is_read?'Yes':'<strong>No</strong>'}</td><td>${fmtDt(n.created_at)}</td>
+  <td>${!n.is_read?`<button class="btn btn-o btn-sm" onclick="markRead('${n.id}')">Mark Read</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No notifications</td></tr>'}
+async function markRead(id){await api('POST',`${DS}/notifications/${id}/read`);loadNotifications()}
+
+// Audit
+async function loadAudit(page=1){
+  const action=document.getElementById('au-action').value;
+  const d=await api('GET',`${PF}/audit/?page=${page}&limit=20${action?'&action_type='+action:''}`);
+  document.getElementById('au-tb').innerHTML=d.data.map(e=>`<tr>
+    <td class="mono" style="font-size:11px">${e.action_type}</td><td>${e.resource_type}</td>
+    <td class="mono" style="font-size:10px">${(e.resource_id||'—').slice(0,12)}</td><td>${e.actor_id||'—'}</td><td>${fmtDt(e.created_at)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No audit events</td></tr>';
+  const pg=d.pagination;
+  document.getElementById('au-meta').textContent=`Page ${pg.page}/${pg.total_pages||1}`;
+  document.getElementById('au-pg').innerHTML=pg.total_pages>1?`${pg.previous_page?`<button class="btn btn-o btn-sm" onclick="loadAudit(${pg.previous_page})">← Prev</button>`:''} ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadAudit(${pg.next_page})">Next →</button>`:''}` :'';
+}
+
+// Init
+if(token){
+  fetch(`${PF}/users/me`,{headers:{'Authorization':`Bearer ${token}`}})
+    .then(r=>{if(!r.ok)throw new Error();return r.json()})
+    .then(u=>{user={id:u.user_id,email:'',first_name:'',last_name:'',tenant_id:u.tenant_id,platform_role:u.platform_role};enterApp()})
+    .catch(()=>{localStorage.removeItem('ds_token');token=null});
+}
+</script>
+</body>
+</html>

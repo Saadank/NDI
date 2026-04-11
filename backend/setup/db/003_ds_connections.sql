@@ -1,5 +1,5 @@
 -- 003_ds_connections.sql
--- Data Sharing: DB connections, schemas, glossary
+-- Data Sharing: DB connections, schemas
 
 CREATE TABLE t_connections (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,17 +30,3 @@ CREATE TABLE t_schemas (
 );
 
 CREATE INDEX idx_schemas_connection ON t_schemas(connection_id);
-
-CREATE TABLE t_glossary_entries (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id INTEGER NOT NULL REFERENCES t_tenants(id),
-    connection_id UUID REFERENCES t_connections(id),
-    term VARCHAR(500) NOT NULL,
-    definition TEXT,
-    category VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by INTEGER NOT NULL REFERENCES t_users(id)
-);
-
-CREATE INDEX idx_glossary_tenant ON t_glossary_entries(tenant_id);
