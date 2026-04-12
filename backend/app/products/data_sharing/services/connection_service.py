@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from app.products.data_sharing.permissions import can_manage_connections, require
 from app.products.data_sharing.repositories.connection_repository import ConnectionRepository
 from app.structures.auth_user import AuthUser
 
@@ -13,6 +14,7 @@ class ConnectionService:
         self.repo = ConnectionRepository()
 
     async def create_connection(self, data: dict, auth_user: AuthUser) -> dict:
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
         return await self.repo.create(
             tenant_id=auth_user.tenant_id,
             db_type=data["db_type"],
@@ -26,15 +28,19 @@ class ConnectionService:
         )
 
     async def list_connections(self, auth_user: AuthUser) -> list[dict]:
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
         return await self.repo.find_by_tenant(auth_user.tenant_id)
 
     async def get_connection(self, connection_id: UUID, auth_user: AuthUser) -> dict:
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
         return await self.repo.find_by_id(connection_id, auth_user.tenant_id)
 
     async def delete_connection(self, connection_id: UUID, auth_user: AuthUser) -> None:
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
         await self.repo.soft_delete(connection_id)
 
     async def test_connection(self, connection_id: UUID, auth_user: AuthUser) -> dict:
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
         conn = await self.repo.find_by_id(connection_id, auth_user.tenant_id)
         # Basic connectivity test using DatabasesOperations pattern
         try:

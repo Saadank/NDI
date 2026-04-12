@@ -58,30 +58,49 @@ async def get_current_user(
 
     from app.platform.enums.platform_role import PlatformRole
 
-    platform_role = PlatformRole.ORG_ADMIN
-    if PlatformRole.PLATFORM_ADMIN.value in realm_roles:
-        platform_role = PlatformRole.PLATFORM_ADMIN
-
     # Try to get user_id and tenant_id from JWT claims first
     user_id = payload.get("user_id")
     tenant_id = payload.get("tenant_id")
 
-    # If not in JWT, look up from database
-    if not user_id or not tenant_id:
-        from app.platform.repositories.user_repository import UserRepository
-        user_repo = UserRepository()
-        db_user = await user_repo.find_by_keycloak_id(keycloak_id)
-        if db_user:
-            user_id = db_user["id"]
-            tenant_id = db_user["tenant_id"]
-        else:
-            raise UnauthorizedException("User not found in platform database")
+    # Look up from database to get accurate platform_role
+    from app.platform.repositories.user_repository import UserRepository
+    user_repo = UserRepository()
+    db_user = await user_repo.find_by_keycloak_id(keycloak_id)
+    if db_user:
+        user_id = user_id or db_user["id"]
+        tenant_id = tenant_id or db_user["tenant_id"]
+    elif not user_id or not tenant_id:
+        raise UnauthorizedException("User not found in platform database")
+
+    # Resolve platform_role: check DB first (source of truth), fallback to JWT
+    if db_user and db_user.get("platform_role"):
+        try:
+            platform_role = PlatformRole(db_user["platform_role"])
+        except ValueError:
+            platform_role = PlatformRole.USER
+    elif PlatformRole.PLATFORM_ADMIN.value in realm_roles:
+        platform_role = PlatformRole.PLATFORM_ADMIN
+    elif PlatformRole.ORG_ADMIN.value in realm_roles:
+        platform_role = PlatformRole.ORG_ADMIN
+    else:
+        platform_role = PlatformRole.USER
+
+    # Resolve product role from database
+    product_role = None
+    if user_id and tenant_id:
+        from app.platform.repositories.product_repository import ProductRepository
+        product_repo = ProductRepository()
+        product = await product_repo.find_product_by_slug("data_sharing")
+        if product:
+            role_record = await product_repo.find_user_product_role(user_id, product["id"])
+            if role_record:
+                product_role = role_record["role"]
 
     return AuthUser(
         user_id=user_id,
         keycloak_id=keycloak_id,
         tenant_id=tenant_id,
         platform_role=platform_role,
-        product_role=None,
+        product_role=product_role,
         current_product=None,
     )

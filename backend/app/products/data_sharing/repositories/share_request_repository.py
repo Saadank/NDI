@@ -77,6 +77,92 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
             tuple(args),
         )
 
+    # --- Requester: own requests only ---
+
+    async def find_by_requester(self, tenant_id: int, requester_id: int, status: str | None,
+                                page: int, limit: int) -> list[dict]:
+        conditions = ["tenant_id = $1", "requester_id = $2", "deleted_at IS NULL"]
+        args: list = [tenant_id, requester_id]
+        idx = 3
+        if status:
+            conditions.append(f"status = ${idx}")
+            args.append(status)
+            idx += 1
+        where = " AND ".join(conditions)
+        offset = (page - 1) * limit
+        args.extend([limit, offset])
+        return await self._fetch_all(
+            f"SELECT * FROM t_share_requests WHERE {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            tuple(args),
+        )
+
+    async def count_by_requester(self, tenant_id: int, requester_id: int, status: str | None) -> int:
+        conditions = ["tenant_id = $1", "requester_id = $2", "deleted_at IS NULL"]
+        args: list = [tenant_id, requester_id]
+        if status:
+            conditions.append("status = $3")
+            args.append(status)
+        where = " AND ".join(conditions)
+        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests WHERE {where}", tuple(args))
+
+    # --- Receiver: requests sent to their tenant ---
+
+    async def find_by_receiving_tenant(self, receiving_tenant_id: int, status: str | None,
+                                       page: int, limit: int) -> list[dict]:
+        conditions = ["receiving_tenant_id = $1", "deleted_at IS NULL"]
+        args: list = [receiving_tenant_id]
+        idx = 2
+        if status:
+            conditions.append(f"status = ${idx}")
+            args.append(status)
+            idx += 1
+        where = " AND ".join(conditions)
+        offset = (page - 1) * limit
+        args.extend([limit, offset])
+        return await self._fetch_all(
+            f"SELECT * FROM t_share_requests WHERE {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            tuple(args),
+        )
+
+    async def count_by_receiving_tenant(self, receiving_tenant_id: int, status: str | None) -> int:
+        conditions = ["receiving_tenant_id = $1", "deleted_at IS NULL"]
+        args: list = [receiving_tenant_id]
+        if status:
+            conditions.append("status = $2")
+            args.append(status)
+        where = " AND ".join(conditions)
+        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests WHERE {where}", tuple(args))
+
+    # --- Data Owner: requests with workflow steps assigned to their role ---
+
+    async def find_assigned_to_role(self, tenant_id: int, role: str, status: str | None,
+                                    page: int, limit: int) -> list[dict]:
+        conditions = ["r.tenant_id = $1", "r.deleted_at IS NULL",
+                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2)"]
+        args: list = [tenant_id, role]
+        idx = 3
+        if status:
+            conditions.append(f"r.status = ${idx}")
+            args.append(status)
+            idx += 1
+        where = " AND ".join(conditions)
+        offset = (page - 1) * limit
+        args.extend([limit, offset])
+        return await self._fetch_all(
+            f"SELECT r.* FROM t_share_requests r WHERE {where} ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            tuple(args),
+        )
+
+    async def count_assigned_to_role(self, tenant_id: int, role: str, status: str | None) -> int:
+        conditions = ["r.tenant_id = $1", "r.deleted_at IS NULL",
+                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2)"]
+        args: list = [tenant_id, role]
+        if status:
+            conditions.append("r.status = $3")
+            args.append(status)
+        where = " AND ".join(conditions)
+        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests r WHERE {where}", tuple(args))
+
     async def next_request_number(self, tenant_id: int) -> str:
         from datetime import datetime
         year = datetime.utcnow().year

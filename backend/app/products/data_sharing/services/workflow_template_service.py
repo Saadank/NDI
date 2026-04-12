@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from app.products.data_sharing.permissions import can_manage_workflows, require
 from app.products.data_sharing.repositories.workflow_repository import WorkflowRepository
 from app.structures.auth_user import AuthUser
 
@@ -14,6 +15,7 @@ class WorkflowTemplateService:
 
     async def create_template(self, tenant_id: int, name: str, sharing_type: str | None,
                               data_classification: str | None, steps: list[dict], auth_user: AuthUser) -> dict:
+        require(can_manage_workflows(auth_user), "You do not have permission to manage workflows")
         template = await self.repo.create_template(tenant_id, name, sharing_type, data_classification, auth_user.user_id)
         for i, step_data in enumerate(steps):
             await self.repo.create_template_step(
@@ -33,7 +35,9 @@ class WorkflowTemplateService:
         steps = await self.repo.find_template_steps(template_id)
         return {**template, "steps": steps}
 
-    async def list_templates(self, tenant_id: int) -> list[dict]:
+    async def list_templates(self, tenant_id: int, auth_user: AuthUser = None) -> list[dict]:
+        if auth_user:
+            require(can_manage_workflows(auth_user), "You do not have permission to manage workflows")
         return await self.repo._fetch_all(
             "SELECT * FROM t_workflow_templates WHERE tenant_id = $1 AND is_active = TRUE ORDER BY created_at DESC",
             (tenant_id,),

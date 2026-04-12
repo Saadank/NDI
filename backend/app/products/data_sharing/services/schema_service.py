@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from app.products.data_sharing.permissions import can_manage_schemas, require
 from app.structures.postgresql_async_repository import PostgresqlAsyncRepository
 from app.structures.auth_user import AuthUser
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 class SchemaService(PostgresqlAsyncRepository):
 
     async def get_schema(self, connection_id: UUID, auth_user: AuthUser) -> dict | None:
+        require(can_manage_schemas(auth_user), "Only admins can manage schemas")
         return await self._fetch_row_optional(
             "SELECT * FROM t_schemas WHERE connection_id = $1 AND tenant_id = $2",
             (connection_id, auth_user.tenant_id),

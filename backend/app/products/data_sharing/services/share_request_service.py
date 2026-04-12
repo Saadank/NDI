@@ -2,6 +2,12 @@ import logging
 from uuid import UUID
 
 from app.platform.services.audit_service import AuditService
+from app.products.data_sharing.enums.sharing_role import SharingRole
+from app.products.data_sharing.permissions import (
+    can_cancel_request, can_create_request, can_see_all_requests,
+    can_see_assigned_requests, can_see_own_requests_only, can_see_received_requests,
+    can_submit_request, can_view_request, require,
+)
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
 from app.products.data_sharing.services.workflow_engine import WorkflowEngine
 from app.structures.auth_user import AuthUser
@@ -19,6 +25,7 @@ class ShareRequestService:
         self.audit = AuditService()
 
     async def create_draft(self, data: dict, auth_user: AuthUser) -> dict:
+        require(can_create_request(auth_user), "Your role cannot create requests")
         tenant_id = auth_user.tenant_id
         request_number = await self.repo.next_request_number(tenant_id)
 
@@ -50,6 +57,7 @@ class ShareRequestService:
     async def submit_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
         tenant_id = auth_user.tenant_id
         request = await self.repo.find_by_id(request_id, tenant_id)
+        require(can_submit_request(auth_user, request), "You can only submit your own requests")
 
         if request["status"] != "draft":
             raise ValidationException("Only draft requests can be submitted")
@@ -80,17 +88,34 @@ class ShareRequestService:
         return updated
 
     async def get_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
-        return await self.repo.find_by_id(request_id, auth_user.tenant_id)
+        request = await self.repo.find_by_id(request_id, auth_user.tenant_id)
+        require(can_view_request(auth_user, request), "You do not have access to this request")
+        return request
 
     async def list_requests(self, auth_user: AuthUser, status: str | None = None, page: int = 1, limit: int = 20) -> dict:
         tenant_id = auth_user.tenant_id
-        requests = await self.repo.find_by_tenant(tenant_id, status, page, limit)
-        total = await self.repo.count_by_tenant(tenant_id, status)
+
+        if can_see_all_requests(auth_user):
+            requests = await self.repo.find_by_tenant(tenant_id, status, page, limit)
+            total = await self.repo.count_by_tenant(tenant_id, status)
+        elif can_see_assigned_requests(auth_user):
+            requests = await self.repo.find_assigned_to_role(tenant_id, SharingRole.DATA_OWNER, status, page, limit)
+            total = await self.repo.count_assigned_to_role(tenant_id, SharingRole.DATA_OWNER, status)
+        elif can_see_received_requests(auth_user):
+            requests = await self.repo.find_by_receiving_tenant(tenant_id, status, page, limit)
+            total = await self.repo.count_by_receiving_tenant(tenant_id, status)
+        elif can_see_own_requests_only(auth_user):
+            requests = await self.repo.find_by_requester(tenant_id, auth_user.user_id, status, page, limit)
+            total = await self.repo.count_by_requester(tenant_id, auth_user.user_id, status)
+        else:
+            raise ForbiddenException("You do not have permission to list requests")
+
         pagination = get_pagination_data(limit, page, total)
         return {"data": requests, **pagination}
 
     async def cancel_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
         request = await self.repo.find_by_id(request_id, auth_user.tenant_id)
+        require(can_cancel_request(auth_user, request), "You can only cancel your own requests")
         if request["status"] in ("completed", "cancelled"):
             raise ValidationException("Cannot cancel a completed or already cancelled request")
         updated = await self.repo.update_status(request_id, "cancelled", auth_user.user_id)

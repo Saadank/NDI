@@ -7,6 +7,7 @@ from app.gateways.email_gateway import EmailGateway
 from app.gateways.keycloak_gateway import KeycloakGateway
 from app.platform.repositories.invitation_repository import InvitationRepository
 from app.platform.repositories.user_repository import UserRepository
+from app.products.data_sharing.permissions import can_manage_users
 from app.structures.auth_user import AuthUser
 from app.utils.exceptions import ForbiddenException, ValidationException, ResourceNotFoundException
 from app.utils.timezone import now
@@ -33,9 +34,8 @@ class InvitationService:
         product_role: str | None,
         auth_user: AuthUser,
     ) -> dict:
-        from app.platform.enums.platform_role import PlatformRole
-        if auth_user.platform_role not in (PlatformRole.PLATFORM_ADMIN, PlatformRole.ORG_ADMIN):
-            raise ForbiddenException("Only admins can send invitations")
+        if not can_manage_users(auth_user):
+            raise ForbiddenException("Only admins and DPOs can send invitations")
 
         existing = await self.user_repo.find_by_email(email, tenant_id)
         if existing:
@@ -100,9 +100,8 @@ class InvitationService:
         return user
 
     async def list_invitations(self, tenant_id: int, auth_user: AuthUser) -> list[dict]:
-        from app.platform.enums.platform_role import PlatformRole
-        if auth_user.platform_role not in (PlatformRole.PLATFORM_ADMIN, PlatformRole.ORG_ADMIN):
-            raise ForbiddenException("Only admins can list invitations")
+        if not can_manage_users(auth_user):
+            raise ForbiddenException("Only admins and DPOs can list invitations")
         return await self.repo.find_by_tenant(tenant_id)
 
 

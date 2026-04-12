@@ -1,6 +1,7 @@
 import logging
 
 from app.platform.repositories.user_repository import UserRepository
+from app.products.data_sharing.permissions import can_manage_users
 from app.structures.auth_user import AuthUser
 from app.utils.exceptions import ForbiddenException
 from app.utils.pagination import get_pagination_data
@@ -32,17 +33,16 @@ class UserService:
 
     async def update_user(self, user_id: int, auth_user: AuthUser, **fields) -> dict:
         user = await self.repo.find_by_id(user_id)
-        from app.platform.enums.platform_role import PlatformRole
-        if auth_user.platform_role not in (PlatformRole.PLATFORM_ADMIN, PlatformRole.ORG_ADMIN):
+        if not can_manage_users(auth_user):
             raise ForbiddenException("Insufficient permissions")
+        from app.platform.enums.platform_role import PlatformRole
         if auth_user.platform_role == PlatformRole.ORG_ADMIN and auth_user.tenant_id != user["tenant_id"]:
             raise ForbiddenException("Access denied")
         return await self.repo.update(user_id, **fields)
 
     async def deactivate_user(self, user_id: int, auth_user: AuthUser) -> str:
         user = await self.repo.find_by_id(user_id)
-        from app.platform.enums.platform_role import PlatformRole
-        if auth_user.platform_role not in (PlatformRole.PLATFORM_ADMIN, PlatformRole.ORG_ADMIN):
+        if not can_manage_users(auth_user):
             raise ForbiddenException("Insufficient permissions")
         return await self.repo.soft_delete(user_id)
 

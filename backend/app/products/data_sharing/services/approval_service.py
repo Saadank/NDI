@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from app.platform.services.audit_service import AuditService
+from app.products.data_sharing.permissions import can_approve_step, require
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
 from app.products.data_sharing.repositories.workflow_repository import WorkflowRepository
 from app.products.data_sharing.services.workflow_engine import WorkflowEngine
@@ -20,8 +21,14 @@ class ApprovalService:
         self.workflow_engine = WorkflowEngine()
         self.audit = AuditService()
 
-    async def approve(self, request_id: UUID, step_id: UUID, comment: str | None, auth_user: AuthUser) -> dict:
+    async def _check_step_permission(self, request_id: UUID, step_id: UUID, auth_user: AuthUser) -> tuple[dict, dict]:
         step = await self.workflow_repo.find_step(step_id)
+        request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
+        require(can_approve_step(auth_user, step, request), "You do not have permission to act on this step")
+        return step, request
+
+    async def approve(self, request_id: UUID, step_id: UUID, comment: str | None, auth_user: AuthUser) -> dict:
+        step, _ = await self._check_step_permission(request_id, step_id, auth_user)
         if step["status"] != "pending":
             raise ValidationException("Step is not pending approval")
 
@@ -45,7 +52,7 @@ class ApprovalService:
         if not comment:
             raise ValidationException("Comment is required when rejecting")
 
-        step = await self.workflow_repo.find_step(step_id)
+        step, _ = await self._check_step_permission(request_id, step_id, auth_user)
         if step["status"] != "pending":
             raise ValidationException("Step is not pending approval")
 
@@ -66,7 +73,7 @@ class ApprovalService:
         if not comment:
             raise ValidationException("Comment is required when requesting changes")
 
-        step = await self.workflow_repo.find_step(step_id)
+        step, _ = await self._check_step_permission(request_id, step_id, auth_user)
         if step["status"] != "pending":
             raise ValidationException("Step is not pending")
 
