@@ -206,6 +206,11 @@ def main():
         users = api("GET", f"/admin/realms/{REALM}/users?username={urllib.parse.quote(SEED_EMAIL)}&exact=true", token=token)
         if users:
             user_id = users[0]["id"]
+            # Ensure profile fields are set
+            api("PUT", f"/admin/realms/{REALM}/users/{user_id}", {
+                "email": SEED_EMAIL, "firstName": "Super", "lastName": "Admin",
+                "enabled": True, "emailVerified": True,
+            }, token)
             # Get role representation
             role_rep = api("GET", f"/admin/realms/{REALM}/roles/platform_admin", token=token)
             if role_rep:

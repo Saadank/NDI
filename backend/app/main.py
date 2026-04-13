@@ -9,7 +9,7 @@ from app.core.database import init_pool, close_pool
 from app.utils.exceptions import BaseAppException
 
 # Platform Core routers
-from app.platform.routers import auth, users, invitations, tenants, products, audit
+from app.platform.routers import auth, users, invitations, tenants, products, audit, groups
 
 # Product: Data Sharing
 from app.products.data_sharing.routers import (
@@ -52,7 +52,7 @@ async def app_exception_handler(request: Request, exc: BaseAppException):
 
 
 # Platform Core — /api/v1/platform/...
-for r in [auth, users, invitations, tenants, products, audit]:
+for r in [auth, users, invitations, tenants, products, audit, groups]:
     app.include_router(r.router, prefix="/api/v1/platform")
 
 # Product: Data Sharing — /api/v1/products/data-sharing/...

@@ -65,7 +65,7 @@ CREATE INDEX idx_requests_requester ON t_share_requests(requester_id);
 CREATE TABLE t_workflow_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     request_id UUID NOT NULL REFERENCES t_share_requests(id),
-    template_step_id UUID REFERENCES t_template_steps(id),
+    template_step_id UUID REFERENCES t_template_steps(id) ON DELETE SET NULL,
     step_order INTEGER NOT NULL,
     step_type VARCHAR(50) NOT NULL,
     name VARCHAR(255),

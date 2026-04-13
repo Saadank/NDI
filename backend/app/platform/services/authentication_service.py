@@ -49,6 +49,7 @@ class AuthenticationService:
                 "tenant_id": db_user["tenant_id"],
                 "platform_role": db_user["platform_role"],
                 "product_role": product_role,
+                "group_id": db_user.get("group_id"),
             },
         }
 

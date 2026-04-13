@@ -10,3 +10,4 @@ class AuthUser(BaseModel):
     platform_role: PlatformRole | None = None
     product_role: str | None = None
     current_product: str | None = None
+    group_id: int | None = None

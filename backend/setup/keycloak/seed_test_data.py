@@ -122,8 +122,12 @@ def kc_assign_roles(token, user_id, role_names):
             api("POST", f"/admin/realms/{REALM}/users/{user_id}/role-mappings/realm", [role_rep], token)
 
 
-def kc_set_attributes(token, user_id, attributes):
-    api("PUT", f"/admin/realms/{REALM}/users/{user_id}", {"attributes": attributes}, token)
+def kc_set_attributes(token, user_id, attributes, profile=None):
+    """Update user attributes. If profile dict given, merge it to preserve email/name."""
+    payload = {"attributes": attributes}
+    if profile:
+        payload.update(profile)
+    api("PUT", f"/admin/realms/{REALM}/users/{user_id}", payload, token)
 
 
 def sql(query):
@@ -202,7 +206,7 @@ def main():
         kc_set_attributes(token, kc_super_id, {
             "tenant_id": [str(tenant_id)],
             "user_id":   [str(super_db_id)],
-        })
+        }, profile={"email": SUPER_EMAIL, "firstName": "Super", "lastName": "Admin", "emailVerified": True})
         sql(f"""
             UPDATE t_platform_admins
             SET keycloak_id = '{kc_super_id}'
@@ -248,11 +252,11 @@ def main():
         """)
         db_user_id = int(sql_value(f"SELECT id FROM t_users WHERE keycloak_id = '{kc_id}';"))
 
-        # Stamp KC attributes
+        # Stamp KC attributes (include profile to avoid Keycloak wiping email/name)
         kc_set_attributes(token, kc_id, {
             "tenant_id": [str(tenant_id)],
             "user_id":   [str(db_user_id)],
-        })
+        }, profile={"email": u["email"], "firstName": u["first"], "lastName": u["last"], "emailVerified": True})
 
         # Product role (data_sharing product_id = 1)
         sql(f"""
@@ -297,6 +301,39 @@ def main():
             print(f"  + Default template already exists, skipping")
     else:
         print(f"  ! Super admin not found in DB, skipping template creation")
+
+    # ── 7. Create department groups ───────────────────────────────────────────
+    print(f"\n[8] Creating department groups...")
+    GROUPS = [
+        {"name": "Finance Department", "name_ar": "قسم المالية", "slug": "finance", "desc": "Financial operations and reporting"},
+        {"name": "Human Resources", "name_ar": "الموارد البشرية", "slug": "hr", "desc": "Employee management and HR operations"},
+        {"name": "IT Department", "name_ar": "قسم تقنية المعلومات", "slug": "it", "desc": "Technology infrastructure and systems"},
+    ]
+    for g in GROUPS:
+        existing_g = sql_value(
+            f"SELECT COUNT(*) FROM t_groups WHERE tenant_id = {tenant_id} AND slug = '{g['slug']}';"
+        )
+        if existing_g and int(existing_g) == 0:
+            sql(f"""
+                INSERT INTO t_groups (tenant_id, name, name_ar, slug, description)
+                VALUES ({tenant_id}, '{g["name"]}', '{g["name_ar"]}', '{g["slug"]}', '{g["desc"]}');
+            """)
+            print(f"  + Created group: {g['name']}")
+        else:
+            print(f"  + Group '{g['name']}' already exists, skipping")
+
+    # Assign test users to groups
+    finance_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'finance';")
+    hr_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'hr';")
+    it_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'it';")
+    if finance_id and hr_id and it_id:
+        # requester + dataowner → Finance, receiver → HR, dpo → IT, superadmin → IT
+        sql(f"UPDATE t_users SET group_id = {finance_id} WHERE email = 'requester@acme.local' AND tenant_id = {tenant_id};")
+        sql(f"UPDATE t_users SET group_id = {finance_id} WHERE email = 'dataowner@acme.local' AND tenant_id = {tenant_id};")
+        sql(f"UPDATE t_users SET group_id = {hr_id} WHERE email = 'receiver@acme.local' AND tenant_id = {tenant_id};")
+        sql(f"UPDATE t_users SET group_id = {it_id} WHERE email = 'dpo@acme.local' AND tenant_id = {tenant_id};")
+        sql(f"UPDATE t_users SET group_id = {it_id} WHERE email = '{SUPER_EMAIL}' AND tenant_id = {tenant_id};")
+        print(f"  + Assigned users to groups (Finance: requester+dataowner, HR: receiver, IT: dpo+admin)")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)

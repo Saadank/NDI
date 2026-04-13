@@ -29,6 +29,15 @@ class ShareRequestService:
         tenant_id = auth_user.tenant_id
         request_number = await self.repo.next_request_number(tenant_id)
 
+        # Validate receiver_group belongs to the same tenant
+        receiver_group_id = data.get("receiver_group_id")
+        if receiver_group_id:
+            from app.platform.repositories.group_repository import GroupRepository
+            group_repo = GroupRepository()
+            group = await group_repo.find_by_id(receiver_group_id)
+            if not group or group["tenant_id"] != tenant_id:
+                raise ValidationException("Receiver group not found in your organization")
+
         request = await self.repo.create(
             tenant_id=tenant_id,
             request_number=request_number,
@@ -43,6 +52,8 @@ class ShareRequestService:
             source_description=data.get("source_description"),
             requester_id=auth_user.user_id,
             receiving_tenant_id=data.get("receiving_tenant_id"),
+            requester_group_id=auth_user.group_id,
+            receiver_group_id=receiver_group_id,
             created_by=auth_user.user_id,
             dpia_confirmed=data.get("dpia_confirmed", False),
         )
@@ -99,14 +110,23 @@ class ShareRequestService:
             requests = await self.repo.find_by_tenant(tenant_id, status, page, limit)
             total = await self.repo.count_by_tenant(tenant_id, status)
         elif can_see_assigned_requests(auth_user):
-            requests = await self.repo.find_assigned_to_role(tenant_id, SharingRole.DATA_OWNER, status, page, limit)
-            total = await self.repo.count_assigned_to_role(tenant_id, SharingRole.DATA_OWNER, status)
+            # Data owner: see requests where their step is pending + requests sent to their group (workflow done)
+            requests = await self.repo.find_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, SharingRole.DATA_OWNER, status, page, limit)
+            total = await self.repo.count_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, SharingRole.DATA_OWNER, status)
         elif can_see_received_requests(auth_user):
-            requests = await self.repo.find_by_receiving_tenant(tenant_id, status, page, limit)
-            total = await self.repo.count_by_receiving_tenant(tenant_id, status)
+            # Receiver: own requests + requests sent to their group (workflow done)
+            requests = await self.repo.find_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, None, status, page, limit)
+            total = await self.repo.count_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, None, status)
         elif can_see_own_requests_only(auth_user):
-            requests = await self.repo.find_by_requester(tenant_id, auth_user.user_id, status, page, limit)
-            total = await self.repo.count_by_requester(tenant_id, auth_user.user_id, status)
+            # Requester: own requests + requests sent to their group (workflow done)
+            requests = await self.repo.find_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, None, status, page, limit)
+            total = await self.repo.count_for_user(
+                tenant_id, auth_user.user_id, auth_user.group_id, None, status)
         else:
             raise ForbiddenException("You do not have permission to list requests")
 

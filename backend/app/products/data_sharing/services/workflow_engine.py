@@ -19,8 +19,10 @@ class WorkflowEngine:
     async def create_workflow_steps(self, request_id: UUID, template: dict) -> list[dict]:
         template_steps = await self.repo.find_template_steps(template["id"])
         created = []
-        for ts in template_steps:
-            sla_deadline = now() + timedelta(days=ts["sla_days"]) if ts["sla_days"] else None
+        for i, ts in enumerate(template_steps):
+            # Only the first step is "pending"; the rest wait their turn
+            status = "pending" if i == 0 else "waiting"
+            sla_deadline = now() + timedelta(days=ts["sla_days"]) if ts["sla_days"] and i == 0 else None
             step = await self.repo.create_step(
                 request_id=request_id,
                 template_step_id=ts["id"],
@@ -30,6 +32,7 @@ class WorkflowEngine:
                 assignee_role=ts.get("assignee_role"),
                 assignee_user_id=None,
                 sla_deadline=sla_deadline,
+                status=status,
             )
             created.append(step)
         return created
@@ -50,7 +53,16 @@ class WorkflowEngine:
             return None
 
         if next_step:
-            updated = await self.repo.update_step(next_step["id"], status="pending")
+            # Activate next step: set pending + calculate SLA from now
+            sla_days = None
+            if next_step.get("template_step_id"):
+                ts = await self.repo._fetch_row_optional(
+                    "SELECT sla_days FROM t_template_steps WHERE id = $1", (next_step["template_step_id"],)
+                )
+                if ts:
+                    sla_days = ts["sla_days"]
+            sla_deadline = now() + timedelta(days=sla_days) if sla_days else None
+            updated = await self.repo.update_step(next_step["id"], status="pending", sla_deadline=sla_deadline)
             return updated
 
         # All steps complete — workflow is done

@@ -94,6 +94,7 @@ tbody tr:hover td{background:var(--slate-50)}
 .badge-expired{background:var(--slate-100);color:var(--slate-400)}
 .badge-active{background:var(--emerald-50);color:var(--emerald-600)}
 .badge-changes_requested{background:var(--amber-50);color:var(--amber-600)}
+.badge-waiting{background:var(--slate-100);color:var(--slate-400)}
 
 /* Portal */
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
@@ -173,6 +174,8 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <div class="section">Data</div>
       <button data-tab="files" onclick="go('files')"><span class="ic">▤</span> Files</button>
       <button data-tab="connections" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
+      <div class="section" id="nav-grp-section">Organization</div>
+      <button data-tab="groups" id="nav-grp-btn" onclick="go('groups')"><span class="ic">⊡</span> Groups</button>
       <div class="section">System</div>
       <button data-tab="notifications" onclick="go('notifications')"><span class="ic">◎</span> Notifications</button>
       <button data-tab="audit" onclick="go('audit')"><span class="ic">☰</span> Audit Trail</button>
@@ -223,8 +226,9 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           </div>
           <div class="fr">
             <div class="fg"><label>Estimated Data Subjects</label><input id="cr-subjects" type="number" placeholder="e.g. 500"></div>
-            <div class="fg"><label>Receiving Tenant ID</label><input id="cr-recv" type="number" placeholder="For external sharing"></div>
+            <div class="fg"><label>Receiver Group</label><select id="cr-recv-group"><option value="">— Select department —</option></select></div>
           </div>
+          <div class="fg" id="cr-reqgroup-row" style="margin-bottom:8px"><label>Your Group</label><input id="cr-reqgroup" readonly style="background:var(--slate-50);color:var(--slate-400)"></div>
           <div class="fg"><label>Data Subject Categories (comma-separated)</label><input id="cr-cats" placeholder="e.g. employees, customers"></div>
           <div class="fg"><label>Source Description</label><textarea id="cr-source" placeholder="Describe the data source"></textarea></div>
           <div class="fg"><label style="display:inline;text-transform:none;font-size:12.5px;font-weight:500"><input type="checkbox" id="cr-dpia"> DPIA Confirmed (required for Sensitive)</label></div>
@@ -364,6 +368,37 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
         <div id="au-pg" class="mt" style="text-align:right"></div>
       </div>
 
+      <!-- GROUPS -->
+      <div id="p-groups" class="panel">
+        <div class="fb mb">
+          <h3 style="font-size:13.5px;font-weight:700">Department Groups</h3>
+          <button class="btn btn-p btn-sm" onclick="toggleEl('grp-form')">+ New Group</button>
+        </div>
+        <div id="grp-form" class="card hidden">
+          <h3>Create Group</h3>
+          <div class="fr">
+            <div class="fg"><label>Name</label><input id="grp-name" placeholder="e.g. Finance Department"></div>
+            <div class="fg"><label>Name (Arabic)</label><input id="grp-name-ar" placeholder="e.g. قسم المالية"></div>
+          </div>
+          <div class="fg"><label>Description</label><textarea id="grp-desc" placeholder="What this department does"></textarea></div>
+          <div class="bg" style="margin-top:6px"><button class="btn btn-p" onclick="createGroup()">Create Group</button></div>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Arabic Name</th><th>Members</th><th>Active</th><th>Actions</th></tr></thead>
+          <tbody id="grp-tb"></tbody>
+        </table></div>
+        <div id="grp-detail" class="card hidden">
+          <h3 id="grp-detail-title">Group Members</h3>
+          <div id="grp-members"></div>
+          <div class="bg" style="margin-top:8px">
+            <div class="fr">
+              <div class="fg"><label>Assign User</label><select id="grp-assign-user"><option value="">— Select user —</option></select></div>
+              <div class="fg" style="display:flex;align-items:flex-end"><button class="btn btn-p btn-sm" onclick="assignUserToGroup()">Assign</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -407,10 +442,12 @@ function enterApp(){
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('u-name').textContent=`${user.first_name||''} ${user.last_name||''}`.trim()||user.email;
   document.getElementById('u-role').textContent=user.product_role?`${user.platform_role} / ${user.product_role}`:user.platform_role;
-  // Hide workflow templates section for non-admins
+  // Hide workflow templates and groups section for non-admins
   const showWf=isAdmin();
   document.getElementById('nav-wf-section').style.display=showWf?'':'none';
   document.getElementById('nav-wf-btn').style.display=showWf?'':'none';
+  document.getElementById('nav-grp-section').style.display=showWf?'':'none';
+  document.getElementById('nav-grp-btn').style.display=showWf?'':'none';
   go('portal');
 }
 
@@ -420,10 +457,10 @@ function go(tab){
   document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
   const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
   const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
-  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail'};
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,workflows:loadWorkflows,connections:loadConnections,notifications:loadNotifications,audit:loadAudit};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups};
   if(load[tab])load[tab]().catch(e=>console.error(e));
 }
 
@@ -453,6 +490,14 @@ async function loadRequests(page=1){
     <span style="font-size:11px;color:var(--slate-400);margin:0 8px">Page ${pg.page}/${pg.total_pages}</span>
     ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadRequests(${pg.next_page})">Next →</button>`:''}` :'';
 }
+let _groupsCache=[];
+async function loadCreateReqForm(){
+  try{_groupsCache=await api('GET',`${PF}/groups/`)}catch(e){_groupsCache=[]}
+  const sel=document.getElementById('cr-recv-group');
+  sel.innerHTML='<option value="">— Select department —</option>'+_groupsCache.filter(g=>g.is_active).map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+  const myGroup=_groupsCache.find(g=>g.id===user.group_id);
+  document.getElementById('cr-reqgroup').value=myGroup?myGroup.name:'(no group assigned)';
+}
 async function createReq(){
   const cats=document.getElementById('cr-cats').value;
   try{
@@ -466,7 +511,7 @@ async function createReq(){
       estimated_data_subjects:parseInt(document.getElementById('cr-subjects').value)||null,
       data_subject_categories:cats?cats.split(',').map(s=>s.trim()):null,
       source_description:document.getElementById('cr-source').value||null,
-      receiving_tenant_id:parseInt(document.getElementById('cr-recv').value)||null,
+      receiver_group_id:parseInt(document.getElementById('cr-recv-group').value)||null,
       dpia_confirmed:document.getElementById('cr-dpia').checked,
     });
     toast(`Created ${r.request_number}`);go('requests');
@@ -475,12 +520,18 @@ async function createReq(){
 async function viewReq(id){
   const r=await api('GET',`${DS}/requests/${id}`);
   let steps=[];try{steps=await api('GET',`${DS}/workflows/requests/${id}/steps`)}catch(e){}
+  // Resolve group names
+  if(!_groupsCache.length)try{_groupsCache=await api('GET',`${PF}/groups/`)}catch(e){}
+  const reqGrp=_groupsCache.find(g=>g.id===r.requester_group_id);
+  const recvGrp=_groupsCache.find(g=>g.id===r.receiver_group_id);
   document.getElementById('req-detail').innerHTML=`
     <div class="fb mb"><span class="mono" style="font-size:14px;font-weight:700">${r.request_number}</span>${badge(r.status)}</div>
     <div class="card"><h3>${r.title}</h3>
       <div class="dg">
         <div class="di"><div class="lb">Sharing Type</div><div class="vl">${r.sharing_type}</div></div>
         <div class="di"><div class="lb">Classification</div><div class="vl">${r.data_classification}</div></div>
+        ${reqGrp?`<div class="di"><div class="lb">From Group</div><div class="vl"><strong>${reqGrp.name}</strong></div></div>`:''}
+        ${recvGrp?`<div class="di"><div class="lb">To Group</div><div class="vl"><strong>${recvGrp.name}</strong></div></div>`:''}
         <div class="di"><div class="lb">Legal Basis</div><div class="vl">${r.legal_basis||'—'}</div></div>
         <div class="di"><div class="lb">Personal Data</div><div class="vl">${r.personal_data_involved?'<strong>Yes</strong>':'No'}</div></div>
         <div class="di"><div class="lb">Data Subjects</div><div class="vl">${r.estimated_data_subjects||'—'}</div></div>
@@ -574,6 +625,37 @@ async function deactivateWf(){
   try{await api('DELETE',`${DS}/workflows/templates/${id}`);toast('Template deactivated');document.getElementById('wf-edit').classList.add('hidden');loadWorkflows()}catch(e){toast(e.message,false)}
 }
 
+// Groups
+let _editGroupId=null;
+async function loadGroups(){
+  const groups=await api('GET',`${PF}/groups/`);
+  _groupsCache=groups;
+  document.getElementById('grp-tb').innerHTML=groups.map(g=>`<tr>
+    <td>${g.name}</td><td>${g.name_ar||'—'}</td><td>${g.member_count||0}</td><td>${badge(g.is_active?'active':'draft')}</td>
+    <td class="bg"><button class="btn btn-o btn-sm" onclick="viewGroupMembers(${g.id},'${g.name}')">Members</button></td>
+  </tr>`).join('')||'<tr><td colspan="5" class="empty">No groups</td></tr>';
+}
+async function createGroup(){
+  try{await api('POST',`${PF}/groups/`,{name:document.getElementById('grp-name').value,name_ar:document.getElementById('grp-name-ar').value||null,description:document.getElementById('grp-desc').value||null});toast('Group created');document.getElementById('grp-name').value='';document.getElementById('grp-name-ar').value='';document.getElementById('grp-desc').value='';toggleEl('grp-form');loadGroups()}catch(e){toast(e.message,false)}
+}
+async function viewGroupMembers(groupId,groupName){
+  _editGroupId=groupId;
+  document.getElementById('grp-detail-title').textContent=`Members — ${groupName}`;
+  const members=await api('GET',`${PF}/groups/${groupId}/members`);
+  document.getElementById('grp-members').innerHTML=members.length?`<div class="tw"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map(m=>`<tr><td>${m.first_name||''} ${m.last_name||''}</td><td class="mono">${m.email}</td><td>${m.platform_role}</td><td><button class="btn btn-r btn-sm" onclick="removeFromGroup(${m.id})">Remove</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No members</div>';
+  // Load all tenant users for assignment
+  try{const users=await api('GET',`${PF}/users/?limit=100`);const sel=document.getElementById('grp-assign-user');sel.innerHTML='<option value="">— Select user —</option>'+(users.data||users).filter(u=>u.id).map(u=>`<option value="${u.id}">${u.first_name||''} ${u.last_name||''} (${u.email})</option>`).join('')}catch(e){}
+  document.getElementById('grp-detail').classList.remove('hidden');
+}
+async function assignUserToGroup(){
+  const uid=document.getElementById('grp-assign-user').value;
+  if(!uid||!_editGroupId)return toast('Select a user',false);
+  try{await api('PUT',`${PF}/users/${uid}/group`,{group_id:_editGroupId});toast('User assigned');viewGroupMembers(_editGroupId,document.getElementById('grp-detail-title').textContent.replace('Members — ',''));loadGroups()}catch(e){toast(e.message,false)}
+}
+async function removeFromGroup(uid){
+  try{await api('PUT',`${PF}/users/${uid}/group`,{group_id:null});toast('User removed');viewGroupMembers(_editGroupId,document.getElementById('grp-detail-title').textContent.replace('Members — ',''));loadGroups()}catch(e){toast(e.message,false)}
+}
+
 // Files
 async function uploadFile(){
   const reqId=document.getElementById('f-reqid').value,file=document.getElementById('f-input').files[0];
@@ -621,7 +703,7 @@ async function loadAudit(page=1){
 if(token){
   fetch(`${PF}/users/me`,{headers:{'Authorization':`Bearer ${token}`}})
     .then(r=>{if(!r.ok)throw new Error();return r.json()})
-    .then(u=>{user={id:u.user_id,email:'',first_name:'',last_name:'',tenant_id:u.tenant_id,platform_role:u.platform_role,product_role:u.product_role||null};enterApp()})
+    .then(u=>{user={id:u.user_id,email:'',first_name:'',last_name:'',tenant_id:u.tenant_id,platform_role:u.platform_role,product_role:u.product_role||null,group_id:u.group_id||null};enterApp()})
     .catch(()=>{localStorage.removeItem('ds_token');token=null});
 }
 </script>

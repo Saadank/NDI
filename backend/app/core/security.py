@@ -96,6 +96,8 @@ async def get_current_user(
             if role_record:
                 product_role = role_record["role"]
 
+    group_id = db_user.get("group_id") if db_user else None
+
     return AuthUser(
         user_id=user_id,
         keycloak_id=keycloak_id,
@@ -103,4 +105,5 @@ async def get_current_user(
         platform_role=platform_role,
         product_role=product_role,
         current_product=None,
+        group_id=group_id,
     )

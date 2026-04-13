@@ -75,14 +75,19 @@ def can_view_request(auth_user: AuthUser, request: dict) -> bool:
     """Check if user can view a specific request."""
     if can_see_all_requests(auth_user):
         return True
-    if can_see_own_requests_only(auth_user):
-        return request["requester_id"] == auth_user.user_id
-    # receiver can view if request was sent to them (receiving_tenant_id)
+    # Everyone can view their own requests
+    if request["requester_id"] == auth_user.user_id:
+        return True
+    # Anyone in the receiver group can view (list query already filters by workflow status)
+    if auth_user.group_id and request.get("receiver_group_id") == auth_user.group_id:
+        return True
+    # Receiver by tenant
     if can_see_received_requests(auth_user):
-        return request.get("receiving_tenant_id") == auth_user.tenant_id
+        if request.get("receiving_tenant_id") == auth_user.tenant_id:
+            return True
     # data_owner: allowed at service level via assigned step check
     if can_see_assigned_requests(auth_user):
-        return True  # further filtered at service level
+        return True
     return False
 
 
@@ -100,7 +105,11 @@ def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
     if role == SharingRole.DATA_OWNER:
         return assignee == SharingRole.DATA_OWNER
     if role == SharingRole.RECEIVER:
-        return assignee == SharingRole.RECEIVER and request.get("receiving_tenant_id") == auth_user.tenant_id
+        if assignee != SharingRole.RECEIVER:
+            return False
+        if auth_user.group_id and request.get("receiver_group_id") == auth_user.group_id:
+            return True
+        return request.get("receiving_tenant_id") == auth_user.tenant_id
     return False
 
 

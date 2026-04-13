@@ -21,6 +21,7 @@ class CreateShareRequestBody(BaseModel):
     data_subject_categories: list[str] | None = None
     source_description: str | None = None
     receiving_tenant_id: int | None = None
+    receiver_group_id: int | None = None
     dpia_confirmed: bool = False
 
 

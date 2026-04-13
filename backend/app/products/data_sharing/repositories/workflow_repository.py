@@ -88,12 +88,12 @@ class WorkflowRepository(PostgresqlAsyncRepository):
 
     async def create_step(self, request_id: UUID, template_step_id: UUID | None, step_order: int,
                           step_type: str, name: str | None, assignee_role: str | None,
-                          assignee_user_id: int | None, sla_deadline=None) -> dict:
+                          assignee_user_id: int | None, sla_deadline=None, status: str = "pending") -> dict:
         return await self._fetch_row(
             """INSERT INTO t_workflow_steps (request_id, template_step_id, step_order, step_type, name,
-               assignee_role, assignee_user_id, sla_deadline)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *""",
-            (request_id, template_step_id, step_order, step_type, name, assignee_role, assignee_user_id, sla_deadline),
+               assignee_role, assignee_user_id, sla_deadline, status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
+            (request_id, template_step_id, step_order, step_type, name, assignee_role, assignee_user_id, sla_deadline, status),
         )
 
     async def find_steps_by_request(self, request_id: UUID) -> list[dict]:

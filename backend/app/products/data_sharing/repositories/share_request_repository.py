@@ -9,17 +9,18 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
                      sharing_type: str, data_classification: str, personal_data_involved: bool,
                      estimated_data_subjects: int | None, data_subject_categories: list[str] | None,
                      source_description: str | None, requester_id: int, receiving_tenant_id: int | None,
+                     requester_group_id: int | None, receiver_group_id: int | None,
                      created_by: int, dpia_confirmed: bool = False) -> dict:
         return await self._fetch_row(
             """INSERT INTO t_share_requests
                (tenant_id, request_number, title, purpose, legal_basis, sharing_type, data_classification,
                 personal_data_involved, estimated_data_subjects, data_subject_categories, source_description,
-                requester_id, receiving_tenant_id, created_by, dpia_confirmed)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                RETURNING *""",
             (tenant_id, request_number, title, purpose, legal_basis, sharing_type, data_classification,
              personal_data_involved, estimated_data_subjects, data_subject_categories, source_description,
-             requester_id, receiving_tenant_id, created_by, dpia_confirmed),
+             requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed),
         )
 
     async def find_by_id(self, request_id: UUID, tenant_id: int) -> dict:
@@ -105,40 +106,56 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         where = " AND ".join(conditions)
         return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests WHERE {where}", tuple(args))
 
-    # --- Receiver: requests sent to their tenant ---
+    # --- Receiver: requests sent to their tenant or group, only after workflow is fully approved ---
 
-    async def find_by_receiving_tenant(self, receiving_tenant_id: int, status: str | None,
-                                       page: int, limit: int) -> list[dict]:
-        conditions = ["receiving_tenant_id = $1", "deleted_at IS NULL"]
-        args: list = [receiving_tenant_id]
+    async def find_by_receiver(self, tenant_id: int, group_id: int | None, status: str | None,
+                               page: int, limit: int) -> list[dict]:
+        # Match by receiving_tenant_id OR receiver_group_id
+        receiver_conds = ["r.receiving_tenant_id = $1"]
+        args: list = [tenant_id]
         idx = 2
+        if group_id:
+            receiver_conds.append(f"r.receiver_group_id = ${idx}")
+            args.append(group_id)
+            idx += 1
+        # Only show when workflow is complete (no pending/waiting steps remain)
+        workflow_done = "NOT EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.status IN ('pending', 'waiting'))"
+        conditions = [f"({' OR '.join(receiver_conds)})", "r.deleted_at IS NULL", workflow_done]
         if status:
-            conditions.append(f"status = ${idx}")
+            conditions.append(f"r.status = ${idx}")
             args.append(status)
             idx += 1
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         args.extend([limit, offset])
         return await self._fetch_all(
-            f"SELECT * FROM t_share_requests WHERE {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            f"SELECT r.* FROM t_share_requests r WHERE {where} ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
         )
 
-    async def count_by_receiving_tenant(self, receiving_tenant_id: int, status: str | None) -> int:
-        conditions = ["receiving_tenant_id = $1", "deleted_at IS NULL"]
-        args: list = [receiving_tenant_id]
+    async def count_by_receiver(self, tenant_id: int, group_id: int | None, status: str | None) -> int:
+        receiver_conds = ["r.receiving_tenant_id = $1"]
+        args: list = [tenant_id]
+        idx = 2
+        if group_id:
+            receiver_conds.append(f"r.receiver_group_id = ${idx}")
+            args.append(group_id)
+            idx += 1
+        workflow_done = "NOT EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.status IN ('pending', 'waiting'))"
+        conditions = [f"({' OR '.join(receiver_conds)})", "r.deleted_at IS NULL", workflow_done]
         if status:
-            conditions.append("status = $2")
+            conditions.append(f"r.status = ${idx}")
             args.append(status)
+            idx += 1
         where = " AND ".join(conditions)
-        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests WHERE {where}", tuple(args))
+        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests r WHERE {where}", tuple(args))
 
-    # --- Data Owner: requests with workflow steps assigned to their role ---
+    # --- Data Owner: only requests where their step is currently pending ---
 
     async def find_assigned_to_role(self, tenant_id: int, role: str, status: str | None,
                                     page: int, limit: int) -> list[dict]:
         conditions = ["r.tenant_id = $1", "r.deleted_at IS NULL",
-                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2)"]
+                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2 AND ws.status = 'pending')"]
         args: list = [tenant_id, role]
         idx = 3
         if status:
@@ -155,11 +172,74 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
 
     async def count_assigned_to_role(self, tenant_id: int, role: str, status: str | None) -> int:
         conditions = ["r.tenant_id = $1", "r.deleted_at IS NULL",
-                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2)"]
+                       "EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = $2 AND ws.status = 'pending')"]
         args: list = [tenant_id, role]
         if status:
             conditions.append("r.status = $3")
             args.append(status)
+        where = " AND ".join(conditions)
+        return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests r WHERE {where}", tuple(args))
+
+    # --- Combined: own requests + group-received (workflow done) + role-pending ---
+
+    async def find_for_user(self, tenant_id: int, user_id: int, group_id: int | None,
+                            assigned_role: str | None, status: str | None,
+                            page: int, limit: int) -> list[dict]:
+        # Build OR conditions for what this user can see
+        visibility = ["r.requester_id = $2"]  # always see own requests
+        args: list = [tenant_id, user_id]
+        idx = 3
+        if group_id:
+            # Requests sent to their group where workflow is complete
+            visibility.append(
+                f"(r.receiver_group_id = ${idx} AND NOT EXISTS "
+                f"(SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.status IN ('pending','waiting')))"
+            )
+            args.append(group_id)
+            idx += 1
+        if assigned_role:
+            # Requests where their role step is currently pending
+            visibility.append(
+                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = ${idx} AND ws.status = 'pending')"
+            )
+            args.append(assigned_role)
+            idx += 1
+        conditions = [f"r.tenant_id = $1", "r.deleted_at IS NULL", f"({' OR '.join(visibility)})"]
+        if status:
+            conditions.append(f"r.status = ${idx}")
+            args.append(status)
+            idx += 1
+        where = " AND ".join(conditions)
+        offset = (page - 1) * limit
+        args.extend([limit, offset])
+        return await self._fetch_all(
+            f"SELECT DISTINCT r.* FROM t_share_requests r WHERE {where} ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            tuple(args),
+        )
+
+    async def count_for_user(self, tenant_id: int, user_id: int, group_id: int | None,
+                             assigned_role: str | None, status: str | None) -> int:
+        visibility = ["r.requester_id = $2"]
+        args: list = [tenant_id, user_id]
+        idx = 3
+        if group_id:
+            visibility.append(
+                f"(r.receiver_group_id = ${idx} AND NOT EXISTS "
+                f"(SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.status IN ('pending','waiting')))"
+            )
+            args.append(group_id)
+            idx += 1
+        if assigned_role:
+            visibility.append(
+                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = ${idx} AND ws.status = 'pending')"
+            )
+            args.append(assigned_role)
+            idx += 1
+        conditions = [f"r.tenant_id = $1", "r.deleted_at IS NULL", f"({' OR '.join(visibility)})"]
+        if status:
+            conditions.append(f"r.status = ${idx}")
+            args.append(status)
+            idx += 1
         where = " AND ".join(conditions)
         return await self._fetch_value(f"SELECT COUNT(*) FROM t_share_requests r WHERE {where}", tuple(args))
 
