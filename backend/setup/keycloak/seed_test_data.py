@@ -263,6 +263,41 @@ def main():
 
         print(f"  + {u['email']:30s}  role={u['product_role']:12s}  KC={kc_id[:8]}...")
 
+    # ── 6. Create default workflow template ─────────────────────────────────
+    print(f"\n[7] Creating default workflow template...")
+    # Use superadmin's DB user ID as created_by
+    super_db_id_str = sql_value(f"SELECT id FROM t_users WHERE email = '{SUPER_EMAIL}';")
+    if super_db_id_str:
+        super_db_id = int(super_db_id_str)
+        # Check if a default template already exists (sharing_type IS NULL AND data_classification IS NULL)
+        existing = sql_value(
+            f"SELECT COUNT(*) FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
+            f"AND sharing_type IS NULL AND data_classification IS NULL;"
+        )
+        if existing and int(existing) == 0:
+            sql(f"""
+                INSERT INTO t_workflow_templates (tenant_id, name, sharing_type, data_classification, is_active, created_by)
+                VALUES ({tenant_id}, 'Default Approval Workflow', NULL, NULL, TRUE, {super_db_id});
+            """)
+            tpl_id = sql_value(
+                f"SELECT id FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
+                f"AND name = 'Default Approval Workflow' ORDER BY created_at DESC LIMIT 1;"
+            )
+            if tpl_id:
+                sql(f"""
+                    INSERT INTO t_template_steps (template_id, step_order, step_type, name, assignee_role, sla_days)
+                    VALUES
+                        ('{tpl_id}', 1, 'approval', 'DPO Review', 'dpo', 3),
+                        ('{tpl_id}', 2, 'approval', 'Data Owner Approval', 'data_owner', 5);
+                """)
+                print(f"  + Default template created with 2 steps (DPO Review, Data Owner Approval)")
+            else:
+                print(f"  ! Could not find template ID after insert")
+        else:
+            print(f"  + Default template already exists, skipping")
+    else:
+        print(f"  ! Super admin not found in DB, skipping template creation")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("  Done! Accounts created:")

@@ -93,12 +93,14 @@ def can_view_request(auth_user: AuthUser, request: dict) -> bool:
 def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
     if _is_admin(auth_user):
         return True
-    if _role(auth_user) == SharingRole.DPO:
-        return True
-    if _role(auth_user) == SharingRole.DATA_OWNER:
-        return step.get("assignee_role") == SharingRole.DATA_OWNER
-    if _role(auth_user) == SharingRole.RECEIVER:
-        return request.get("receiving_tenant_id") == auth_user.tenant_id
+    role = _role(auth_user)
+    assignee = step.get("assignee_role")
+    if role == SharingRole.DPO:
+        return assignee == SharingRole.DPO
+    if role == SharingRole.DATA_OWNER:
+        return assignee == SharingRole.DATA_OWNER
+    if role == SharingRole.RECEIVER:
+        return assignee == SharingRole.RECEIVER and request.get("receiving_tenant_id") == auth_user.tenant_id
     return False
 
 
@@ -107,9 +109,7 @@ def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def can_manage_workflows(auth_user: AuthUser) -> bool:
-    if _is_admin(auth_user):
-        return True
-    return _role(auth_user) == SharingRole.DPO
+    return _is_admin(auth_user)
 
 
 def can_manage_users(auth_user: AuthUser) -> bool:

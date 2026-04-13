@@ -168,8 +168,8 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <button data-tab="portal" onclick="go('portal')"><span class="ic">◈</span> Portal</button>
       <button data-tab="requests" onclick="go('requests')"><span class="ic">⬡</span> Share Requests</button>
       <button data-tab="create-req" onclick="go('create-req')"><span class="ic">+</span> New Request</button>
-      <div class="section">Workflow</div>
-      <button data-tab="workflows" onclick="go('workflows')"><span class="ic">⟡</span> Templates</button>
+      <div class="section" id="nav-wf-section">Workflow</div>
+      <button data-tab="workflows" id="nav-wf-btn" onclick="go('workflows')"><span class="ic">⟡</span> Templates</button>
       <div class="section">Data</div>
       <button data-tab="files" onclick="go('files')"><span class="ic">▤</span> Files</button>
       <button data-tab="connections" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
@@ -256,9 +256,26 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           <div class="bg" style="margin-top:6px"><button class="btn btn-p" onclick="createWf()">Create Template</button></div>
         </div>
         <div class="tw"><table>
-          <thead><tr><th>Name</th><th>Sharing Type</th><th>Classification</th><th>Active</th><th>Created</th></tr></thead>
+          <thead><tr><th>Name</th><th>Sharing Type</th><th>Classification</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
           <tbody id="wf-tb"></tbody>
         </table></div>
+        <div id="wf-edit" class="card hidden">
+          <h3>Edit Template</h3>
+          <input type="hidden" id="wfe-id">
+          <div class="fr3">
+            <div class="fg"><label>Name</label><input id="wfe-name"></div>
+            <div class="fg"><label>Sharing Type</label><select id="wfe-sharing"><option value="">Any</option><option value="internal">Internal</option><option value="external">External</option></select></div>
+            <div class="fg"><label>Data Classification</label><select id="wfe-class"><option value="">Any</option><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="sensitive">Sensitive</option></select></div>
+          </div>
+          <div class="fg"><label style="display:inline;text-transform:none;font-size:12.5px;font-weight:500"><input type="checkbox" id="wfe-active" checked> Active</label></div>
+          <div id="wfe-steps" class="mb"></div>
+          <button class="btn btn-o btn-sm" onclick="addWfEditStep()">+ Add Step</button>
+          <div class="bg" style="margin-top:6px">
+            <button class="btn btn-p" onclick="saveWfEdit()">Save Changes</button>
+            <button class="btn btn-r btn-sm" onclick="deactivateWf()">Deactivate</button>
+            <button class="btn btn-o" onclick="toggleEl('wf-edit')">Cancel</button>
+          </div>
+        </div>
       </div>
 
       <!-- FILES -->
@@ -384,11 +401,16 @@ async function doLogin(){
   }catch(e){toast(e.message,false)}
 }
 function doLogout(){localStorage.removeItem('ds_token');localStorage.removeItem('ds_refresh');location.reload()}
+function isAdmin(){return user&&(user.platform_role==='platform_admin'||user.platform_role==='org_admin')}
 function enterApp(){
   document.getElementById('login-wrap').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('u-name').textContent=`${user.first_name||''} ${user.last_name||''}`.trim()||user.email;
-  document.getElementById('u-role').textContent=user.platform_role;
+  document.getElementById('u-role').textContent=user.product_role?`${user.platform_role} / ${user.product_role}`:user.platform_role;
+  // Hide workflow templates section for non-admins
+  const showWf=isAdmin();
+  document.getElementById('nav-wf-section').style.display=showWf?'':'none';
+  document.getElementById('nav-wf-btn').style.display=showWf?'':'none';
   go('portal');
 }
 
@@ -485,7 +507,7 @@ async function viewReq(id){
           <div class="fb"><span class="sn">${i+1}. ${s.name||s.step_type} ${badge(s.status)}</span></div>
           <div class="sm">Role: ${s.assignee_role||'—'} · Type: ${s.step_type} · SLA: ${fmtDt(s.sla_deadline)}${s.completed_at?' · Done: '+fmtDt(s.completed_at):''}${s.escalated_at?' · <span style="color:var(--red-500)">Escalated</span>':''}</div>
           ${s.comment?`<div class="sc">${s.comment}</div>`:''}
-          ${s.status==='pending'?`<div class="bg" style="margin-top:6px">
+          ${s.status==='pending'&&s.can_act?`<div class="bg" style="margin-top:6px">
             <button class="btn btn-g btn-sm" onclick="approveStep('${r.id}','${s.id}')">Approve</button>
             <button class="btn btn-r btn-sm" onclick="rejectStep('${r.id}','${s.id}')">Reject</button>
             <button class="btn btn-a btn-sm" onclick="reqChanges('${r.id}','${s.id}')">Request Changes</button>
@@ -511,10 +533,45 @@ function addWfStep(){wfN++;document.getElementById('wf-steps').innerHTML+=`
     <div class="fg"><label>SLA (days)</label><input id="ws-s-${wfN}" type="number" value="3"></div>
   </div>`}
 async function loadWorkflows(){const d=await api('GET',`${DS}/workflows/templates`);document.getElementById('wf-tb').innerHTML=d.map(w=>`<tr>
-  <td>${w.name}</td><td>${w.sharing_type||'Any'}</td><td>${w.data_classification||'Any'}</td><td>${badge(w.is_active?'active':'draft')}</td><td>${fmtD(w.created_at)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No templates</td></tr>'}
+  <td>${w.name}</td><td>${w.sharing_type||'Any'}</td><td>${w.data_classification||'Any'}</td><td>${badge(w.is_active?'active':'draft')}</td><td>${fmtD(w.created_at)}</td>
+  <td><button class="btn btn-o btn-sm" onclick="editWf('${w.id}')">Edit</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">No templates</td></tr>'}
 async function createWf(){
   const steps=[];for(let i=1;i<=wfN;i++)steps.push({step_type:document.getElementById(`ws-t-${i}`).value,name:document.getElementById(`ws-n-${i}`).value,assignee_role:document.getElementById(`ws-r-${i}`).value||null,sla_days:parseInt(document.getElementById(`ws-s-${i}`).value)||3,execution_mode:'sequential',condition_expr:null});
   try{await api('POST',`${DS}/workflows/templates`,{name:document.getElementById('wf-name').value,sharing_type:document.getElementById('wf-sharing').value||null,data_classification:document.getElementById('wf-class').value||null,steps});toast('Template created');wfN=0;document.getElementById('wf-steps').innerHTML='';toggleEl('wf-form');loadWorkflows()}catch(e){toast(e.message,false)}
+}
+let wfeN=0;
+async function editWf(id){
+  const t=await api('GET',`${DS}/workflows/templates/${id}`);
+  document.getElementById('wfe-id').value=id;
+  document.getElementById('wfe-name').value=t.name;
+  document.getElementById('wfe-sharing').value=t.sharing_type||'';
+  document.getElementById('wfe-class').value=t.data_classification||'';
+  document.getElementById('wfe-active').checked=t.is_active;
+  wfeN=0;document.getElementById('wfe-steps').innerHTML='';
+  (t.steps||[]).forEach(s=>{wfeN++;document.getElementById('wfe-steps').innerHTML+=`
+    <div class="fr" style="margin-top:6px;padding:8px;background:var(--slate-50);border-radius:var(--radius)">
+      <div class="fg"><label>Step ${wfeN} Type</label><select id="wse-t-${wfeN}"><option ${s.step_type==='approval'?'selected':''}>approval</option><option ${s.step_type==='review'?'selected':''}>review</option><option ${s.step_type==='upload'?'selected':''}>upload</option><option ${s.step_type==='notification'?'selected':''}>notification</option><option ${s.step_type==='acknowledgement'?'selected':''}>acknowledgement</option></select></div>
+      <div class="fg"><label>Name</label><input id="wse-n-${wfeN}" value="${s.name||''}"></div>
+      <div class="fg"><label>Assignee Role</label><select id="wse-r-${wfeN}"><option value="">—</option><option ${s.assignee_role==='dpo'?'selected':''}>dpo</option><option ${s.assignee_role==='data_owner'?'selected':''}>data_owner</option><option ${s.assignee_role==='source'?'selected':''}>source</option><option ${s.assignee_role==='requester'?'selected':''}>requester</option><option ${s.assignee_role==='receiver'?'selected':''}>receiver</option></select></div>
+      <div class="fg"><label>SLA (days)</label><input id="wse-s-${wfeN}" type="number" value="${s.sla_days||3}"></div>
+    </div>`});
+  document.getElementById('wf-edit').classList.remove('hidden');
+}
+function addWfEditStep(){wfeN++;document.getElementById('wfe-steps').innerHTML+=`
+  <div class="fr" style="margin-top:6px;padding:8px;background:var(--slate-50);border-radius:var(--radius)">
+    <div class="fg"><label>Step ${wfeN} Type</label><select id="wse-t-${wfeN}"><option>approval</option><option>review</option><option>upload</option><option>notification</option><option>acknowledgement</option></select></div>
+    <div class="fg"><label>Name</label><input id="wse-n-${wfeN}" placeholder="Step name"></div>
+    <div class="fg"><label>Assignee Role</label><select id="wse-r-${wfeN}"><option value="">—</option><option>dpo</option><option>data_owner</option><option>source</option><option>requester</option><option>receiver</option></select></div>
+    <div class="fg"><label>SLA (days)</label><input id="wse-s-${wfeN}" type="number" value="3"></div>
+  </div>`}
+async function saveWfEdit(){
+  const id=document.getElementById('wfe-id').value;
+  const steps=[];for(let i=1;i<=wfeN;i++)steps.push({step_type:document.getElementById(`wse-t-${i}`).value,name:document.getElementById(`wse-n-${i}`).value,assignee_role:document.getElementById(`wse-r-${i}`).value||null,sla_days:parseInt(document.getElementById(`wse-s-${i}`).value)||3,execution_mode:'sequential',condition_expr:null});
+  try{await api('PUT',`${DS}/workflows/templates/${id}`,{name:document.getElementById('wfe-name').value,sharing_type:document.getElementById('wfe-sharing').value||null,data_classification:document.getElementById('wfe-class').value||null,is_active:document.getElementById('wfe-active').checked,steps});toast('Template updated');document.getElementById('wf-edit').classList.add('hidden');loadWorkflows()}catch(e){toast(e.message,false)}
+}
+async function deactivateWf(){
+  const id=document.getElementById('wfe-id').value;
+  try{await api('DELETE',`${DS}/workflows/templates/${id}`);toast('Template deactivated');document.getElementById('wf-edit').classList.add('hidden');loadWorkflows()}catch(e){toast(e.message,false)}
 }
 
 // Files
@@ -564,7 +621,7 @@ async function loadAudit(page=1){
 if(token){
   fetch(`${PF}/users/me`,{headers:{'Authorization':`Bearer ${token}`}})
     .then(r=>{if(!r.ok)throw new Error();return r.json()})
-    .then(u=>{user={id:u.user_id,email:'',first_name:'',last_name:'',tenant_id:u.tenant_id,platform_role:u.platform_role};enterApp()})
+    .then(u=>{user={id:u.user_id,email:'',first_name:'',last_name:'',tenant_id:u.tenant_id,platform_role:u.platform_role,product_role:u.product_role||null};enterApp()})
     .catch(()=>{localStorage.removeItem('ds_token');token=null});
 }
 </script>

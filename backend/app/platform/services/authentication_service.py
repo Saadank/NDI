@@ -26,6 +26,16 @@ class AuthenticationService:
         if not db_user.get("is_active"):
             raise UnauthorizedException("User account is disabled")
 
+        # Resolve product role for data_sharing
+        product_role = None
+        from app.platform.repositories.product_repository import ProductRepository
+        product_repo = ProductRepository()
+        product = await product_repo.find_product_by_slug("data_sharing")
+        if product:
+            role_record = await product_repo.find_user_product_role(db_user["id"], product["id"])
+            if role_record:
+                product_role = role_record["role"]
+
         return {
             "access_token": token_data["access_token"],
             "refresh_token": token_data["refresh_token"],
@@ -38,6 +48,7 @@ class AuthenticationService:
                 "last_name": db_user.get("last_name"),
                 "tenant_id": db_user["tenant_id"],
                 "platform_role": db_user["platform_role"],
+                "product_role": product_role,
             },
         }
 
