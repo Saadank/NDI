@@ -53,3 +53,8 @@ class GroupRepository(PostgresqlAsyncRepository):
             "SELECT id, email, first_name, last_name, platform_role FROM t_users WHERE group_id = $1 AND deleted_at IS NULL ORDER BY first_name",
             (group_id,),
         )
+
+    async def find_by_data_owner(self, user_id: int) -> dict | None:
+        return await self._fetch_row_optional(
+            "SELECT * FROM t_groups WHERE data_owner_id = $1 AND is_active = TRUE", (user_id,)
+        )

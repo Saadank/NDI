@@ -16,6 +16,9 @@ CREATE TABLE t_groups (
 
 CREATE INDEX idx_groups_tenant ON t_groups(tenant_id);
 
+-- Each group has a designated data owner
+ALTER TABLE t_groups ADD COLUMN data_owner_id INTEGER REFERENCES t_users(id);
+
 -- Each user belongs to one group
 ALTER TABLE t_users ADD COLUMN group_id INTEGER REFERENCES t_groups(id);
 

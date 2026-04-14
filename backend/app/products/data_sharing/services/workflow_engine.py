@@ -16,13 +16,26 @@ class WorkflowEngine:
     async def select_template(self, sharing_type: str, data_classification: str, tenant_id: int) -> dict | None:
         return await self.repo.find_template(sharing_type, data_classification, tenant_id)
 
-    async def create_workflow_steps(self, request_id: UUID, template: dict) -> list[dict]:
+    async def create_workflow_steps(self, request_id: UUID, template: dict, request: dict = None) -> list[dict]:
         template_steps = await self.repo.find_template_steps(template["id"])
+        # Resolve the data owner for the requester's group
+        data_owner_user_id = None
+        if request and request.get("requester_group_id"):
+            from app.platform.repositories.group_repository import GroupRepository
+            group_repo = GroupRepository()
+            group = await group_repo.find_by_id(request["requester_group_id"])
+            if group:
+                data_owner_user_id = group.get("data_owner_id")
+
         created = []
         for i, ts in enumerate(template_steps):
             # Only the first step is "pending"; the rest wait their turn
             status = "pending" if i == 0 else "waiting"
             sla_deadline = now() + timedelta(days=ts["sla_days"]) if ts["sla_days"] and i == 0 else None
+            # Route data_owner steps to the specific department data owner
+            assignee_user_id = None
+            if ts.get("assignee_role") == "data_owner" and data_owner_user_id:
+                assignee_user_id = data_owner_user_id
             step = await self.repo.create_step(
                 request_id=request_id,
                 template_step_id=ts["id"],
@@ -30,7 +43,7 @@ class WorkflowEngine:
                 step_type=ts["step_type"],
                 name=ts["name"],
                 assignee_role=ts.get("assignee_role"),
-                assignee_user_id=None,
+                assignee_user_id=assignee_user_id,
                 sla_deadline=sla_deadline,
                 status=status,
             )

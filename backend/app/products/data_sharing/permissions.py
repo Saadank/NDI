@@ -103,7 +103,12 @@ def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
     if role == SharingRole.DPO:
         return assignee == SharingRole.DPO
     if role == SharingRole.DATA_OWNER:
-        return assignee == SharingRole.DATA_OWNER
+        if assignee != SharingRole.DATA_OWNER:
+            return False
+        # Must be the specific data owner assigned to this step
+        if step.get("assignee_user_id"):
+            return step["assignee_user_id"] == auth_user.user_id
+        return True  # fallback if no specific user assigned
     if role == SharingRole.RECEIVER:
         if assignee != SharingRole.RECEIVER:
             return False

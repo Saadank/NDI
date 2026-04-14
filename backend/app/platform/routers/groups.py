@@ -21,6 +21,14 @@ class UpdateGroupBody(BaseModel):
     is_active: bool = True
 
 
+class SetDataOwnerBody(BaseModel):
+    user_id: int
+
+
+class MemberBody(BaseModel):
+    user_id: int
+
+
 @router.get("/")
 async def list_groups(
     auth_user: AuthUser = Depends(get_current_user),
@@ -57,6 +65,16 @@ async def deactivate_group(
     return await service.deactivate_group(group_id, auth_user)
 
 
+@router.put("/{group_id}/data-owner")
+async def set_data_owner(
+    group_id: int,
+    body: SetDataOwnerBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: GroupService = Depends(get_group_service),
+):
+    return await service.set_data_owner(group_id, body.user_id, auth_user)
+
+
 @router.get("/{group_id}/members")
 async def get_group_members(
     group_id: int,
@@ -64,3 +82,23 @@ async def get_group_members(
     service: GroupService = Depends(get_group_service),
 ):
     return await service.get_group_members(group_id, auth_user)
+
+
+@router.post("/{group_id}/members")
+async def assign_member(
+    group_id: int,
+    body: MemberBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: GroupService = Depends(get_group_service),
+):
+    return await service.assign_member(group_id, body.user_id, auth_user)
+
+
+@router.delete("/{group_id}/members/{user_id}")
+async def remove_member(
+    group_id: int,
+    user_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: GroupService = Depends(get_group_service),
+):
+    return await service.remove_member(group_id, user_id, auth_user)

@@ -87,7 +87,7 @@ class ShareRequestService:
             request["sharing_type"], request["data_classification"], tenant_id
         )
         if template:
-            await self.workflow_engine.create_workflow_steps(request_id, template)
+            await self.workflow_engine.create_workflow_steps(request_id, template, request)
             await self.repo.update(request_id, workflow_template_id=template["id"])
 
         updated = await self.repo.update_status(request_id, "submitted", auth_user.user_id)

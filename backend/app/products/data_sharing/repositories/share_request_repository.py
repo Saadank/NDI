@@ -198,9 +198,11 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
             args.append(group_id)
             idx += 1
         if assigned_role:
-            # Requests where their role step is currently pending
+            # Requests where this specific user is assigned to a pending step
             visibility.append(
-                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = ${idx} AND ws.status = 'pending')"
+                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id "
+                f"AND ws.assignee_role = ${idx} AND ws.status = 'pending' "
+                f"AND (ws.assignee_user_id = $2 OR ws.assignee_user_id IS NULL))"
             )
             args.append(assigned_role)
             idx += 1
@@ -231,7 +233,9 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
             idx += 1
         if assigned_role:
             visibility.append(
-                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id AND ws.assignee_role = ${idx} AND ws.status = 'pending')"
+                f"EXISTS (SELECT 1 FROM t_workflow_steps ws WHERE ws.request_id = r.id "
+                f"AND ws.assignee_role = ${idx} AND ws.status = 'pending' "
+                f"AND (ws.assignee_user_id = $2 OR ws.assignee_user_id IS NULL))"
             )
             args.append(assigned_role)
             idx += 1

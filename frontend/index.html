@@ -372,7 +372,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <div id="p-groups" class="panel">
         <div class="fb mb">
           <h3 style="font-size:13.5px;font-weight:700">Department Groups</h3>
-          <button class="btn btn-p btn-sm" onclick="toggleEl('grp-form')">+ New Group</button>
+          <button class="btn btn-p btn-sm" id="grp-new-btn" onclick="toggleEl('grp-form')">+ New Group</button>
         </div>
         <div id="grp-form" class="card hidden">
           <h3>Create Group</h3>
@@ -384,7 +384,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           <div class="bg" style="margin-top:6px"><button class="btn btn-p" onclick="createGroup()">Create Group</button></div>
         </div>
         <div class="tw"><table>
-          <thead><tr><th>Name</th><th>Arabic Name</th><th>Members</th><th>Active</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Arabic Name</th><th>Data Owner</th><th>Members</th><th>Active</th><th>Actions</th></tr></thead>
           <tbody id="grp-tb"></tbody>
         </table></div>
         <div id="grp-detail" class="card hidden">
@@ -442,12 +442,13 @@ function enterApp(){
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('u-name').textContent=`${user.first_name||''} ${user.last_name||''}`.trim()||user.email;
   document.getElementById('u-role').textContent=user.product_role?`${user.platform_role} / ${user.product_role}`:user.platform_role;
-  // Hide workflow templates and groups section for non-admins
+  // Hide workflow templates for non-admins; show groups for admins + data_owner
   const showWf=isAdmin();
+  const showGrp=isAdmin()||user.product_role==='data_owner';
   document.getElementById('nav-wf-section').style.display=showWf?'':'none';
   document.getElementById('nav-wf-btn').style.display=showWf?'':'none';
-  document.getElementById('nav-grp-section').style.display=showWf?'':'none';
-  document.getElementById('nav-grp-btn').style.display=showWf?'':'none';
+  document.getElementById('nav-grp-section').style.display=showGrp?'':'none';
+  document.getElementById('nav-grp-btn').style.display=showGrp?'':'none';
   go('portal');
 }
 
@@ -630,30 +631,41 @@ let _editGroupId=null;
 async function loadGroups(){
   const groups=await api('GET',`${PF}/groups/`);
   _groupsCache=groups;
+  document.getElementById('grp-new-btn').style.display=isAdmin()?'':'none';
   document.getElementById('grp-tb').innerHTML=groups.map(g=>`<tr>
-    <td>${g.name}</td><td>${g.name_ar||'—'}</td><td>${g.member_count||0}</td><td>${badge(g.is_active?'active':'draft')}</td>
+    <td>${g.name}</td><td>${g.name_ar||'—'}</td><td>${g.data_owner_name||'<span style="color:var(--slate-400)">Not assigned</span>'}</td><td>${g.member_count||0}</td><td>${badge(g.is_active?'active':'draft')}</td>
     <td class="bg"><button class="btn btn-o btn-sm" onclick="viewGroupMembers(${g.id},'${g.name}')">Members</button></td>
-  </tr>`).join('')||'<tr><td colspan="5" class="empty">No groups</td></tr>';
+  </tr>`).join('')||'<tr><td colspan="6" class="empty">No groups</td></tr>';
 }
 async function createGroup(){
   try{await api('POST',`${PF}/groups/`,{name:document.getElementById('grp-name').value,name_ar:document.getElementById('grp-name-ar').value||null,description:document.getElementById('grp-desc').value||null});toast('Group created');document.getElementById('grp-name').value='';document.getElementById('grp-name-ar').value='';document.getElementById('grp-desc').value='';toggleEl('grp-form');loadGroups()}catch(e){toast(e.message,false)}
 }
 async function viewGroupMembers(groupId,groupName){
   _editGroupId=groupId;
+  const grp=_groupsCache.find(g=>g.id===groupId);
+  const doId=grp?grp.data_owner_id:null;
   document.getElementById('grp-detail-title').textContent=`Members — ${groupName}`;
   const members=await api('GET',`${PF}/groups/${groupId}/members`);
-  document.getElementById('grp-members').innerHTML=members.length?`<div class="tw"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map(m=>`<tr><td>${m.first_name||''} ${m.last_name||''}</td><td class="mono">${m.email}</td><td>${m.platform_role}</td><td><button class="btn btn-r btn-sm" onclick="removeFromGroup(${m.id})">Remove</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No members</div>';
-  // Load all tenant users for assignment
+  document.getElementById('grp-members').innerHTML=members.length?`<div class="tw"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map(m=>`<tr>
+    <td>${m.first_name||''} ${m.last_name||''}${m.id===doId?' <span class="badge badge-active">Data Owner</span>':''}</td>
+    <td class="mono">${m.email}</td><td>${m.platform_role}</td>
+    <td class="bg">${isAdmin()&&m.id!==doId?`<button class="btn btn-p btn-sm" onclick="setDataOwner(${groupId},${m.id},'${groupName}')">Set as Data Owner</button> `:''}
+    <button class="btn btn-r btn-sm" onclick="removeFromGroup(${m.id},'${groupName}')">Remove</button></td>
+  </tr>`).join('')}</tbody></table></div>`:'<div class="empty">No members</div>';
   try{const users=await api('GET',`${PF}/users/?limit=100`);const sel=document.getElementById('grp-assign-user');sel.innerHTML='<option value="">— Select user —</option>'+(users.data||users).filter(u=>u.id).map(u=>`<option value="${u.id}">${u.first_name||''} ${u.last_name||''} (${u.email})</option>`).join('')}catch(e){}
   document.getElementById('grp-detail').classList.remove('hidden');
+}
+async function setDataOwner(groupId,userId,groupName){
+  try{await api('PUT',`${PF}/groups/${groupId}/data-owner`,{user_id:userId});toast('Data owner set');loadGroups();viewGroupMembers(groupId,groupName)}catch(e){toast(e.message,false)}
 }
 async function assignUserToGroup(){
   const uid=document.getElementById('grp-assign-user').value;
   if(!uid||!_editGroupId)return toast('Select a user',false);
-  try{await api('PUT',`${PF}/users/${uid}/group`,{group_id:_editGroupId});toast('User assigned');viewGroupMembers(_editGroupId,document.getElementById('grp-detail-title').textContent.replace('Members — ',''));loadGroups()}catch(e){toast(e.message,false)}
+  const gName=document.getElementById('grp-detail-title').textContent.replace('Members — ','');
+  try{await api('POST',`${PF}/groups/${_editGroupId}/members`,{user_id:parseInt(uid)});toast('User assigned');viewGroupMembers(_editGroupId,gName);loadGroups()}catch(e){toast(e.message,false)}
 }
-async function removeFromGroup(uid){
-  try{await api('PUT',`${PF}/users/${uid}/group`,{group_id:null});toast('User removed');viewGroupMembers(_editGroupId,document.getElementById('grp-detail-title').textContent.replace('Members — ',''));loadGroups()}catch(e){toast(e.message,false)}
+async function removeFromGroup(uid,groupName){
+  try{await api('DELETE',`${PF}/groups/${_editGroupId}/members/${uid}`);toast('User removed');viewGroupMembers(_editGroupId,groupName||'');loadGroups()}catch(e){toast(e.message,false)}
 }
 
 // Files

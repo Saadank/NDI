@@ -4,8 +4,11 @@ Run AFTER setup_realm.py.
 
 Creates:
   - 1 tenant  : Acme Corporation
-  - 5 accounts: superadmin, requester, receiver, dpo, dataowner
-    All under Acme Corp. Emails carry the role name so they're easy to remember.
+  - 1 superadmin (org_admin)
+  - 1 DPO
+  - 3 departments: Finance, Human Resources, IT
+  - Per department: 1 data owner + 2 data stewards (requester role)
+  - Total: 12 accounts (1 admin + 1 DPO + 3 data owners + 6 stewards + 1 platform admin)
 
 Usage:
     python -X utf8 backend/setup/keycloak/seed_test_data.py
@@ -25,52 +28,69 @@ REALM          = os.getenv("KEYCLOAK_REALM",         "datasharing-dev")
 SUPER_EMAIL    = os.getenv("SUPER_ADMIN_EMAIL",      "superadmin@datasharing.local")
 SUPER_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD",   "SuperAdmin123!")
 
-# ── The one tenant everyone lives under ─────────────────────────────────────
+PASSWORD = "Test123!"
+
+# ── Tenant ───────────────────────────────────────────────────────────────────
 TENANT = {
     "name":        "Acme Corporation",
     "name_ar":     "شركة أكمي",
     "slug":        "acme-corp",
     "tenant_type": "internal_org",
-    "dpo_name":    "DPO Acme",
-    "dpo_email":   "dpo@acme.local",
+    "dpo_name":    "Nora Al-Rashid",
+    "dpo_email":   "nora.dpo@acme.local",
 }
 
-# ── Role-named accounts ──────────────────────────────────────────────────────
-# email doubles as username — easy to remember which role each account has
-USERS = [
+# ── Departments ──────────────────────────────────────────────────────────────
+DEPARTMENTS = [
     {
-        "email":         "requester@acme.local",
-        "first":         "Requester",
-        "last":          "Acme",
-        "platform_role": "user",
-        "product_role":  "requester",
-        "password":      "Test123!",
+        "name": "Finance Department",
+        "name_ar": "قسم المالية",
+        "slug": "finance",
+        "desc": "Financial operations, budgeting, and reporting",
+        "data_owner": {
+            "email": "ahmed.do@acme.local", "first": "Ahmed", "last": "Al-Farsi",
+            "platform_role": "user", "product_role": "data_owner",
+        },
+        "stewards": [
+            {"email": "sara.fin@acme.local",  "first": "Sara",  "last": "Al-Harbi",  "platform_role": "user", "product_role": "requester"},
+            {"email": "omar.fin@acme.local",  "first": "Omar",  "last": "Al-Otaibi", "platform_role": "user", "product_role": "requester"},
+        ],
     },
     {
-        "email":         "receiver@acme.local",
-        "first":         "Receiver",
-        "last":          "Acme",
-        "platform_role": "user",
-        "product_role":  "receiver",
-        "password":      "Test123!",
+        "name": "Human Resources",
+        "name_ar": "الموارد البشرية",
+        "slug": "hr",
+        "desc": "Employee management, recruitment, and HR operations",
+        "data_owner": {
+            "email": "fatima.do@acme.local", "first": "Fatima", "last": "Al-Qahtani",
+            "platform_role": "user", "product_role": "data_owner",
+        },
+        "stewards": [
+            {"email": "khalid.hr@acme.local", "first": "Khalid", "last": "Al-Dosari", "platform_role": "user", "product_role": "requester"},
+            {"email": "maha.hr@acme.local",   "first": "Maha",   "last": "Al-Shehri", "platform_role": "user", "product_role": "requester"},
+        ],
     },
     {
-        "email":         "dpo@acme.local",
-        "first":         "DPO",
-        "last":          "Acme",
-        "platform_role": "user",
-        "product_role":  "dpo",
-        "password":      "Test123!",
-    },
-    {
-        "email":         "dataowner@acme.local",
-        "first":         "DataOwner",
-        "last":          "Acme",
-        "platform_role": "user",
-        "product_role":  "data_owner",
-        "password":      "Test123!",
+        "name": "IT Department",
+        "name_ar": "قسم تقنية المعلومات",
+        "slug": "it",
+        "desc": "Technology infrastructure, systems, and security",
+        "data_owner": {
+            "email": "youssef.do@acme.local", "first": "Youssef", "last": "Al-Zahrani",
+            "platform_role": "user", "product_role": "data_owner",
+        },
+        "stewards": [
+            {"email": "layla.it@acme.local",  "first": "Layla",  "last": "Al-Ghamdi", "platform_role": "user", "product_role": "requester"},
+            {"email": "faisal.it@acme.local", "first": "Faisal", "last": "Al-Mutairi","platform_role": "user", "product_role": "requester"},
+        ],
     },
 ]
+
+# ── DPO (org-wide) ──────────────────────────────────────────────────────────
+DPO_USER = {
+    "email": "nora.dpo@acme.local", "first": "Nora", "last": "Al-Rashid",
+    "platform_role": "user", "product_role": "dpo",
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -123,7 +143,6 @@ def kc_assign_roles(token, user_id, role_names):
 
 
 def kc_set_attributes(token, user_id, attributes, profile=None):
-    """Update user attributes. If profile dict given, merge it to preserve email/name."""
     payload = {"attributes": attributes}
     if profile:
         payload.update(profile)
@@ -142,7 +161,6 @@ def sql(query):
 
 
 def sql_value(query):
-    """Return the single scalar value from a query."""
     out = sql(query)
     lines = [
         l.strip() for l in out.strip().split("\n")
@@ -156,6 +174,46 @@ def sql_value(query):
     return lines[0] if lines else None
 
 
+def create_user(token, tenant_id, u, platform_admin_id=None):
+    """Create a user in Keycloak + Postgres + assign product role. Returns DB user ID."""
+    api("POST", f"/admin/realms/{REALM}/users", {
+        "username":     u["email"],
+        "email":        u["email"],
+        "enabled":      True,
+        "emailVerified": True,
+        "firstName":    u["first"],
+        "lastName":     u["last"],
+        "credentials":  [{"type": "password", "value": PASSWORD, "temporary": False}],
+    }, token)
+
+    kc_id = kc_get_user_id(token, u["email"])
+    if not kc_id:
+        print(f"  ! Could not find {u['email']} in KC")
+        return None
+
+    kc_assign_roles(token, kc_id, [u["platform_role"], u["product_role"]])
+
+    sql(f"""
+        INSERT INTO t_users (tenant_id, keycloak_id, email, first_name, last_name, platform_role)
+        VALUES ({tenant_id}, '{kc_id}', '{u["email"]}', '{u["first"]}', '{u["last"]}', '{u["platform_role"]}')
+        ON CONFLICT (keycloak_id) DO NOTHING;
+    """)
+    db_id = int(sql_value(f"SELECT id FROM t_users WHERE keycloak_id = '{kc_id}';"))
+
+    kc_set_attributes(token, kc_id, {
+        "tenant_id": [str(tenant_id)],
+        "user_id":   [str(db_id)],
+    }, profile={"email": u["email"], "firstName": u["first"], "lastName": u["last"], "emailVerified": True})
+
+    sql(f"""
+        INSERT INTO t_user_product_roles (user_id, product_id, role, assigned_by)
+        VALUES ({db_id}, 1, '{u["product_role"]}', {db_id})
+        ON CONFLICT (user_id, product_id) DO NOTHING;
+    """)
+
+    return db_id
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -166,9 +224,9 @@ def main():
     token = get_admin_token()
     print("\n[1] KC admin token obtained")
 
-    # ── 1. Create tenant ──────────────────────────────────────────────────────
+    # ── 1. Create tenant ─────────────────────────────────────────────────────
     t = TENANT
-    print(f"\n[2] Creating tenant '{t['name']}' in DB...")
+    print(f"\n[2] Creating tenant '{t['name']}'...")
     sql(f"""
         INSERT INTO t_tenants (name, name_ar, slug, tenant_type, dpo_name, dpo_email)
         VALUES ('{t["name"]}', '{t["name_ar"]}', '{t["slug"]}', '{t["tenant_type"]}',
@@ -178,176 +236,114 @@ def main():
     tenant_id = int(sql_value(f"SELECT id FROM t_tenants WHERE slug = '{t['slug']}';"))
     print(f"  + Tenant ID: {tenant_id}")
 
-    # ── 2. Bootstrap platform admin row (needed for FK in t_tenant_products) ──
-    print(f"\n[3] Bootstrapping platform admin in DB...")
+    # ── 2. Bootstrap platform admin ──────────────────────────────────────────
+    print(f"\n[3] Bootstrapping platform admin...")
     sql(f"""
         INSERT INTO t_platform_admins (email, first_name, last_name)
         VALUES ('{SUPER_EMAIL}', 'Super', 'Admin')
         ON CONFLICT (email) DO NOTHING;
     """)
-    platform_admin_id = int(sql_value(
-        f"SELECT id FROM t_platform_admins WHERE email = '{SUPER_EMAIL}';"
-    ))
-    print(f"  + Platform admin DB ID: {platform_admin_id}")
+    pa_id = int(sql_value(f"SELECT id FROM t_platform_admins WHERE email = '{SUPER_EMAIL}';"))
 
-    # ── 3. Wire super admin KC user → DB ─────────────────────────────────────
-    print(f"\n[4] Wiring super admin ({SUPER_EMAIL}) into t_users...")
+    # ── 3. Wire super admin ─────────────────────────────────────────────────
+    print(f"\n[4] Wiring super admin ({SUPER_EMAIL})...")
     kc_super_id = kc_get_user_id(token, SUPER_EMAIL)
-    if not kc_super_id:
-        print(f"  ! Super admin not found in Keycloak — did you run setup_realm.py first?")
-    else:
+    if kc_super_id:
         sql(f"""
             INSERT INTO t_users (tenant_id, keycloak_id, email, first_name, last_name, platform_role)
             VALUES ({tenant_id}, '{kc_super_id}', '{SUPER_EMAIL}', 'Super', 'Admin', 'platform_admin')
             ON CONFLICT (keycloak_id) DO NOTHING;
         """)
         super_db_id = int(sql_value(f"SELECT id FROM t_users WHERE keycloak_id = '{kc_super_id}';"))
-        # Stamp KC attributes with real DB IDs
         kc_set_attributes(token, kc_super_id, {
-            "tenant_id": [str(tenant_id)],
-            "user_id":   [str(super_db_id)],
+            "tenant_id": [str(tenant_id)], "user_id": [str(super_db_id)],
         }, profile={"email": SUPER_EMAIL, "firstName": "Super", "lastName": "Admin", "emailVerified": True})
-        sql(f"""
-            UPDATE t_platform_admins
-            SET keycloak_id = '{kc_super_id}'
-            WHERE email = '{SUPER_EMAIL}';
-        """)
-        print(f"  + Super admin DB user ID: {super_db_id}  KC: {kc_super_id[:8]}...")
+        sql(f"UPDATE t_platform_admins SET keycloak_id = '{kc_super_id}' WHERE email = '{SUPER_EMAIL}';")
+        print(f"  + Super admin DB ID: {super_db_id}")
 
-    # ── 4. Enable all products for tenant ─────────────────────────────────────
-    print(f"\n[5] Enabling all products for tenant {tenant_id}...")
+    # ── 4. Enable products ──────────────────────────────────────────────────
+    print(f"\n[5] Enabling products...")
     sql(f"""
         INSERT INTO t_tenant_products (tenant_id, product_id, enabled_by)
-        SELECT {tenant_id}, id, {platform_admin_id} FROM t_products WHERE is_active = TRUE
+        SELECT {tenant_id}, id, {pa_id} FROM t_products WHERE is_active = TRUE
         ON CONFLICT (tenant_id, product_id) DO NOTHING;
     """)
-    print(f"  + All products enabled")
 
-    # ── 5. Create role-named users ─────────────────────────────────────────────
-    print(f"\n[6] Creating role-named users...")
-    for u in USERS:
-        # Keycloak
-        api("POST", f"/admin/realms/{REALM}/users", {
-            "username":     u["email"],
-            "email":        u["email"],
-            "enabled":      True,
-            "emailVerified": True,
-            "firstName":    u["first"],
-            "lastName":     u["last"],
-            "credentials":  [{"type": "password", "value": u["password"], "temporary": False}],
-        }, token)
+    # ── 5. Create DPO ────────────────────────────────────────────────────────
+    print(f"\n[6] Creating DPO...")
+    dpo_db_id = create_user(token, tenant_id, DPO_USER)
+    print(f"  + {DPO_USER['email']:35s}  DPO  DB={dpo_db_id}")
 
-        kc_id = kc_get_user_id(token, u["email"])
-        if not kc_id:
-            print(f"  ! Could not find {u['email']} in KC after creation")
-            continue
-
-        kc_assign_roles(token, kc_id, [u["platform_role"], u["product_role"]])
-
-        # Postgres
-        sql(f"""
-            INSERT INTO t_users (tenant_id, keycloak_id, email, first_name, last_name, platform_role)
-            VALUES ({tenant_id}, '{kc_id}', '{u["email"]}', '{u["first"]}', '{u["last"]}', '{u["platform_role"]}')
-            ON CONFLICT (keycloak_id) DO NOTHING;
-        """)
-        db_user_id = int(sql_value(f"SELECT id FROM t_users WHERE keycloak_id = '{kc_id}';"))
-
-        # Stamp KC attributes (include profile to avoid Keycloak wiping email/name)
-        kc_set_attributes(token, kc_id, {
-            "tenant_id": [str(tenant_id)],
-            "user_id":   [str(db_user_id)],
-        }, profile={"email": u["email"], "firstName": u["first"], "lastName": u["last"], "emailVerified": True})
-
-        # Product role (data_sharing product_id = 1)
-        sql(f"""
-            INSERT INTO t_user_product_roles (user_id, product_id, role, assigned_by)
-            VALUES ({db_user_id}, 1, '{u["product_role"]}', {db_user_id})
-            ON CONFLICT (user_id, product_id) DO NOTHING;
-        """)
-
-        print(f"  + {u['email']:30s}  role={u['product_role']:12s}  KC={kc_id[:8]}...")
-
-    # ── 6. Create default workflow template ─────────────────────────────────
-    print(f"\n[7] Creating default workflow template...")
-    # Use superadmin's DB user ID as created_by
+    # ── 6. Create departments + users ────────────────────────────────────────
+    print(f"\n[7] Creating departments and users...")
     super_db_id_str = sql_value(f"SELECT id FROM t_users WHERE email = '{SUPER_EMAIL}';")
-    if super_db_id_str:
-        super_db_id = int(super_db_id_str)
-        # Check if a default template already exists (sharing_type IS NULL AND data_classification IS NULL)
-        existing = sql_value(
-            f"SELECT COUNT(*) FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
-            f"AND sharing_type IS NULL AND data_classification IS NULL;"
+    super_db_id = int(super_db_id_str) if super_db_id_str else 1
+
+    for dept in DEPARTMENTS:
+        # Create group
+        sql(f"""
+            INSERT INTO t_groups (tenant_id, name, name_ar, slug, description)
+            VALUES ({tenant_id}, '{dept["name"]}', '{dept["name_ar"]}', '{dept["slug"]}', '{dept["desc"]}')
+            ON CONFLICT (tenant_id, slug) DO NOTHING;
+        """)
+        grp_id = int(sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = '{dept['slug']}';"))
+        print(f"\n  Department: {dept['name']} (ID: {grp_id})")
+
+        # Create data owner
+        do = dept["data_owner"]
+        do_db_id = create_user(token, tenant_id, do)
+        sql(f"UPDATE t_users SET group_id = {grp_id} WHERE id = {do_db_id};")
+        sql(f"UPDATE t_groups SET data_owner_id = {do_db_id} WHERE id = {grp_id};")
+        print(f"    Data Owner: {do['email']:35s}  DB={do_db_id}")
+
+        # Create stewards
+        for st in dept["stewards"]:
+            st_db_id = create_user(token, tenant_id, st)
+            sql(f"UPDATE t_users SET group_id = {grp_id} WHERE id = {st_db_id};")
+            print(f"    Steward:    {st['email']:35s}  DB={st_db_id}")
+
+    # ── 7. Default workflow template ─────────────────────────────────────────
+    print(f"\n[8] Creating default workflow template...")
+    existing = sql_value(
+        f"SELECT COUNT(*) FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
+        f"AND sharing_type IS NULL AND data_classification IS NULL;"
+    )
+    if existing and int(existing) == 0:
+        sql(f"""
+            INSERT INTO t_workflow_templates (tenant_id, name, sharing_type, data_classification, is_active, created_by)
+            VALUES ({tenant_id}, 'Default Approval Workflow', NULL, NULL, TRUE, {super_db_id});
+        """)
+        tpl_id = sql_value(
+            f"SELECT id FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
+            f"AND name = 'Default Approval Workflow' ORDER BY created_at DESC LIMIT 1;"
         )
-        if existing and int(existing) == 0:
+        if tpl_id:
             sql(f"""
-                INSERT INTO t_workflow_templates (tenant_id, name, sharing_type, data_classification, is_active, created_by)
-                VALUES ({tenant_id}, 'Default Approval Workflow', NULL, NULL, TRUE, {super_db_id});
+                INSERT INTO t_template_steps (template_id, step_order, step_type, name, assignee_role, sla_days)
+                VALUES
+                    ('{tpl_id}', 1, 'approval', 'DPO Review', 'dpo', 3),
+                    ('{tpl_id}', 2, 'approval', 'Data Owner Approval', 'data_owner', 5);
             """)
-            tpl_id = sql_value(
-                f"SELECT id FROM t_workflow_templates WHERE tenant_id = {tenant_id} "
-                f"AND name = 'Default Approval Workflow' ORDER BY created_at DESC LIMIT 1;"
-            )
-            if tpl_id:
-                sql(f"""
-                    INSERT INTO t_template_steps (template_id, step_order, step_type, name, assignee_role, sla_days)
-                    VALUES
-                        ('{tpl_id}', 1, 'approval', 'DPO Review', 'dpo', 3),
-                        ('{tpl_id}', 2, 'approval', 'Data Owner Approval', 'data_owner', 5);
-                """)
-                print(f"  + Default template created with 2 steps (DPO Review, Data Owner Approval)")
-            else:
-                print(f"  ! Could not find template ID after insert")
-        else:
-            print(f"  + Default template already exists, skipping")
+            print(f"  + Default template: DPO Review -> Data Owner Approval")
     else:
-        print(f"  ! Super admin not found in DB, skipping template creation")
+        print(f"  + Already exists, skipping")
 
-    # ── 7. Create department groups ───────────────────────────────────────────
-    print(f"\n[8] Creating department groups...")
-    GROUPS = [
-        {"name": "Finance Department", "name_ar": "قسم المالية", "slug": "finance", "desc": "Financial operations and reporting"},
-        {"name": "Human Resources", "name_ar": "الموارد البشرية", "slug": "hr", "desc": "Employee management and HR operations"},
-        {"name": "IT Department", "name_ar": "قسم تقنية المعلومات", "slug": "it", "desc": "Technology infrastructure and systems"},
-    ]
-    for g in GROUPS:
-        existing_g = sql_value(
-            f"SELECT COUNT(*) FROM t_groups WHERE tenant_id = {tenant_id} AND slug = '{g['slug']}';"
-        )
-        if existing_g and int(existing_g) == 0:
-            sql(f"""
-                INSERT INTO t_groups (tenant_id, name, name_ar, slug, description)
-                VALUES ({tenant_id}, '{g["name"]}', '{g["name_ar"]}', '{g["slug"]}', '{g["desc"]}');
-            """)
-            print(f"  + Created group: {g['name']}")
-        else:
-            print(f"  + Group '{g['name']}' already exists, skipping")
-
-    # Assign test users to groups
-    finance_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'finance';")
-    hr_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'hr';")
-    it_id = sql_value(f"SELECT id FROM t_groups WHERE tenant_id = {tenant_id} AND slug = 'it';")
-    if finance_id and hr_id and it_id:
-        # requester + dataowner → Finance, receiver → HR, dpo → IT, superadmin → IT
-        sql(f"UPDATE t_users SET group_id = {finance_id} WHERE email = 'requester@acme.local' AND tenant_id = {tenant_id};")
-        sql(f"UPDATE t_users SET group_id = {finance_id} WHERE email = 'dataowner@acme.local' AND tenant_id = {tenant_id};")
-        sql(f"UPDATE t_users SET group_id = {hr_id} WHERE email = 'receiver@acme.local' AND tenant_id = {tenant_id};")
-        sql(f"UPDATE t_users SET group_id = {it_id} WHERE email = 'dpo@acme.local' AND tenant_id = {tenant_id};")
-        sql(f"UPDATE t_users SET group_id = {it_id} WHERE email = '{SUPER_EMAIL}' AND tenant_id = {tenant_id};")
-        print(f"  + Assigned users to groups (Finance: requester+dataowner, HR: receiver, IT: dpo+admin)")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # ── Summary ──────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
-    print("  Done! Accounts created:")
+    print("  SETUP COMPLETE")
     print("=" * 60)
-    print(f"\n  Tenant : {TENANT['name']}  (slug: {TENANT['slug']})")
-    print(f"\n  {'Email':<32} {'Role':<14} Password")
-    print(f"  {'-'*32} {'-'*14} {'-'*12}")
-    print(f"  {SUPER_EMAIL:<32} {'platform_admin':<14} {SUPER_PASSWORD}")
-    for u in USERS:
-        print(f"  {u['email']:<32} {u['product_role']:<14} {u['password']}")
-    print(f"\n  Login endpoint:")
-    print(f"    POST http://localhost:8000/api/v1/platform/auth/login")
-    print(f'    {{"username": "superadmin@datasharing.local", "password": "{SUPER_PASSWORD}"}}')
+    print(f"\n  Tenant: {TENANT['name']}")
+    print(f"\n  {'Email':<38} {'Role':<14} {'Department':<20} Password")
+    print(f"  {'-'*38} {'-'*14} {'-'*20} {'-'*10}")
+    print(f"  {SUPER_EMAIL:<38} {'admin':<14} {'—':<20} {SUPER_PASSWORD}")
+    print(f"  {DPO_USER['email']:<38} {'dpo':<14} {'Org-wide':<20} {PASSWORD}")
+    for dept in DEPARTMENTS:
+        do = dept["data_owner"]
+        print(f"  {do['email']:<38} {'data_owner':<14} {dept['name']:<20} {PASSWORD}")
+        for st in dept["stewards"]:
+            print(f"  {st['email']:<38} {'steward':<14} {dept['name']:<20} {PASSWORD}")
+    print(f"\n  Workflow: DPO Review (3d SLA) -> Data Owner Approval (5d SLA)")
+    print(f"\n  Login: POST http://localhost:8000/api/v1/platform/auth/login")
     print()
 
 
