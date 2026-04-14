@@ -19,6 +19,7 @@ class ObjectStoreGateway:
             secure=settings.MINIO_SECURE,
         )
         self.default_bucket = settings.MINIO_BUCKET
+        self._internal_endpoint = settings.MINIO_ENDPOINT
         self._ensure_bucket(self.default_bucket)
 
     def _ensure_bucket(self, bucket: str) -> None:
@@ -55,6 +56,8 @@ class ObjectStoreGateway:
             object_name=key,
             expires=timedelta(seconds=expires_seconds),
         )
+        # Replace internal Docker hostname with localhost for browser access
+        url = url.replace(f"http://{self._internal_endpoint}", "http://localhost:9000")
         return url
 
     def delete_object(self, key: str, bucket: str | None = None) -> None:

@@ -8,6 +8,7 @@ from app.platform.services.audit_service import AuditService
 from app.products.data_sharing.repositories.file_repository import FileRepository
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
 from app.structures.auth_user import AuthUser
+from app.products.data_sharing.permissions import can_view_request, require
 from app.utils.exceptions import ValidationException
 from app.utils.timezone import now
 
@@ -32,7 +33,7 @@ class FileService:
             raise ValidationException(f"File size exceeds maximum of {settings.MAX_FILE_SIZE_BYTES} bytes")
 
         request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
-        if request["status"] not in ("submitted", "in_review", "approved"):
+        if request["status"] not in ("draft", "submitted", "in_review", "approved"):
             raise ValidationException("Request is not in a state that allows file uploads")
 
         storage_key = f"{auth_user.tenant_id}/{request_id}/{uuid.uuid4()}"
@@ -77,10 +78,19 @@ class FileService:
         )
         return updated
 
+    async def list_by_request(self, request_id: UUID, auth_user: AuthUser) -> list[dict]:
+        request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
+        require(can_view_request(auth_user, request), "You do not have permission to view files for this request")
+        return await self.repo.find_by_request(request_id)
+
     async def get_download_url(self, file_id: UUID, auth_user: AuthUser) -> str:
         file_record = await self.repo.find_by_id(file_id)
         if file_record["status"] != "uploaded":
             raise ValidationException("File is not available for download")
+
+        # Verify user has access to the parent request
+        request = await self.request_repo.find_by_id(file_record["request_id"], auth_user.tenant_id)
+        require(can_view_request(auth_user, request), "You do not have permission to download this file")
 
         url = self.object_store.get_presigned_url(file_record["storage_key"], expires_seconds=60)
 

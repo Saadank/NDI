@@ -30,6 +30,15 @@ async def initiate_upload(
     )
 
 
+@router.get("/by-request/{request_id}")
+async def list_files_by_request(
+    request_id: UUID,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: FileService = Depends(get_file_service),
+):
+    return await service.list_by_request(request_id, auth_user)
+
+
 @router.put("/{file_id}/upload")
 async def upload_file(
     file_id: UUID,

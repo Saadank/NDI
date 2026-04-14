@@ -287,7 +287,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
         <div class="card">
           <h3>Upload File to Request</h3>
           <div class="fr">
-            <div class="fg"><label>Request ID</label><input id="f-reqid" placeholder="UUID of share request"></div>
+            <div class="fg"><label>Share Request</label><select id="f-reqid"><option value="">Select a request…</option></select></div>
             <div class="fg"><label>File</label><input type="file" id="f-input"></div>
           </div>
           <button class="btn btn-p btn-sm" onclick="uploadFile()">Initiate & Upload</button>
@@ -414,7 +414,7 @@ async function api(m,url,body){
   if(body&&!(body instanceof FormData))o.body=JSON.stringify(body);
   if(body instanceof FormData){o.body=body;o.headers={'Authorization':`Bearer ${token}`};}
   const r=await fetch(url,o);
-  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||r.statusText);}
+  if(!r.ok){const e=await r.json().catch(()=>({}));const msg=Array.isArray(e.detail)?e.detail.map(d=>`${d.loc?.slice(-1)[0]||'field'}: ${d.msg}`).join('; '):(e.detail||r.statusText);throw new Error(msg);}
   const t=await r.text();return t?JSON.parse(t):null;
 }
 function toast(msg,ok=true){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${ok?'ok':'err'}`;t.style.display='block';setTimeout(()=>t.style.display='none',3500)}
@@ -461,7 +461,7 @@ function go(tab){
   const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups};
   if(load[tab])load[tab]().catch(e=>console.error(e));
 }
 
@@ -521,10 +521,13 @@ async function createReq(){
 async function viewReq(id){
   const r=await api('GET',`${DS}/requests/${id}`);
   let steps=[];try{steps=await api('GET',`${DS}/workflows/requests/${id}/steps`)}catch(e){}
+  let files=[];try{files=await api('GET',`${DS}/files/by-request/${id}`)}catch(e){}
   // Resolve group names
   if(!_groupsCache.length)try{_groupsCache=await api('GET',`${PF}/groups/`)}catch(e){}
   const reqGrp=_groupsCache.find(g=>g.id===r.requester_group_id);
   const recvGrp=_groupsCache.find(g=>g.id===r.receiver_group_id);
+  const canUpload=['draft','submitted','in_review','approved'].includes(r.status);
+  const fmtSize=(b)=>{if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'};
   document.getElementById('req-detail').innerHTML=`
     <div class="fb mb"><span class="mono" style="font-size:14px;font-weight:700">${r.request_number}</span>${badge(r.status)}</div>
     <div class="card"><h3>${r.title}</h3>
@@ -548,6 +551,28 @@ async function viewReq(id){
       ${r.source_description?`<div class="di" style="margin-top:6px"><div class="lb">Source</div><div class="vl">${r.source_description}</div></div>`:''}
       ${r.conditions?`<div class="di" style="margin-top:6px"><div class="lb">Conditions</div><div class="vl">${r.conditions}</div></div>`:''}
     </div>
+    <div class="card">
+      <h3>Attached Files</h3>
+      ${files.length?`<div class="tw"><table>
+        <thead><tr><th>Filename</th><th>Size</th><th>Status</th><th>Uploaded</th><th></th></tr></thead>
+        <tbody>${files.map(f=>`<tr>
+          <td>${f.original_filename}</td>
+          <td>${fmtSize(f.file_size_bytes)}</td>
+          <td>${badge(f.status)}</td>
+          <td>${fmtDt(f.uploaded_at||f.created_at)}</td>
+          <td class="bg">
+            ${f.status==='uploaded'?`<button class="btn btn-p btn-sm" onclick="downloadReqFile('${f.id}')">Download</button>`:''}
+            ${canUpload?`<button class="btn btn-r btn-sm" onclick="deleteReqFile('${f.id}','${r.id}')">Delete</button>`:''}
+          </td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:'<div class="empty">No files attached</div>'}
+      ${canUpload?`<div style="margin-top:10px;padding:10px;background:var(--slate-50);border-radius:var(--radius)">
+        <div class="fr" style="align-items:flex-end">
+          <div class="fg" style="flex:1"><label>Upload File</label><input type="file" id="rd-file-input"></div>
+          <button class="btn btn-p btn-sm" onclick="uploadReqFile('${r.id}')" style="margin-bottom:2px">Upload</button>
+        </div>
+      </div>`:''}
+    </div>
     <div class="bg mb">
       ${r.status==='draft'?`<button class="btn btn-g" onclick="submitReq('${r.id}')">Submit for Review</button>`:''}
       ${['draft','submitted','in_review'].includes(r.status)?`<button class="btn btn-r" onclick="cancelReq('${r.id}')">Cancel</button>`:''}
@@ -568,6 +593,25 @@ async function viewReq(id){
     </div>
     <div class="card"><h3>Request ID</h3><div class="mono" style="user-select:all">${r.id}</div></div>`;
   go('req-detail');
+}
+async function uploadReqFile(reqId){
+  const file=document.getElementById('rd-file-input').files[0];
+  if(!file)return toast('Select a file first',false);
+  try{
+    const hashBuf=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    const hash=Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    const init=await api('POST',`${DS}/files/initiate`,{request_id:reqId,filename:file.name,size:file.size,mime_type:file.type||null,sha256_hash:hash});
+    const fd=new FormData();fd.append('file',file);
+    const r=await fetch(`${DS}/files/${init.id}/upload?sha256_hash=${hash}`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`},body:fd});
+    if(r.ok){toast('File uploaded');viewReq(reqId)}else{const e=await r.json().catch(()=>({}));toast(Array.isArray(e.detail)?e.detail.map(d=>d.msg).join('; '):(e.detail||'Upload failed'),false)}
+  }catch(e){toast(e.message,false)}
+}
+async function downloadReqFile(fileId){
+  try{const d=await api('GET',`${DS}/files/${fileId}/download-url`);window.open(d.download_url,'_blank')}catch(e){toast(e.message,false)}
+}
+async function deleteReqFile(fileId,reqId){
+  if(!confirm('Delete this file?'))return;
+  try{await api('DELETE',`${DS}/files/${fileId}?reason=manual`);toast('File deleted');viewReq(reqId)}catch(e){toast(e.message,false)}
 }
 async function submitReq(id){try{await api('POST',`${DS}/requests/${id}/submit`);toast('Submitted');viewReq(id)}catch(e){toast(e.message,false)}}
 async function cancelReq(id){try{await api('POST',`${DS}/requests/${id}/cancel`);toast('Cancelled');viewReq(id)}catch(e){toast(e.message,false)}}
@@ -669,6 +713,13 @@ async function removeFromGroup(uid,groupName){
 }
 
 // Files
+async function loadFileRequests(){
+  try{
+    const d=await api('GET',`${DS}/requests/?page=1&limit=100`);
+    const sel=document.getElementById('f-reqid');
+    sel.innerHTML='<option value="">Select a request…</option>'+d.data.filter(r=>['submitted','in_review','approved'].includes(r.status)).map(r=>`<option value="${r.id}">${r.request_number} — ${trunc(r.title,30)} [${r.status}]</option>`).join('');
+  }catch(e){console.error('Failed to load requests for file upload',e)}
+}
 async function uploadFile(){
   const reqId=document.getElementById('f-reqid').value,file=document.getElementById('f-input').files[0];
   if(!reqId||!file)return toast('Request ID and file required',false);
