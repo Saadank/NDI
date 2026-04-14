@@ -19,8 +19,17 @@ class ObjectStoreGateway:
             secure=settings.MINIO_SECURE,
         )
         self.default_bucket = settings.MINIO_BUCKET
-        self._internal_endpoint = settings.MINIO_ENDPOINT
         self._ensure_bucket(self.default_bucket)
+
+        # Separate client for presigned URLs so the signature matches localhost.
+        # Region is set explicitly to avoid a network call from inside Docker.
+        self._presign_client = Minio(
+            endpoint="localhost:9000",
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=False,
+            region="us-east-1",
+        )
 
     def _ensure_bucket(self, bucket: str) -> None:
         if not self.client.bucket_exists(bucket):
@@ -51,13 +60,11 @@ class ObjectStoreGateway:
         from datetime import timedelta
 
         bucket = bucket or self.default_bucket
-        url = self.client.presigned_get_object(
+        url = self._presign_client.presigned_get_object(
             bucket_name=bucket,
             object_name=key,
             expires=timedelta(seconds=expires_seconds),
         )
-        # Replace internal Docker hostname with localhost for browser access
-        url = url.replace(f"http://{self._internal_endpoint}", "http://localhost:9000")
         return url
 
     def delete_object(self, key: str, bucket: str | None = None) -> None:
