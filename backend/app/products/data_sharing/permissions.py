@@ -146,6 +146,16 @@ def can_manage_schemas(auth_user: AuthUser) -> bool:
     return _is_admin(auth_user)
 
 
+def can_browse_connections(auth_user: AuthUser) -> bool:
+    """Anyone who can create a request needs to browse connections (read-only, no password)."""
+    return can_create_request(auth_user)
+
+
+def can_browse_schemas(auth_user: AuthUser) -> bool:
+    """Anyone who can create a request needs to browse schemas to pick tables/columns."""
+    return can_create_request(auth_user)
+
+
 # ---------------------------------------------------------------------------
 # Guard helper — raises ForbiddenException
 # ---------------------------------------------------------------------------

@@ -38,6 +38,22 @@ class ShareRequestService:
             if not group or group["tenant_id"] != tenant_id:
                 raise ValidationException("Receiver group not found in your organization")
 
+        # Validate structured-data fields if this is a structured request
+        data_type = data.get("data_type", "file")
+        connection_id = data.get("connection_id")
+        selection_mode = data.get("selection_mode")
+        selected_items = data.get("selected_items")
+        custom_sql = data.get("custom_sql")
+        if data_type == "structured":
+            if not connection_id:
+                raise ValidationException("connection_id is required for structured requests")
+            if selection_mode not in ("tables", "query"):
+                raise ValidationException("selection_mode must be 'tables' or 'query'")
+            if selection_mode == "tables" and not selected_items:
+                raise ValidationException("selected_items is required when selection_mode is 'tables'")
+            if selection_mode == "query" and not custom_sql:
+                raise ValidationException("custom_sql is required when selection_mode is 'query'")
+
         request = await self.repo.create(
             tenant_id=tenant_id,
             request_number=request_number,
@@ -56,6 +72,11 @@ class ShareRequestService:
             receiver_group_id=receiver_group_id,
             created_by=auth_user.user_id,
             dpia_confirmed=data.get("dpia_confirmed", False),
+            data_type=data_type,
+            connection_id=connection_id,
+            selection_mode=selection_mode,
+            selected_items=selected_items,
+            custom_sql=custom_sql,
         )
 
         await self.audit.log(

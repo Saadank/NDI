@@ -233,9 +233,44 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           <div class="fg"><label>Source Description</label><textarea id="cr-source" placeholder="Describe the data source"></textarea></div>
           <div class="fg"><label style="display:inline;text-transform:none;font-size:12.5px;font-weight:500"><input type="checkbox" id="cr-dpia"> DPIA Confirmed (required for Sensitive)</label></div>
           <div class="fg" style="margin-top:4px">
+            <label>Data Source</label>
+            <div style="display:flex;gap:6px;margin-top:4px">
+              <button type="button" class="btn btn-o btn-sm" id="dt-file-btn" onclick="setDataType('file')">📁 File Upload</button>
+              <button type="button" class="btn btn-o btn-sm" id="dt-structured-btn" onclick="setDataType('structured')">🗄 Structured Data</button>
+            </div>
+          </div>
+          <div id="cr-file-section" class="fg" style="margin-top:4px">
             <label>Attach Files</label>
             <input type="file" id="cr-files" multiple style="margin-top:4px">
             <div style="font-size:11px;color:var(--slate-400);margin-top:2px">You can select multiple files</div>
+          </div>
+          <div id="cr-structured-section" class="fg hidden" style="margin-top:4px;padding:10px;background:var(--slate-50);border-radius:var(--radius)">
+            <div class="fr">
+              <div class="fg"><label>Connection</label>
+                <select id="cr-conn" onchange="onConnChange()"><option value="">— Select a connection —</option></select>
+              </div>
+              <div class="fg"><label>Mode</label>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                  <button type="button" class="btn btn-o btn-sm" id="sm-tables-btn" onclick="setSelectionMode('tables')">Select Tables</button>
+                  <button type="button" class="btn btn-o btn-sm" id="sm-query-btn" onclick="setSelectionMode('query')">Write SQL</button>
+                </div>
+              </div>
+            </div>
+            <div id="cr-tables-section" class="hidden" style="margin-top:6px">
+              <label style="font-size:11px;color:var(--slate-400);text-transform:uppercase">Tables &amp; Columns</label>
+              <div id="cr-schema-tree" style="max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--slate-200);border-radius:var(--radius);padding:8px;margin-top:4px">
+                <div class="empty" style="padding:8px">Select a connection first</div>
+              </div>
+            </div>
+            <div id="cr-query-section" class="hidden" style="margin-top:6px">
+              <label style="font-size:11px;color:var(--slate-400);text-transform:uppercase">SQL Query (SELECT only)</label>
+              <textarea id="cr-sql" placeholder="SELECT col1, col2 FROM my_table WHERE ..." style="font-family:monospace;min-height:120px;margin-top:4px"></textarea>
+              <div style="font-size:11px;color:var(--slate-400);margin-top:2px">SELECT / WITH only. No semicolons, no DDL/DML.</div>
+            </div>
+            <div class="bg" style="margin-top:8px">
+              <button type="button" class="btn btn-o btn-sm" onclick="previewStructured()">👁 Preview (first 100 rows)</button>
+            </div>
+            <div id="cr-preview" style="margin-top:8px"></div>
           </div>
           <div class="bg" style="margin-top:6px">
             <button class="btn btn-g" onclick="createAndSubmitReq()">Submit Request</button>
@@ -498,16 +533,129 @@ async function loadRequests(page=1){
     ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadRequests(${pg.next_page})">Next →</button>`:''}` :'';
 }
 let _groupsCache=[];
+let _dataType='file'; // 'file' | 'structured'
+let _selMode='tables'; // 'tables' | 'query'
+let _schemaCache=null;
+let _connCache=[];
 async function loadCreateReqForm(){
   try{_groupsCache=await api('GET',`${PF}/groups/`)}catch(e){_groupsCache=[]}
   const sel=document.getElementById('cr-recv-group');
   sel.innerHTML='<option value="">— Select department —</option>'+_groupsCache.filter(g=>g.is_active).map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
   const myGroup=_groupsCache.find(g=>g.id===user.group_id);
   document.getElementById('cr-reqgroup').value=myGroup?myGroup.name:'(no group assigned)';
+  // Reset to file mode by default
+  setDataType('file');
+  setSelectionMode('tables');
+  // Preload browsable connections
+  try{
+    _connCache=await api('GET',`${DS}/connections/browse`);
+    const cs=document.getElementById('cr-conn');
+    cs.innerHTML='<option value="">— Select a connection —</option>'+
+      _connCache.map(c=>`<option value="${c.id}">${c.db_type} · ${c.host}${c.database?'/'+c.database:''}${c.description?' ('+c.description+')':''}</option>`).join('');
+  }catch(e){_connCache=[]}
+  // Clear schema & preview
+  document.getElementById('cr-schema-tree').innerHTML='<div class="empty" style="padding:8px">Select a connection first</div>';
+  document.getElementById('cr-preview').innerHTML='';
+  document.getElementById('cr-sql').value='';
+  _schemaCache=null;
+}
+function setDataType(t){
+  _dataType=t;
+  const fileBtn=document.getElementById('dt-file-btn');
+  const strBtn=document.getElementById('dt-structured-btn');
+  fileBtn.classList.toggle('btn-p',t==='file');fileBtn.classList.toggle('btn-o',t!=='file');
+  strBtn.classList.toggle('btn-p',t==='structured');strBtn.classList.toggle('btn-o',t!=='structured');
+  document.getElementById('cr-file-section').classList.toggle('hidden',t!=='file');
+  document.getElementById('cr-structured-section').classList.toggle('hidden',t!=='structured');
+}
+function setSelectionMode(m){
+  _selMode=m;
+  const tBtn=document.getElementById('sm-tables-btn');
+  const qBtn=document.getElementById('sm-query-btn');
+  tBtn.classList.toggle('btn-p',m==='tables');tBtn.classList.toggle('btn-o',m!=='tables');
+  qBtn.classList.toggle('btn-p',m==='query');qBtn.classList.toggle('btn-o',m!=='query');
+  document.getElementById('cr-tables-section').classList.toggle('hidden',m!=='tables');
+  document.getElementById('cr-query-section').classList.toggle('hidden',m!=='query');
+  document.getElementById('cr-preview').innerHTML='';
+}
+async function onConnChange(){
+  const cid=document.getElementById('cr-conn').value;
+  const tree=document.getElementById('cr-schema-tree');
+  document.getElementById('cr-preview').innerHTML='';
+  _schemaCache=null;
+  if(!cid){tree.innerHTML='<div class="empty" style="padding:8px">Select a connection first</div>';return}
+  tree.innerHTML='<div class="empty" style="padding:8px">Loading schema…</div>';
+  try{
+    const d=await api('GET',`${DS}/schemas/${cid}/browse`);
+    _schemaCache=d.schema_data||{};
+    renderSchemaTree();
+  }catch(e){
+    tree.innerHTML=`<div class="empty" style="padding:8px;color:var(--red-600)">Failed: ${e.message}</div>`;
+  }
+}
+function renderSchemaTree(){
+  const tree=document.getElementById('cr-schema-tree');
+  const tables=Object.keys(_schemaCache||{});
+  if(!tables.length){tree.innerHTML='<div class="empty" style="padding:8px">No tables found</div>';return}
+  tree.innerHTML=tables.map(t=>{
+    const cols=Object.keys(_schemaCache[t].columns||{});
+    const tid=`tbl-${t.replace(/[^a-z0-9]/gi,'_')}`;
+    return `<div style="margin-bottom:6px;border-bottom:1px solid var(--slate-200);padding-bottom:4px">
+      <label style="font-weight:600;font-size:12.5px;display:block;cursor:pointer">
+        <input type="checkbox" class="tbl-cb" data-table="${t}" onchange="onTableToggle('${tid}',this.checked)"> ${t}
+        <span style="color:var(--slate-400);font-weight:400;font-size:11px"> (${cols.length} cols)</span>
+      </label>
+      <div id="${tid}" class="hidden" style="padding-left:20px;padding-top:4px">
+        ${cols.map(c=>`<label style="display:block;font-size:12px;cursor:pointer">
+          <input type="checkbox" class="col-cb" data-table="${t}" data-col="${c}" checked> ${c}
+          <span style="color:var(--slate-400);font-size:10.5px"> ${_schemaCache[t].columns[c].data_type}</span>
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+function onTableToggle(tid,checked){
+  document.getElementById(tid).classList.toggle('hidden',!checked);
+}
+function _getSelectedItems(){
+  const items=[];
+  document.querySelectorAll('.tbl-cb:checked').forEach(tcb=>{
+    const table=tcb.dataset.table;
+    const cols=[];
+    document.querySelectorAll(`.col-cb[data-table="${table}"]:checked`).forEach(cb=>cols.push(cb.dataset.col));
+    if(cols.length)items.push({table,columns:cols});
+  });
+  return items;
+}
+function _getStructuredPayload(){
+  const cid=document.getElementById('cr-conn').value;
+  if(!cid)throw new Error('Select a connection');
+  if(_selMode==='tables'){
+    const items=_getSelectedItems();
+    if(!items.length)throw new Error('Select at least one table with columns');
+    return {connection_id:cid,selection_mode:'tables',selected_items:items,custom_sql:null};
+  }
+  const sql=document.getElementById('cr-sql').value.trim();
+  if(!sql)throw new Error('Enter a SQL query');
+  return {connection_id:cid,selection_mode:'query',selected_items:null,custom_sql:sql};
+}
+async function previewStructured(){
+  const pv=document.getElementById('cr-preview');
+  pv.innerHTML='<div class="empty" style="padding:8px">Running preview…</div>';
+  try{
+    const payload={..._getStructuredPayload(),limit:100};
+    const d=await api('POST',`${DS}/structured/preview`,payload);
+    if(!d.rows.length){pv.innerHTML='<div class="empty" style="padding:8px">Query returned 0 rows</div>';return}
+    pv.innerHTML=`<div style="font-size:11px;color:var(--slate-400);margin-bottom:4px">${d.rows.length} row(s) preview</div>
+      <div class="tw" style="max-height:260px;overflow:auto;background:#fff;border:1px solid var(--slate-200);border-radius:var(--radius)"><table style="font-size:11.5px">
+        <thead><tr>${d.columns.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${d.rows.map(r=>`<tr>${r.map(v=>`<td>${v==null?'<span style="color:var(--slate-400)">NULL</span>':String(v).replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>`;
+  }catch(e){pv.innerHTML=`<div class="empty" style="padding:8px;color:var(--red-600)">${e.message}</div>`}
 }
 function _getReqFormData(){
   const cats=document.getElementById('cr-cats').value;
-  return {
+  const body={
     title:document.getElementById('cr-title').value,
     purpose:document.getElementById('cr-purpose').value,
     sharing_type:document.getElementById('cr-sharing').value,
@@ -519,7 +667,20 @@ function _getReqFormData(){
     source_description:document.getElementById('cr-source').value||null,
     receiver_group_id:parseInt(document.getElementById('cr-recv-group').value)||null,
     dpia_confirmed:document.getElementById('cr-dpia').checked,
+    data_type:_dataType,
   };
+  if(_dataType==='structured'){
+    const p=_getStructuredPayload();
+    body.connection_id=p.connection_id;
+    body.selection_mode=p.selection_mode;
+    body.selected_items=p.selected_items;
+    body.custom_sql=p.custom_sql;
+  }
+  return body;
+}
+async function _attachStructuredToRequest(reqId){
+  const p=_getStructuredPayload();
+  await api('POST',`${DS}/structured/attach`,{request_id:reqId,...p});
 }
 async function _uploadFilesForRequest(reqId,files){
   for(const file of files){
@@ -533,18 +694,29 @@ async function _uploadFilesForRequest(reqId,files){
 }
 async function createReq(){
   try{
-    const r=await api('POST',`${DS}/requests/`,_getReqFormData());
-    const files=document.getElementById('cr-files').files;
-    if(files.length)await _uploadFilesForRequest(r.id,files);
+    const body=_getReqFormData();
+    const r=await api('POST',`${DS}/requests/`,body);
+    if(body.data_type==='structured'){
+      await _attachStructuredToRequest(r.id);
+    }else{
+      const files=document.getElementById('cr-files').files;
+      if(files.length)await _uploadFilesForRequest(r.id,files);
+    }
     toast(`Created ${r.request_number}`);go('requests');
   }catch(e){toast(e.message,false)}
 }
 async function createAndSubmitReq(){
   try{
-    const r=await api('POST',`${DS}/requests/`,_getReqFormData());
-    toast(`Created ${r.request_number}, uploading files…`);
-    const files=document.getElementById('cr-files').files;
-    if(files.length)await _uploadFilesForRequest(r.id,files);
+    const body=_getReqFormData();
+    const r=await api('POST',`${DS}/requests/`,body);
+    if(body.data_type==='structured'){
+      toast(`Created ${r.request_number}, extracting data…`);
+      await _attachStructuredToRequest(r.id);
+    }else{
+      toast(`Created ${r.request_number}, uploading files…`);
+      const files=document.getElementById('cr-files').files;
+      if(files.length)await _uploadFilesForRequest(r.id,files);
+    }
     await api('POST',`${DS}/requests/${r.id}/submit`);
     toast(`${r.request_number} submitted for review`);viewReq(r.id);
   }catch(e){toast(e.message,false)}
@@ -581,6 +753,10 @@ async function viewReq(id){
       <div class="di"><div class="lb">Purpose</div><div class="vl">${r.purpose}</div></div>
       ${r.source_description?`<div class="di" style="margin-top:6px"><div class="lb">Source</div><div class="vl">${r.source_description}</div></div>`:''}
       ${r.conditions?`<div class="di" style="margin-top:6px"><div class="lb">Conditions</div><div class="vl">${r.conditions}</div></div>`:''}
+      ${r.data_type==='structured'?`<div class="di" style="margin-top:6px"><div class="lb">Data Type</div><div class="vl"><strong>Structured</strong> · ${r.selection_mode||'—'}</div></div>
+        ${r.selection_mode==='tables'&&r.selected_items?`<div class="di" style="margin-top:6px"><div class="lb">Tables &amp; Columns</div><div class="vl" style="font-family:monospace;font-size:11.5px">${(r.selected_items||[]).map(it=>`${it.schema?it.schema+'.':''}${it.table}(${(it.columns||[]).join(', ')})`).join('<br>')}</div></div>`:''}
+        ${r.selection_mode==='query'&&r.custom_sql?`<div class="di" style="margin-top:6px"><div class="lb">SQL</div><div class="vl" style="font-family:monospace;font-size:11.5px;white-space:pre-wrap;background:var(--slate-50);padding:6px;border-radius:var(--radius)">${String(r.custom_sql).replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</div></div>`:''}
+      `:''}
     </div>
     <div class="card">
       <h3>Attached Files</h3>

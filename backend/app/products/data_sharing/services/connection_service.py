@@ -1,7 +1,9 @@
 import logging
 from uuid import UUID
 
-from app.products.data_sharing.permissions import can_manage_connections, require
+from app.products.data_sharing.permissions import (
+    can_browse_connections, can_manage_connections, require,
+)
 from app.products.data_sharing.repositories.connection_repository import ConnectionRepository
 from app.structures.auth_user import AuthUser
 
@@ -38,6 +40,15 @@ class ConnectionService:
     async def delete_connection(self, connection_id: UUID, auth_user: AuthUser) -> None:
         require(can_manage_connections(auth_user), "Only admins can manage connections")
         await self.repo.soft_delete(connection_id)
+
+    async def list_for_browse(self, auth_user: AuthUser) -> list[dict]:
+        """Requester-visible listing: strip the password."""
+        require(can_browse_connections(auth_user), "You cannot browse connections")
+        rows = await self.repo.find_by_tenant(auth_user.tenant_id)
+        return [
+            {k: v for k, v in r.items() if k != "password_encrypted"}
+            for r in rows
+        ]
 
     async def test_connection(self, connection_id: UUID, auth_user: AuthUser) -> dict:
         require(can_manage_connections(auth_user), "Only admins can manage connections")

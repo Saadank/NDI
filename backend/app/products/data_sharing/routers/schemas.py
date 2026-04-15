@@ -16,3 +16,13 @@ async def get_schema(
     service: SchemaService = Depends(get_schema_service),
 ):
     return await service.get_schema(connection_id, auth_user)
+
+
+@router.get("/{connection_id}/browse")
+async def browse_schema(
+    connection_id: UUID,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: SchemaService = Depends(get_schema_service),
+):
+    """Read-only schema browse for requesters. Introspects live if not cached."""
+    return await service.browse_schema(connection_id, auth_user)
