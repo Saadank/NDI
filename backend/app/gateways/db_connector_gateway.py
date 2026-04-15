@@ -115,6 +115,29 @@ class DbConnectorGateway:
         except Exception as e:
             return QueryResult(False, {}, str(e))
 
+    async def execute_query(self, sql: str, limit: int | None = None) -> QueryResult[dict]:
+        """Execute a SELECT query and return {columns, rows}. If limit is set, wraps the query."""
+        if not self.engine:
+            return QueryResult(False, None, "No engine available")
+        try:
+            query_sql = sql.strip().rstrip(";")
+            if limit is not None:
+                query_sql = f"SELECT * FROM ({query_sql}) _preview LIMIT {int(limit)}"
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text(query_sql))
+                columns = list(result.keys())
+                rows = [
+                    [
+                        v.isoformat() if hasattr(v, "isoformat")
+                        else (str(v) if isinstance(v, (bytes, bytearray, memoryview)) else v)
+                        for v in row
+                    ]
+                    for row in result.fetchall()
+                ]
+            return QueryResult(True, {"columns": columns, "rows": rows})
+        except Exception as e:
+            return QueryResult(False, None, str(e))
+
     async def close(self) -> None:
         if self.engine:
             await self.engine.dispose()

@@ -28,6 +28,15 @@ async def list_connections(
     return await service.list_connections(auth_user)
 
 
+@router.get("/browse")
+async def browse_connections(
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ConnectionService = Depends(get_connection_service),
+):
+    """Read-only connection list for requesters (no passwords)."""
+    return await service.list_for_browse(auth_user)
+
+
 @router.post("/")
 async def create_connection(
     body: CreateConnectionBody,

@@ -14,7 +14,7 @@ from app.platform.routers import auth, users, invitations, tenants, products, au
 # Product: Data Sharing
 from app.products.data_sharing.routers import (
     share_requests, approvals, files, notifications,
-    workflows, connections, schemas,
+    workflows, connections, schemas, structured,
 )
 
 
@@ -57,7 +57,7 @@ for r in [auth, users, invitations, tenants, products, audit, groups]:
 
 # Product: Data Sharing — /api/v1/products/data-sharing/...
 for r in [share_requests, approvals, files, notifications,
-          workflows, connections, schemas]:
+          workflows, connections, schemas, structured]:
     app.include_router(r.router, prefix="/api/v1/products/data-sharing")
 
 # Future products register here — zero changes to Platform Core needed

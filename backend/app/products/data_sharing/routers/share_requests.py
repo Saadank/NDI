@@ -23,6 +23,12 @@ class CreateShareRequestBody(BaseModel):
     receiving_tenant_id: int | None = None
     receiver_group_id: int | None = None
     dpia_confirmed: bool = False
+    # Structured-data fields — only set when data_type == "structured"
+    data_type: str = "file"  # "file" | "structured"
+    connection_id: UUID | None = None
+    selection_mode: str | None = None  # "tables" | "query"
+    selected_items: list[dict] | None = None
+    custom_sql: str | None = None
 
 
 @router.get("/")

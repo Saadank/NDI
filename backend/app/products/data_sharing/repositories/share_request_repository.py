@@ -10,17 +10,24 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
                      estimated_data_subjects: int | None, data_subject_categories: list[str] | None,
                      source_description: str | None, requester_id: int, receiving_tenant_id: int | None,
                      requester_group_id: int | None, receiver_group_id: int | None,
-                     created_by: int, dpia_confirmed: bool = False) -> dict:
+                     created_by: int, dpia_confirmed: bool = False,
+                     data_type: str = "file", connection_id=None, selection_mode: str | None = None,
+                     selected_items=None, custom_sql: str | None = None) -> dict:
+        import json
+        selected_items_json = json.dumps(selected_items) if selected_items is not None else None
         return await self._fetch_row(
             """INSERT INTO t_share_requests
                (tenant_id, request_number, title, purpose, legal_basis, sharing_type, data_classification,
                 personal_data_involved, estimated_data_subjects, data_subject_categories, source_description,
-                requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed,
+                data_type, connection_id, selection_mode, selected_items, custom_sql)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                       $18,$19,$20,$21::jsonb,$22)
                RETURNING *""",
             (tenant_id, request_number, title, purpose, legal_basis, sharing_type, data_classification,
              personal_data_involved, estimated_data_subjects, data_subject_categories, source_description,
-             requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed),
+             requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed,
+             data_type, connection_id, selection_mode, selected_items_json, custom_sql),
         )
 
     async def find_by_id(self, request_id: UUID, tenant_id: int) -> dict:
