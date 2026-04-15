@@ -232,7 +232,13 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           <div class="fg"><label>Data Subject Categories (comma-separated)</label><input id="cr-cats" placeholder="e.g. employees, customers"></div>
           <div class="fg"><label>Source Description</label><textarea id="cr-source" placeholder="Describe the data source"></textarea></div>
           <div class="fg"><label style="display:inline;text-transform:none;font-size:12.5px;font-weight:500"><input type="checkbox" id="cr-dpia"> DPIA Confirmed (required for Sensitive)</label></div>
+          <div class="fg" style="margin-top:4px">
+            <label>Attach Files</label>
+            <input type="file" id="cr-files" multiple style="margin-top:4px">
+            <div style="font-size:11px;color:var(--slate-400);margin-top:2px">You can select multiple files</div>
+          </div>
           <div class="bg" style="margin-top:6px">
+            <button class="btn btn-g" onclick="createAndSubmitReq()">Submit Request</button>
             <button class="btn btn-p" onclick="createReq()">Save as Draft</button>
             <button class="btn btn-o" onclick="go('requests')">Cancel</button>
           </div>
@@ -499,23 +505,48 @@ async function loadCreateReqForm(){
   const myGroup=_groupsCache.find(g=>g.id===user.group_id);
   document.getElementById('cr-reqgroup').value=myGroup?myGroup.name:'(no group assigned)';
 }
-async function createReq(){
+function _getReqFormData(){
   const cats=document.getElementById('cr-cats').value;
+  return {
+    title:document.getElementById('cr-title').value,
+    purpose:document.getElementById('cr-purpose').value,
+    sharing_type:document.getElementById('cr-sharing').value,
+    data_classification:document.getElementById('cr-class').value,
+    legal_basis:document.getElementById('cr-legal').value,
+    personal_data_involved:document.getElementById('cr-personal').value==='true',
+    estimated_data_subjects:parseInt(document.getElementById('cr-subjects').value)||null,
+    data_subject_categories:cats?cats.split(',').map(s=>s.trim()):null,
+    source_description:document.getElementById('cr-source').value||null,
+    receiver_group_id:parseInt(document.getElementById('cr-recv-group').value)||null,
+    dpia_confirmed:document.getElementById('cr-dpia').checked,
+  };
+}
+async function _uploadFilesForRequest(reqId,files){
+  for(const file of files){
+    const hashBuf=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    const hash=Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+    const init=await api('POST',`${DS}/files/initiate`,{request_id:reqId,filename:file.name,size:file.size,mime_type:file.type||null,sha256_hash:hash});
+    const fd=new FormData();fd.append('file',file);
+    const r=await fetch(`${DS}/files/${init.id}/upload?sha256_hash=${hash}`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`},body:fd});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||`Failed to upload ${file.name}`)}
+  }
+}
+async function createReq(){
   try{
-    const r=await api('POST',`${DS}/requests/`,{
-      title:document.getElementById('cr-title').value,
-      purpose:document.getElementById('cr-purpose').value,
-      sharing_type:document.getElementById('cr-sharing').value,
-      data_classification:document.getElementById('cr-class').value,
-      legal_basis:document.getElementById('cr-legal').value,
-      personal_data_involved:document.getElementById('cr-personal').value==='true',
-      estimated_data_subjects:parseInt(document.getElementById('cr-subjects').value)||null,
-      data_subject_categories:cats?cats.split(',').map(s=>s.trim()):null,
-      source_description:document.getElementById('cr-source').value||null,
-      receiver_group_id:parseInt(document.getElementById('cr-recv-group').value)||null,
-      dpia_confirmed:document.getElementById('cr-dpia').checked,
-    });
+    const r=await api('POST',`${DS}/requests/`,_getReqFormData());
+    const files=document.getElementById('cr-files').files;
+    if(files.length)await _uploadFilesForRequest(r.id,files);
     toast(`Created ${r.request_number}`);go('requests');
+  }catch(e){toast(e.message,false)}
+}
+async function createAndSubmitReq(){
+  try{
+    const r=await api('POST',`${DS}/requests/`,_getReqFormData());
+    toast(`Created ${r.request_number}, uploading files…`);
+    const files=document.getElementById('cr-files').files;
+    if(files.length)await _uploadFilesForRequest(r.id,files);
+    await api('POST',`${DS}/requests/${r.id}/submit`);
+    toast(`${r.request_number} submitted for review`);viewReq(r.id);
   }catch(e){toast(e.message,false)}
 }
 async function viewReq(id){
