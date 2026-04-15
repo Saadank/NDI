@@ -40,6 +40,7 @@ class DbConnectorGateway:
         self.host = host
         self.port = port or str(DEFAULT_PORTS.get(db_type, ""))
         self.database = database
+        self.pool_size = pool_size
         self.engine = self._create_engine()
         self.metadata = MetaData()
 
@@ -60,7 +61,7 @@ class DbConnectorGateway:
             else:
                 raise ValueError(f"Unsupported database type: {self.db_type}")
 
-            return create_async_engine(dsn, pool_size=pool_size)
+            return create_async_engine(dsn, pool_size=self.pool_size)
         except Exception as e:
             logger.error(f"Engine creation failed for {self.db_type}: {e}")
             return None
