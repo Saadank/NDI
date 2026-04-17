@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     WORKER_SLA_CHECK_INTERVAL_MINUTES: int = 30
     WORKER_NOTIFICATION_INTERVAL_MINUTES: int = 5
 
+    # External pickup portal
+    PICKUP_TOKEN_TTL_HOURS: int = 72
+    PICKUP_TOKEN_MAX_DOWNLOADS: int = 10
+    PICKUP_DOWNLOAD_URL_TTL_SECONDS: int = 120
+    PICKUP_RATE_LIMIT_PER_MINUTE: int = 30
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
+
     @property
     def database_dsn(self) -> str:
         return (

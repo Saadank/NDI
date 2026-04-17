@@ -9,6 +9,7 @@ from app.products.data_sharing.permissions import (
     can_submit_request, can_view_request, require,
 )
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
+from app.products.data_sharing.services.external_recipient_service import ExternalRecipientService
 from app.products.data_sharing.services.workflow_engine import WorkflowEngine
 from app.structures.auth_user import AuthUser
 from app.utils.exceptions import ForbiddenException, ValidationException
@@ -23,6 +24,7 @@ class ShareRequestService:
         self.repo = ShareRequestRepository()
         self.workflow_engine = WorkflowEngine()
         self.audit = AuditService()
+        self.external_recipients = ExternalRecipientService()
 
     async def create_draft(self, data: dict, auth_user: AuthUser) -> dict:
         require(can_create_request(auth_user), "Your role cannot create requests")
@@ -54,20 +56,45 @@ class ShareRequestService:
             if selection_mode == "query" and not custom_sql:
                 raise ValidationException("custom_sql is required when selection_mode is 'query'")
 
+        # Resolve receiver target: external recipient (non-tenant) vs receiving tenant.
+        sharing_type = data.get("sharing_type", "internal")
+        receiving_tenant_id = data.get("receiving_tenant_id")
+        external_recipient_payload = data.get("external_recipient")
+        external_recipient_id: int | None = None
+        external_contact_id: int | None = None
+        if sharing_type == "external":
+            has_tenant = receiving_tenant_id is not None
+            has_external = external_recipient_payload is not None
+            if has_tenant == has_external:
+                raise ValidationException(
+                    "External requests require exactly one of receiving_tenant_id or external_recipient"
+                )
+            if has_external:
+                recipient, contact = await self.external_recipients.upsert_by_email(
+                    tenant_id=tenant_id,
+                    org_name=external_recipient_payload["org_name"],
+                    contact_email=external_recipient_payload["contact_email"],
+                    contact_name=external_recipient_payload.get("contact_name"),
+                    phone=external_recipient_payload.get("phone"),
+                    auth_user=auth_user,
+                )
+                external_recipient_id = recipient["id"]
+                external_contact_id = contact["id"]
+
         request = await self.repo.create(
             tenant_id=tenant_id,
             request_number=request_number,
             title=data["title"],
             purpose=data["purpose"],
             legal_basis=data.get("legal_basis", ""),
-            sharing_type=data.get("sharing_type", "internal"),
+            sharing_type=sharing_type,
             data_classification=data.get("data_classification", "internal"),
             personal_data_involved=data.get("personal_data_involved", False),
             estimated_data_subjects=data.get("estimated_data_subjects"),
             data_subject_categories=data.get("data_subject_categories"),
             source_description=data.get("source_description"),
             requester_id=auth_user.user_id,
-            receiving_tenant_id=data.get("receiving_tenant_id"),
+            receiving_tenant_id=receiving_tenant_id,
             requester_group_id=auth_user.group_id,
             receiver_group_id=receiver_group_id,
             created_by=auth_user.user_id,
@@ -77,6 +104,9 @@ class ShareRequestService:
             selection_mode=selection_mode,
             selected_items=selected_items,
             custom_sql=custom_sql,
+            external_recipient_id=external_recipient_id,
+            external_contact_id=external_contact_id,
+            delivery_channel=data.get("delivery_channel", "portal"),
         )
 
         await self.audit.log(

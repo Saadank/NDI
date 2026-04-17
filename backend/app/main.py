@@ -1,8 +1,9 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import get_settings
 from app.core.database import init_pool, close_pool
@@ -15,6 +16,7 @@ from app.platform.routers import auth, users, invitations, tenants, products, au
 from app.products.data_sharing.routers import (
     share_requests, approvals, files, notifications,
     workflows, connections, schemas, structured,
+    external_recipients, pickup,
 )
 
 
@@ -57,8 +59,11 @@ for r in [auth, users, invitations, tenants, products, audit, groups]:
 
 # Product: Data Sharing — /api/v1/products/data-sharing/...
 for r in [share_requests, approvals, files, notifications,
-          workflows, connections, schemas, structured]:
+          workflows, connections, schemas, structured, external_recipients]:
     app.include_router(r.router, prefix="/api/v1/products/data-sharing")
+
+# Public pickup portal — /api/v1/pickup/... (NO auth middleware)
+app.include_router(pickup.router, prefix="/api/v1")
 
 # Future products register here — zero changes to Platform Core needed
 # from app.products.data_quality.routers import profiling, quality_rules
@@ -68,3 +73,23 @@ for r in [share_requests, approvals, files, notifications,
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.APP_ENV}
+
+
+# Dev-only: serve the standalone pickup portal page for magic-link URLs.
+# Production should serve /pickup/{token} via nginx routing to the static file.
+_PICKUP_HTML_CANDIDATES = ["/frontend/pickup.html", "frontend/pickup.html", "../frontend/pickup.html"]
+
+
+def _pickup_html_path() -> str | None:
+    for p in _PICKUP_HTML_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+@app.get("/pickup/{token}")
+async def pickup_page(token: str):
+    path = _pickup_html_path()
+    if not path:
+        return JSONResponse(status_code=404, content={"detail": "pickup.html not found"})
+    return FileResponse(path, media_type="text/html")

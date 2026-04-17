@@ -39,7 +39,11 @@ class NotificationRepository(PostgresqlAsyncRepository):
         )
 
     async def update_email_status(self, email_id: UUID, status: str, error: str | None = None) -> str:
+        # Explicit cast on $1 — asyncpg can't otherwise reconcile VARCHAR (from `status = $1`)
+        # with text (from `$1 = 'sent'` inside the CASE), and rejects the statement.
         return await self._execute(
-            "UPDATE t_email_queue SET status = $1, attempts = attempts + 1, last_error = $2, sent_at = CASE WHEN $1 = 'sent' THEN CURRENT_TIMESTAMP ELSE sent_at END WHERE id = $3",
+            "UPDATE t_email_queue SET status = $1::varchar, attempts = attempts + 1, last_error = $2, "
+            "sent_at = CASE WHEN $1::varchar = 'sent' THEN CURRENT_TIMESTAMP ELSE sent_at END "
+            "WHERE id = $3",
             (status, error, email_id),
         )

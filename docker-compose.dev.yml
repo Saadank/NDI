@@ -78,6 +78,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./frontend:/frontend:ro
       - api_venv:/app/.venv
     depends_on:
       postgres:

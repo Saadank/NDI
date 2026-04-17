@@ -10,6 +10,13 @@ from app.structures.auth_user import AuthUser
 router = APIRouter(prefix="/requests", tags=["share-requests"])
 
 
+class ExternalRecipientInline(BaseModel):
+    org_name: str
+    contact_email: str
+    contact_name: str | None = None
+    phone: str | None = None
+
+
 class CreateShareRequestBody(BaseModel):
     title: str
     purpose: str
@@ -29,6 +36,10 @@ class CreateShareRequestBody(BaseModel):
     selection_mode: str | None = None  # "tables" | "query"
     selected_items: list[dict] | None = None
     custom_sql: str | None = None
+    # External recipient (non-tenant) — set when sharing_type='external' and the
+    # receiver is not another customer tenant.
+    external_recipient: ExternalRecipientInline | None = None
+    delivery_channel: str = "portal"
 
 
 @router.get("/")

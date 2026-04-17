@@ -40,6 +40,17 @@ class ApprovalService:
         next_step = await self.workflow_engine.advance_workflow(request_id, step_id)
         if not next_step:
             await self.request_repo.update_status(request_id, "approved", auth_user.user_id)
+            # Post-approval hook for external pickup-portal recipients.
+            # Must not roll back the approval if it fails.
+            try:
+                from app.products.data_sharing.services.share_finalization_service import (
+                    ShareFinalizationService,
+                )
+                await ShareFinalizationService().finalize_if_external(request_id, auth_user)
+            except Exception as exc:
+                logger.exception(
+                    "Post-approval finalization failed for request %s: %s", request_id, exc
+                )
 
         await self.audit.log(
             tenant_id=auth_user.tenant_id, action_type="step.approved", resource_type="workflow_step",

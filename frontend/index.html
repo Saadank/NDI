@@ -176,6 +176,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <button data-tab="connections" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
       <div class="section" id="nav-grp-section">Organization</div>
       <button data-tab="groups" id="nav-grp-btn" onclick="go('groups')"><span class="ic">⊡</span> Groups</button>
+      <button data-tab="recipients" id="nav-rcp-btn" onclick="go('recipients')"><span class="ic">⌘</span> External Recipients</button>
       <div class="section">System</div>
       <button data-tab="notifications" onclick="go('notifications')"><span class="ic">◎</span> Notifications</button>
       <button data-tab="audit" onclick="go('audit')"><span class="ic">☰</span> Audit Trail</button>
@@ -217,8 +218,22 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           <div class="fg"><label>Title</label><input id="cr-title" placeholder="e.g. Employee Records for HR Audit"></div>
           <div class="fg"><label>Purpose</label><textarea id="cr-purpose" placeholder="Describe the purpose and justification"></textarea></div>
           <div class="fr">
-            <div class="fg"><label>Sharing Type</label><select id="cr-sharing"><option value="internal">Internal</option><option value="external">External</option></select></div>
+            <div class="fg"><label>Sharing Type</label><select id="cr-sharing" onchange="onSharingTypeChange()"><option value="internal">Internal</option><option value="external">External</option></select></div>
             <div class="fg"><label>Data Classification</label><select id="cr-class"><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="sensitive">Sensitive</option></select></div>
+          </div>
+          <div id="cr-external-block" class="hidden" style="margin-top:4px;padding:10px;background:var(--slate-50);border-radius:var(--radius)">
+            <label style="font-size:11px;color:var(--slate-400);text-transform:uppercase;letter-spacing:.08em">External recipient</label>
+            <div class="fr" style="margin-top:6px">
+              <div class="fg"><label>Organisation Name</label><input id="cr-ext-org" placeholder="e.g. Acme Ltd."></div>
+              <div class="fg"><label>Contact Email</label><input id="cr-ext-email" type="email" placeholder="contact@acme.test"></div>
+            </div>
+            <div class="fr">
+              <div class="fg"><label>Contact Name</label><input id="cr-ext-name" placeholder="Full name"></div>
+              <div class="fg"><label>Phone (optional)</label><input id="cr-ext-phone" placeholder="+966 ..."></div>
+            </div>
+            <div style="font-size:11px;color:var(--slate-400);margin-top:2px">
+              On approval, the contact will receive a time-boxed magic link to a secure pickup portal. No account is created for them.
+            </div>
           </div>
           <div class="fr">
             <div class="fg"><label>Legal Basis</label><select id="cr-legal"><option value="">— Select —</option><option value="consent">Consent</option><option value="contract">Contract</option><option value="legal_obligation">Legal Obligation</option><option value="vital_interest">Vital Interest</option><option value="public_interest">Public Interest</option><option value="legitimate_interest">Legitimate Interest</option></select></div>
@@ -226,7 +241,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
           </div>
           <div class="fr">
             <div class="fg"><label>Estimated Data Subjects</label><input id="cr-subjects" type="number" placeholder="e.g. 500"></div>
-            <div class="fg"><label>Receiver Group</label><select id="cr-recv-group"><option value="">— Select department —</option></select></div>
+            <div class="fg" id="cr-recv-group-row"><label>Receiver Group</label><select id="cr-recv-group"><option value="">— Select department —</option></select></div>
           </div>
           <div class="fg" id="cr-reqgroup-row" style="margin-bottom:8px"><label>Your Group</label><input id="cr-reqgroup" readonly style="background:var(--slate-50);color:var(--slate-400)"></div>
           <div class="fg"><label>Data Subject Categories (comma-separated)</label><input id="cr-cats" placeholder="e.g. employees, customers"></div>
@@ -440,6 +455,22 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
         </div>
       </div>
 
+      <!-- EXTERNAL RECIPIENTS -->
+      <div id="p-recipients" class="panel">
+        <div class="fb mb">
+          <input id="rcp-search" placeholder="Search organisations…" oninput="loadRecipients()" style="padding:6px 10px;border:1px solid var(--slate-200);border-radius:var(--radius);font-size:12px;font-family:var(--font);min-width:220px">
+          <span style="font-size:11px;color:var(--slate-400)">Recipients are added automatically when you create an external share request.</span>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Organisation</th><th>Contacts</th><th>DPA Required</th><th>Active</th><th>Created</th><th></th></tr></thead>
+          <tbody id="rcp-tb"></tbody>
+        </table></div>
+        <div id="rcp-pg" class="mt" style="text-align:right"></div>
+      </div>
+
+      <!-- RECIPIENT DETAIL -->
+      <div id="p-recipient-detail" class="panel"><div id="rcp-detail"></div></div>
+
     </div>
   </div>
 </div>
@@ -486,10 +517,12 @@ function enterApp(){
   // Hide workflow templates for non-admins; show groups for admins + data_owner
   const showWf=isAdmin();
   const showGrp=isAdmin()||user.product_role==='data_owner';
+  const showRcp=isAdmin()||user.product_role==='dpo';
   document.getElementById('nav-wf-section').style.display=showWf?'':'none';
   document.getElementById('nav-wf-btn').style.display=showWf?'':'none';
   document.getElementById('nav-grp-section').style.display=showGrp?'':'none';
   document.getElementById('nav-grp-btn').style.display=showGrp?'':'none';
+  document.getElementById('nav-rcp-btn').style.display=showRcp?'':'none';
   go('portal');
 }
 
@@ -499,10 +532,10 @@ function go(tab){
   document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
   const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
   const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
-  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups'};
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients};
   if(load[tab])load[tab]().catch(e=>console.error(e));
 }
 
@@ -587,7 +620,9 @@ async function onConnChange(){
   tree.innerHTML='<div class="empty" style="padding:8px">Loading schema…</div>';
   try{
     const d=await api('GET',`${DS}/schemas/${cid}/browse`);
-    _schemaCache=d.schema_data||{};
+    let sd=d.schema_data;
+    if(typeof sd==='string'){try{sd=JSON.parse(sd)}catch(e){sd={}}}
+    _schemaCache=sd||{};
     renderSchemaTree();
   }catch(e){
     tree.innerHTML=`<div class="empty" style="padding:8px;color:var(--red-600)">Failed: ${e.message}</div>`;
@@ -653,22 +688,40 @@ async function previewStructured(){
       </table></div>`;
   }catch(e){pv.innerHTML=`<div class="empty" style="padding:8px;color:var(--red-600)">${e.message}</div>`}
 }
+function onSharingTypeChange(){
+  const v=document.getElementById('cr-sharing').value;
+  const isExt=v==='external';
+  document.getElementById('cr-external-block').classList.toggle('hidden',!isExt);
+  // Receiver group is a same-tenant concept; hide it when sharing externally.
+  const rg=document.getElementById('cr-recv-group-row');
+  if(rg)rg.classList.toggle('hidden',isExt);
+}
 function _getReqFormData(){
   const cats=document.getElementById('cr-cats').value;
+  const sharing=document.getElementById('cr-sharing').value;
   const body={
     title:document.getElementById('cr-title').value,
     purpose:document.getElementById('cr-purpose').value,
-    sharing_type:document.getElementById('cr-sharing').value,
+    sharing_type:sharing,
     data_classification:document.getElementById('cr-class').value,
     legal_basis:document.getElementById('cr-legal').value,
     personal_data_involved:document.getElementById('cr-personal').value==='true',
     estimated_data_subjects:parseInt(document.getElementById('cr-subjects').value)||null,
     data_subject_categories:cats?cats.split(',').map(s=>s.trim()):null,
     source_description:document.getElementById('cr-source').value||null,
-    receiver_group_id:parseInt(document.getElementById('cr-recv-group').value)||null,
+    // Receiver group only applies to internal shares.
+    receiver_group_id:sharing==='external'?null:(parseInt(document.getElementById('cr-recv-group').value)||null),
     dpia_confirmed:document.getElementById('cr-dpia').checked,
     data_type:_dataType,
   };
+  if(sharing==='external'){
+    body.external_recipient={
+      org_name:document.getElementById('cr-ext-org').value.trim(),
+      contact_email:document.getElementById('cr-ext-email').value.trim(),
+      contact_name:document.getElementById('cr-ext-name').value.trim()||null,
+      phone:document.getElementById('cr-ext-phone').value.trim()||null,
+    };
+  }
   if(_dataType==='structured'){
     const p=_getStructuredPayload();
     body.connection_id=p.connection_id;
@@ -731,6 +784,10 @@ async function viewReq(id){
   const recvGrp=_groupsCache.find(g=>g.id===r.receiver_group_id);
   const canUpload=['draft','submitted','in_review','approved'].includes(r.status);
   const fmtSize=(b)=>{if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'};
+  // JSONB columns come back as raw JSON strings from asyncpg — parse if needed.
+  let _si=r.selected_items;
+  if(typeof _si==='string'){try{_si=JSON.parse(_si)}catch(e){_si=[]}}
+  if(!Array.isArray(_si))_si=[];
   document.getElementById('req-detail').innerHTML=`
     <div class="fb mb"><span class="mono" style="font-size:14px;font-weight:700">${r.request_number}</span>${badge(r.status)}</div>
     <div class="card"><h3>${r.title}</h3>
@@ -754,7 +811,7 @@ async function viewReq(id){
       ${r.source_description?`<div class="di" style="margin-top:6px"><div class="lb">Source</div><div class="vl">${r.source_description}</div></div>`:''}
       ${r.conditions?`<div class="di" style="margin-top:6px"><div class="lb">Conditions</div><div class="vl">${r.conditions}</div></div>`:''}
       ${r.data_type==='structured'?`<div class="di" style="margin-top:6px"><div class="lb">Data Type</div><div class="vl"><strong>Structured</strong> · ${r.selection_mode||'—'}</div></div>
-        ${r.selection_mode==='tables'&&r.selected_items?`<div class="di" style="margin-top:6px"><div class="lb">Tables &amp; Columns</div><div class="vl" style="font-family:monospace;font-size:11.5px">${(r.selected_items||[]).map(it=>`${it.schema?it.schema+'.':''}${it.table}(${(it.columns||[]).join(', ')})`).join('<br>')}</div></div>`:''}
+        ${r.selection_mode==='tables'&&_si.length?`<div class="di" style="margin-top:6px"><div class="lb">Tables &amp; Columns</div><div class="vl" style="font-family:monospace;font-size:11.5px">${_si.map(it=>`${it.schema?it.schema+'.':''}${it.table}(${(it.columns||[]).join(', ')})`).join('<br>')}</div></div>`:''}
         ${r.selection_mode==='query'&&r.custom_sql?`<div class="di" style="margin-top:6px"><div class="lb">SQL</div><div class="vl" style="font-family:monospace;font-size:11.5px;white-space:pre-wrap;background:var(--slate-50);padding:6px;border-radius:var(--radius)">${String(r.custom_sql).replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</div></div>`:''}
       `:''}
     </div>
@@ -967,6 +1024,80 @@ async function loadAudit(page=1){
   const pg=d.pagination;
   document.getElementById('au-meta').textContent=`Page ${pg.page}/${pg.total_pages||1}`;
   document.getElementById('au-pg').innerHTML=pg.total_pages>1?`${pg.previous_page?`<button class="btn btn-o btn-sm" onclick="loadAudit(${pg.previous_page})">← Prev</button>`:''} ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadAudit(${pg.next_page})">Next →</button>`:''}` :'';
+}
+
+// External Recipients
+async function loadRecipients(page=1){
+  const s=(document.getElementById('rcp-search')||{}).value||'';
+  const qs=`page=${page}&limit=20${s?`&search=${encodeURIComponent(s)}`:''}`;
+  const d=await api('GET',`${DS}/external-recipients?${qs}`);
+  document.getElementById('rcp-tb').innerHTML=(d.data||[]).map(r=>`<tr>
+    <td><strong>${r.org_name}</strong></td>
+    <td>${r.contacts_count||0}</td>
+    <td>${r.dpa_required?'Yes':'No'}</td>
+    <td>${r.is_active?'Active':'<span style="color:var(--slate-400)">Inactive</span>'}</td>
+    <td>${fmtDt(r.created_at)}</td>
+    <td><button class="btn btn-o btn-sm" onclick="viewRecipient(${r.id})">View</button></td>
+  </tr>`).join('')||'<tr><td colspan="6" class="empty">No external recipients yet</td></tr>';
+  const pg=d.pagination||{};
+  document.getElementById('rcp-pg').innerHTML=pg.total_pages>1?`
+    ${pg.previous_page?`<button class="btn btn-o btn-sm" onclick="loadRecipients(${pg.previous_page})">← Prev</button>`:''}
+    <span style="font-size:11px;color:var(--slate-400);margin:0 8px">Page ${pg.page}/${pg.total_pages}</span>
+    ${pg.next_page?`<button class="btn btn-o btn-sm" onclick="loadRecipients(${pg.next_page})">Next →</button>`:''}`:'';
+}
+async function viewRecipient(id){
+  const r=await api('GET',`${DS}/external-recipients/${id}`);
+  const contactsRows=(r.contacts||[]).map(c=>`<tr>
+    <td>${c.email}</td><td>${c.name||'—'}</td><td>${c.phone||'—'}</td>
+    <td>${c.email_verified_at?'Verified':'<span style="color:var(--slate-400)">Unverified</span>'}</td>
+    <td>${c.is_active?'Active':'<span style="color:var(--slate-400)">Inactive</span>'}</td>
+    <td>${fmtDt(c.created_at)}</td>
+  </tr>`).join('')||'<tr><td colspan="6" class="empty">No contacts</td></tr>';
+  const tokenRows=(r.active_tokens||[]).map(t=>`<tr>
+    <td class="mono" style="font-size:10px">${String(t.id).slice(0,8)}</td>
+    <td>${fmtDt(t.expires_at)}</td>
+    <td>${t.download_count}/${t.max_downloads}</td>
+    <td>${t.dpa_accepted_at?'Accepted':'<span style="color:var(--slate-400)">Pending</span>'}</td>
+    <td>${t.revoked_at?'<span style="color:var(--red-600)">Revoked</span>':'Active'}</td>
+    <td>${!t.revoked_at?`<button class="btn btn-o btn-sm" onclick="revokeToken('${t.id}',${id})">Revoke</button>`:''}</td>
+  </tr>`).join('')||'<tr><td colspan="6" class="empty">No active pickup links</td></tr>';
+  document.getElementById('rcp-detail').innerHTML=`
+    <div class="fb mb"><strong style="font-size:14px">${r.org_name}</strong>${r.is_active?'':' <span style="color:var(--slate-400);font-size:11px">(inactive)</span>'}</div>
+    <div class="card">
+      <div class="dg">
+        <div class="di"><div class="lb">Organisation</div><div class="vl">${r.org_name}</div></div>
+        <div class="di"><div class="lb">DPA Required</div><div class="vl">${r.dpa_required?'Yes':'No'}</div></div>
+        <div class="di"><div class="lb">Active</div><div class="vl">${r.is_active?'Yes':'No'}</div></div>
+        <div class="di"><div class="lb">Created</div><div class="vl">${fmtDt(r.created_at)}</div></div>
+      </div>
+      ${r.notes?`<div class="di" style="margin-top:8px"><div class="lb">Notes</div><div class="vl">${r.notes}</div></div>`:''}
+      <div class="bg" style="margin-top:10px">
+        <button class="btn btn-o btn-sm" onclick="toggleRecipientActive(${id},${!r.is_active})">${r.is_active?'Deactivate':'Reactivate'}</button>
+        <button class="btn btn-o" onclick="go('recipients')">← Back</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Contacts</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Email</th><th>Name</th><th>Phone</th><th>Email Status</th><th>Active</th><th>Created</th></tr></thead>
+        <tbody>${contactsRows}</tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>Active Pickup Links</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Token</th><th>Expires</th><th>Downloads</th><th>DPA</th><th>Status</th><th></th></tr></thead>
+        <tbody>${tokenRows}</tbody>
+      </table></div>
+    </div>`;
+  go('recipient-detail');
+}
+async function toggleRecipientActive(id,makeActive){
+  try{await api('PATCH',`${DS}/external-recipients/${id}`,{is_active:makeActive});toast(makeActive?'Reactivated':'Deactivated');viewRecipient(id)}catch(e){toast(e.message,false)}
+}
+async function revokeToken(tokenId,recipientId){
+  const reason=prompt('Reason for revoking this pickup link? (optional)')||'';
+  try{await api('POST',`${DS}/pickup-tokens/${tokenId}/revoke`,{reason:reason||null});toast('Pickup link revoked');viewRecipient(recipientId)}catch(e){toast(e.message,false)}
 }
 
 // Init

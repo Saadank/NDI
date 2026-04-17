@@ -138,6 +138,13 @@ def can_view_audit_logs(auth_user: AuthUser) -> bool:
     return _role(auth_user) == SharingRole.DPO
 
 
+def can_manage_recipients(auth_user: AuthUser) -> bool:
+    """Admins and DPO manage the external recipients directory and pickup tokens."""
+    if _is_admin(auth_user):
+        return True
+    return _role(auth_user) == SharingRole.DPO
+
+
 def can_manage_connections(auth_user: AuthUser) -> bool:
     return _is_admin(auth_user)
 
