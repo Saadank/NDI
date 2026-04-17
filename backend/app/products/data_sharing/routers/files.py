@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.security import get_current_user
 from app.products.data_sharing.services.file_service import FileService, get_file_service
@@ -12,10 +12,10 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 class InitiateUploadBody(BaseModel):
     request_id: UUID
-    filename: str
-    size: int
-    mime_type: str | None = None
-    sha256_hash: str
+    filename: str = Field(..., min_length=1)
+    size: int = Field(..., gt=0)
+    mime_type: str = Field(..., min_length=1)
+    sha256_hash: str = Field(..., min_length=64, max_length=64)
 
 
 @router.post("/initiate")

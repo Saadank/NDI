@@ -4,7 +4,7 @@ from typing import Any
 from keycloak import KeycloakAdmin, KeycloakOpenID
 
 from app.core.config import get_settings
-from app.utils.exceptions import UnauthorizedException, ValidationException
+from app.utils.exceptions import UnauthorizedException
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class KeycloakGateway:
             return self.keycloak_openid.token(username, password)
         except Exception as e:
             logger.error(f"Authentication failed: {e}")
-            raise ValidationException("Invalid username or password")
+            raise UnauthorizedException("Invalid username or password")
 
     def refresh_token(self, refresh_token: str) -> dict[str, Any]:
         try:

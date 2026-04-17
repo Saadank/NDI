@@ -14,6 +14,36 @@ from app.utils.timezone import now
 
 logger = logging.getLogger(__name__)
 
+# Whitelist of allowed MIME types for uploaded attachments. Anything outside
+# this set is rejected at upload-initiation time.
+ALLOWED_MIME_TYPES: frozenset[str] = frozenset({
+    # Documents
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    # Text / data
+    "text/plain",
+    "text/csv",
+    "application/json",
+    "application/xml",
+    "text/xml",
+    # Images
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    # Archives
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-7z-compressed",
+    "application/x-tar",
+    "application/gzip",
+})
+
 
 class FileService:
 
@@ -31,6 +61,11 @@ class FileService:
         settings = get_settings()
         if size > settings.MAX_FILE_SIZE_BYTES:
             raise ValidationException(f"File size exceeds maximum of {settings.MAX_FILE_SIZE_BYTES} bytes")
+
+        if not mime_type:
+            raise ValidationException("mime_type is required")
+        if mime_type not in ALLOWED_MIME_TYPES:
+            raise ValidationException(f"MIME type '{mime_type}' is not allowed")
 
         request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
         if request["status"] not in ("draft", "submitted", "in_review", "approved"):

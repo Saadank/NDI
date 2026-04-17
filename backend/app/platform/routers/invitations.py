@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.core.security import get_current_user
 from app.platform.services.invitation_service import InvitationService, get_invitation_service
@@ -9,17 +9,17 @@ router = APIRouter(prefix="/invitations", tags=["invitations"])
 
 
 class CreateInvitationRequest(BaseModel):
-    email: str
-    role: str
+    email: EmailStr
+    role: str = Field(..., min_length=1)
     product_slug: str | None = None
     product_role: str | None = None
 
 
 class AcceptInvitationRequest(BaseModel):
-    token: str
-    first_name: str
-    last_name: str
-    password: str
+    token: str = Field(..., min_length=1)
+    first_name: str = Field(..., min_length=1)
+    last_name: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8)
 
 
 @router.get("/")

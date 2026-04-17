@@ -7,6 +7,27 @@ from app.utils.timezone import now
 
 logger = logging.getLogger(__name__)
 
+# PDPL-aligned SLA caps by data classification (in days). When a template step
+# defines a longer SLA, the classification cap wins.
+CLASSIFICATION_SLA_DAYS: dict[str, int] = {
+    "public": 30,
+    "internal": 14,
+    "confidential": 7,
+    "sensitive": 3,
+}
+
+
+def _effective_sla_days(template_sla: int | None, classification: str | None) -> int | None:
+    """Return the effective SLA days for a step.
+
+    Applies the classification cap on top of the template value. If neither is
+    set, returns None (no deadline).
+    """
+    cap = CLASSIFICATION_SLA_DAYS.get(classification) if classification else None
+    if template_sla and cap:
+        return min(template_sla, cap)
+    return template_sla or cap
+
 
 class WorkflowEngine:
 
@@ -27,11 +48,14 @@ class WorkflowEngine:
             if group:
                 data_owner_user_id = group.get("data_owner_id")
 
+        classification = request.get("data_classification") if request else None
+
         created = []
         for i, ts in enumerate(template_steps):
             # Only the first step is "pending"; the rest wait their turn
             status = "pending" if i == 0 else "waiting"
-            sla_deadline = now() + timedelta(days=ts["sla_days"]) if ts["sla_days"] and i == 0 else None
+            sla_days = _effective_sla_days(ts.get("sla_days"), classification)
+            sla_deadline = now() + timedelta(days=sla_days) if sla_days and i == 0 else None
             # Route data_owner steps to the specific department data owner
             assignee_user_id = None
             if ts.get("assignee_role") == "data_owner" and data_owner_user_id:
@@ -67,13 +91,21 @@ class WorkflowEngine:
 
         if next_step:
             # Activate next step: set pending + calculate SLA from now
-            sla_days = None
+            template_sla = None
             if next_step.get("template_step_id"):
                 ts = await self.repo._fetch_row_optional(
                     "SELECT sla_days FROM t_template_steps WHERE id = $1", (next_step["template_step_id"],)
                 )
                 if ts:
-                    sla_days = ts["sla_days"]
+                    template_sla = ts["sla_days"]
+            # Apply classification cap if the parent request is available
+            classification = None
+            req = await self.repo._fetch_row_optional(
+                "SELECT data_classification FROM t_share_requests WHERE id = $1", (request_id,)
+            )
+            if req:
+                classification = req["data_classification"]
+            sla_days = _effective_sla_days(template_sla, classification)
             sla_deadline = now() + timedelta(days=sla_days) if sla_days else None
             updated = await self.repo.update_step(next_step["id"], status="pending", sla_deadline=sla_deadline)
             return updated

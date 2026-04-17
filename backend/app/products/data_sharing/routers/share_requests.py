@@ -1,9 +1,11 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.core.security import get_current_user
+from app.products.data_sharing.enums.data_classification import DataClassification
 from app.products.data_sharing.services.share_request_service import ShareRequestService, get_share_request_service
 from app.structures.auth_user import AuthUser
 
@@ -11,18 +13,18 @@ router = APIRouter(prefix="/requests", tags=["share-requests"])
 
 
 class ExternalRecipientInline(BaseModel):
-    org_name: str
-    contact_email: str
+    org_name: str = Field(..., min_length=1)
+    contact_email: EmailStr
     contact_name: str | None = None
     phone: str | None = None
 
 
 class CreateShareRequestBody(BaseModel):
-    title: str
-    purpose: str
+    title: str = Field(..., min_length=1)
+    purpose: str = Field(..., min_length=1)
     legal_basis: str = ""
-    sharing_type: str = "internal"
-    data_classification: str = "internal"
+    sharing_type: Literal["internal", "external"] = "internal"
+    data_classification: DataClassification = DataClassification.INTERNAL
     personal_data_involved: bool = False
     estimated_data_subjects: int | None = None
     data_subject_categories: list[str] | None = None
@@ -31,15 +33,15 @@ class CreateShareRequestBody(BaseModel):
     receiver_group_id: int | None = None
     dpia_confirmed: bool = False
     # Structured-data fields — only set when data_type == "structured"
-    data_type: str = "file"  # "file" | "structured"
+    data_type: Literal["file", "structured"] = "file"
     connection_id: UUID | None = None
-    selection_mode: str | None = None  # "tables" | "query"
+    selection_mode: Literal["tables", "query"] | None = None
     selected_items: list[dict] | None = None
     custom_sql: str | None = None
     # External recipient (non-tenant) — set when sharing_type='external' and the
     # receiver is not another customer tenant.
     external_recipient: ExternalRecipientInline | None = None
-    delivery_channel: str = "portal"
+    delivery_channel: Literal["portal", "email", "api"] = "portal"
 
 
 @router.get("/")

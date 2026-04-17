@@ -125,12 +125,18 @@ class ShareRequestService:
             raise ValidationException("Only draft requests can be submitted")
 
         # PDPL validation
+        classification = request["data_classification"]
         if request["personal_data_involved"]:
             if not request.get("legal_basis"):
                 raise ValidationException("Legal basis is required for personal data")
             if not request.get("estimated_data_subjects"):
                 raise ValidationException("Estimated data subjects is required for personal data")
-        if request["data_classification"] == "sensitive" and not request.get("dpia_confirmed"):
+        # Confidential and sensitive classifications also require a legal basis
+        if classification in ("confidential", "sensitive") and not request.get("legal_basis"):
+            raise ValidationException(
+                f"Legal basis is required for {classification} data"
+            )
+        if classification == "sensitive" and not request.get("dpia_confirmed"):
             raise ValidationException("DPIA confirmation required for sensitive data")
 
         # Select matching workflow template and create steps
