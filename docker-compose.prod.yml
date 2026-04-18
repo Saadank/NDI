@@ -1,3 +1,24 @@
+# docker-compose.prod.yml — corrected version
+#
+# Key changes vs. original:
+#   - Separate Postgres DB for Keycloak (KC_DB_URL_DATABASE=keycloak)
+#   - No published ports on internal services (DB/Redis/MinIO/Keycloak)
+#     Only nginx listens on host ports 80/443
+#   - Frontend mounted read-only into nginx (static HTML)
+#   - Certbot webroot volume shared between nginx and certbot container
+#   - Keycloak hostname tuning for Keycloak 24 + edge TLS
+#   - Healthchecks on every service
+#   - Logging driver with rotation to prevent disk fill
+#   - Restart policy: unless-stopped (not "always") for cleaner reboots
+#
+# Uses env file: .env.prod   (generate from .env.prod.example)
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
 
   postgres:
@@ -8,7 +29,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
-    restart: always
+      - ./backend/setup/db/00_init_keycloak_db.sql:/docker-entrypoint-initdb.d/00_init_keycloak_db.sql:ro
+    restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
@@ -17,55 +40,71 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_prod_data:/data
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   minio:
     image: minio/minio:latest
-    command: server /data
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     volumes:
       - minio_prod_data:/data
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
-    command: start --optimized
+    command: start --optimized --http-enabled=true --http-port=8080
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      KC_DB_USERNAME: ${POSTGRES_USER}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KC_HOSTNAME: ${KEYCLOAK_SERVER_URL}
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}               # e.g. auth.datasharing.sa
+      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   api:
+    image: ${API_IMAGE:-ghcr.io/${GITHUB_REPO}/api:${IMAGE_TAG:-latest}}
     build:
       context: ./backend
       dockerfile: Dockerfile
       target: production
     env_file: .env.prod
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,14 +113,22 @@ services:
       minio:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   worker:
+    image: ${WORKER_IMAGE:-ghcr.io/${GITHUB_REPO}/worker:${IMAGE_TAG:-latest}}
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
       target: production
     env_file: .env.prod
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,9 +144,18 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/webroot:/var/www/certbot:ro
+      - ./frontend:/usr/share/nginx/html:ro
     depends_on:
       - api
-    restart: always
+      - keycloak
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   postgres_prod_data:
