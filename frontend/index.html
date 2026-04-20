@@ -167,16 +167,19 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
     <nav class="sidebar-nav">
       <div class="section">Main</div>
       <button data-tab="portal" onclick="go('portal')"><span class="ic">◈</span> Portal</button>
-      <button data-tab="requests" onclick="go('requests')"><span class="ic">⬡</span> Share Requests</button>
-      <button data-tab="create-req" onclick="go('create-req')"><span class="ic">+</span> New Request</button>
+      <button data-tab="requests" id="nav-req-btn" onclick="go('requests')"><span class="ic">⬡</span> Share Requests</button>
+      <button data-tab="create-req" id="nav-new-req-btn" onclick="go('create-req')"><span class="ic">+</span> New Request</button>
       <div class="section" id="nav-wf-section">Workflow</div>
       <button data-tab="workflows" id="nav-wf-btn" onclick="go('workflows')"><span class="ic">⟡</span> Templates</button>
-      <div class="section">Data</div>
-      <button data-tab="files" onclick="go('files')"><span class="ic">▤</span> Files</button>
-      <button data-tab="connections" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
+      <div class="section" id="nav-data-section">Data</div>
+      <button data-tab="files" id="nav-files-btn" onclick="go('files')"><span class="ic">▤</span> Files</button>
+      <button data-tab="connections" id="nav-conn-btn" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
       <div class="section" id="nav-grp-section">Organization</div>
+      <button data-tab="users" id="nav-users-btn" onclick="go('users')"><span class="ic">☺</span> Users</button>
       <button data-tab="groups" id="nav-grp-btn" onclick="go('groups')"><span class="ic">⊡</span> Groups</button>
       <button data-tab="recipients" id="nav-rcp-btn" onclick="go('recipients')"><span class="ic">⌘</span> External Recipients</button>
+      <div class="section" id="nav-pa-section">Administration</div>
+      <button data-tab="onboard-company" id="nav-onb-btn" onclick="go('onboard-company')"><span class="ic">✦</span> Onboard Company</button>
       <div class="section">System</div>
       <button data-tab="notifications" onclick="go('notifications')"><span class="ic">◎</span> Notifications</button>
       <button data-tab="audit" onclick="go('audit')"><span class="ic">☰</span> Audit Trail</button>
@@ -471,6 +474,95 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <!-- RECIPIENT DETAIL -->
       <div id="p-recipient-detail" class="panel"><div id="rcp-detail"></div></div>
 
+      <!-- USERS (org_admin + platform_admin) -->
+      <div id="p-users" class="panel">
+        <div class="card">
+          <h3>Invite a user</h3>
+          <div class="fr3">
+            <div class="fg"><label>Email</label><input id="usr-email" type="email" placeholder="name@company.com"></div>
+            <div class="fg"><label>Platform role</label>
+              <select id="usr-role">
+                <option value="user">User</option>
+                <option value="org_admin">Org admin</option>
+              </select>
+            </div>
+            <div class="fg"><label>Data-sharing role (optional)</label>
+              <select id="usr-prod-role">
+                <option value="">— none —</option>
+                <option value="requester">Requester</option>
+                <option value="data_owner">Data owner</option>
+                <option value="dpo">DPO</option>
+              </select>
+            </div>
+          </div>
+          <div class="bg"><button class="btn btn-p" onclick="inviteUser()">Send invitation</button></div>
+          <div style="font-size:11px;color:var(--slate-400);margin-top:6px">Invitation links are valid for 72 hours. The user sets their own password on first login.</div>
+        </div>
+
+        <div class="card">
+          <h3>Team members</h3>
+          <div class="tw"><table>
+            <thead><tr><th>Name</th><th>Email</th><th>Platform role</th><th>DS role</th><th>Joined</th></tr></thead>
+            <tbody id="usr-tb"><tr><td colspan="5" style="text-align:center;color:var(--slate-400);padding:16px">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+
+        <div class="card">
+          <h3>Pending invitations</h3>
+          <div class="tw"><table>
+            <thead><tr><th>Email</th><th>Role</th><th>Product role</th><th>Sent</th><th>Expires</th><th>Status</th></tr></thead>
+            <tbody id="usr-inv-tb"><tr><td colspan="6" style="text-align:center;color:var(--slate-400);padding:16px">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+
+      <!-- ONBOARD COMPANY -->
+      <div id="p-onboard-company" class="panel">
+        <div class="card">
+          <h3>Onboard a new company</h3>
+          <div style="font-size:12px;color:var(--slate-400);margin-bottom:16px">Three steps in one flow: create the tenant, enable the products they bought, and email the first admin an invitation link.</div>
+
+          <div style="font-size:11px;font-weight:600;color:var(--navy-600);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Step 1 · Company details</div>
+          <div class="fr">
+            <div class="fg"><label>Legal name</label><input id="onb-name" placeholder="Apple Inc."></div>
+            <div class="fg"><label>Arabic name (optional)</label><input id="onb-name-ar" placeholder="آبل" dir="rtl"></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Slug (URL-safe)</label><input id="onb-slug" placeholder="apple"></div>
+            <div class="fg"><label>Tenant type</label>
+              <select id="onb-type">
+                <option value="internal_org">Internal organisation</option>
+                <option value="external_org">External organisation</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="font-size:11px;font-weight:600;color:var(--navy-600);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px">Step 2 · Products to enable</div>
+          <div id="onb-products" style="display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--navy-900)">
+            <span style="color:var(--slate-400)">Loading catalogue…</span>
+          </div>
+
+          <div style="font-size:11px;font-weight:600;color:var(--navy-600);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px">Step 3 · First admin invitation</div>
+          <div class="fr">
+            <div class="fg"><label>Admin email</label><input id="onb-admin-email" type="email" placeholder="tim.cook@apple.com"></div>
+            <div class="fg"><label>Platform role</label>
+              <select id="onb-admin-role">
+                <option value="org_admin">Org admin</option>
+                <option value="dpo">DPO</option>
+              </select>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--slate-400);margin-bottom:14px">An invitation email with a 72-hour magic link will be sent on submit. The admin can invite the DPO and other users from the <strong>Users</strong> page once signed in.</div>
+
+          <div class="bg">
+            <button class="btn btn-p" onclick="runOnboarding()" id="onb-run-btn">Run onboarding</button>
+            <button class="btn btn-o" onclick="resetOnboarding()">Reset form</button>
+          </div>
+
+          <div id="onb-log" style="margin-top:18px;padding:12px;background:var(--slate-50);border:1px solid var(--slate-100);border-radius:var(--radius);font-family:var(--mono);font-size:11.5px;line-height:1.7;display:none"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -509,20 +601,40 @@ async function doLogin(){
 }
 function doLogout(){localStorage.removeItem('ds_token');localStorage.removeItem('ds_refresh');location.reload()}
 function isAdmin(){return user&&(user.platform_role==='platform_admin'||user.platform_role==='org_admin')}
-function enterApp(){
+async function enterApp(){
   document.getElementById('login-wrap').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   document.getElementById('u-name').textContent=`${user.first_name||''} ${user.last_name||''}`.trim()||user.email;
   document.getElementById('u-role').textContent=user.product_role?`${user.platform_role} / ${user.product_role}`:user.platform_role;
-  // Hide workflow templates for non-admins; show groups for admins + data_owner
-  const showWf=isAdmin();
-  const showGrp=isAdmin()||user.product_role==='data_owner';
-  const showRcp=isAdmin()||user.product_role==='dpo';
-  document.getElementById('nav-wf-section').style.display=showWf?'':'none';
-  document.getElementById('nav-wf-btn').style.display=showWf?'':'none';
-  document.getElementById('nav-grp-section').style.display=showGrp?'':'none';
-  document.getElementById('nav-grp-btn').style.display=showGrp?'':'none';
-  document.getElementById('nav-rcp-btn').style.display=showRcp?'':'none';
+
+  // Discover which products the user's tenant has enabled
+  let enabledSlugs=new Set();
+  try{const prods=await api('GET',`${PF}/products/me`);enabledSlugs=new Set(prods.map(p=>p.slug));}catch(e){console.warn('products/me failed',e)}
+  const hasDS=enabledSlugs.has('data_sharing');
+
+  const showWf=isAdmin()&&hasDS;
+  const showGrp=(isAdmin()||user.product_role==='data_owner')&&hasDS;
+  const showRcp=(isAdmin()||user.product_role==='dpo')&&hasDS;
+  const showPa=user.platform_role==='platform_admin';
+  const showUsers=isAdmin();
+  const set=(id,vis)=>{const el=document.getElementById(id);if(el)el.style.display=vis?'':'none'};
+
+  // Data-sharing-gated entries
+  set('nav-req-btn',hasDS);
+  set('nav-new-req-btn',hasDS);
+  set('nav-data-section',hasDS);
+  set('nav-files-btn',hasDS);
+  set('nav-conn-btn',hasDS);
+  set('nav-wf-section',showWf);set('nav-wf-btn',showWf);
+  set('nav-grp-section',showGrp||showUsers);
+  set('nav-grp-btn',showGrp);
+  set('nav-rcp-btn',showRcp);
+  set('nav-users-btn',showUsers);
+
+  // Platform-admin-only
+  set('nav-pa-section',showPa);
+  set('nav-onb-btn',showPa);
+
   go('portal');
 }
 
@@ -532,11 +644,129 @@ function go(tab){
   document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
   const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
   const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
-  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail'};
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail','onboard-company':'Onboard Company',users:'Users'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients,'onboard-company':loadOnboardCompany,users:loadUsers};
   if(load[tab])load[tab]().catch(e=>console.error(e));
+}
+
+// Users (org_admin + platform_admin)
+async function loadUsers(){
+  const tb=document.getElementById('usr-tb');
+  const invTb=document.getElementById('usr-inv-tb');
+  try{
+    const resp=await api('GET',`${PF}/users/?limit=100`);
+    const users=Array.isArray(resp)?resp:(resp.items||resp.users||[]);
+    tb.innerHTML=users.length?users.map(u=>`<tr>
+      <td>${(u.first_name||'')+' '+(u.last_name||'')}</td>
+      <td>${u.email||'—'}</td>
+      <td>${badge(u.platform_role||'—')}</td>
+      <td>${u.product_role?badge(u.product_role):'<span style="color:var(--slate-400)">—</span>'}</td>
+      <td>${fmtD(u.created_at)}</td>
+    </tr>`).join(''):`<tr><td colspan="5" style="text-align:center;color:var(--slate-400);padding:16px">No users yet</td></tr>`;
+  }catch(e){tb.innerHTML=`<tr><td colspan="5" style="color:var(--red-600);padding:12px">${e.message}</td></tr>`}
+
+  try{
+    const invs=await api('GET',`${PF}/invitations/`);
+    invTb.innerHTML=invs.length?invs.map(i=>`<tr>
+      <td>${i.email}</td>
+      <td>${badge(i.role||'—')}</td>
+      <td>${i.product_role?badge(i.product_role):'<span style="color:var(--slate-400)">—</span>'}</td>
+      <td>${fmtD(i.created_at)}</td>
+      <td>${fmtD(i.expires_at)}</td>
+      <td>${badge(i.status||'pending')}</td>
+    </tr>`).join(''):`<tr><td colspan="6" style="text-align:center;color:var(--slate-400);padding:16px">No pending invitations</td></tr>`;
+  }catch(e){invTb.innerHTML=`<tr><td colspan="6" style="color:var(--red-600);padding:12px">${e.message}</td></tr>`}
+}
+
+async function inviteUser(){
+  const email=document.getElementById('usr-email').value.trim();
+  const role=document.getElementById('usr-role').value;
+  const prodRole=document.getElementById('usr-prod-role').value;
+  if(!email){toast('Email is required',false);return}
+  try{
+    await api('POST',`${PF}/invitations/`,{
+      email,role,
+      product_slug:prodRole?'data_sharing':null,
+      product_role:prodRole||null,
+    });
+    toast('Invitation sent');
+    document.getElementById('usr-email').value='';
+    document.getElementById('usr-prod-role').value='';
+    loadUsers();
+  }catch(e){toast(e.message,false)}
+}
+
+// Onboarding (platform_admin only)
+async function loadOnboardCompany(){
+  const box=document.getElementById('onb-products');
+  try{
+    const cat=await api('GET',`${PF}/products/`);
+    if(!cat.length){box.innerHTML='<span style="color:var(--slate-400)">No products in catalogue.</span>';return}
+    box.innerHTML=cat.map(p=>`<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--slate-100);border-radius:var(--radius);cursor:pointer"><input type="checkbox" class="onb-prod" value="${p.slug}" style="margin-top:2px"><div><div style="font-weight:600">${p.name}</div><div style="font-size:11.5px;color:var(--slate-400)">${p.slug}${p.description?' — '+trunc(p.description,90):''}</div></div></label>`).join('');
+  }catch(e){box.innerHTML=`<span style="color:var(--red-600)">Failed to load catalogue: ${e.message}</span>`}
+}
+
+function resetOnboarding(){
+  ['onb-name','onb-name-ar','onb-slug','onb-admin-email'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('onb-type').value='internal_org';
+  document.getElementById('onb-admin-role').value='org_admin';
+  document.querySelectorAll('.onb-prod').forEach(cb=>cb.checked=false);
+  const log=document.getElementById('onb-log');log.style.display='none';log.innerHTML='';
+}
+
+function onbLog(msg,kind='info'){
+  const log=document.getElementById('onb-log');
+  log.style.display='block';
+  const color=kind==='ok'?'var(--emerald-600)':kind==='err'?'var(--red-600)':'var(--navy-600)';
+  const prefix=kind==='ok'?'✓ ':kind==='err'?'✗ ':'· ';
+  log.innerHTML+=`<div style="color:${color}">${prefix}${msg}</div>`;
+  log.scrollTop=log.scrollHeight;
+}
+
+async function runOnboarding(){
+  const name=document.getElementById('onb-name').value.trim();
+  const slug=document.getElementById('onb-slug').value.trim();
+  const adminEmail=document.getElementById('onb-admin-email').value.trim();
+  if(!name||!slug||!adminEmail){toast('Name, slug, and admin email are required',false);return}
+  if(!/^[a-z0-9][a-z0-9-]*$/.test(slug)){toast('Slug must be lowercase letters, digits, and hyphens',false);return}
+  const products=[...document.querySelectorAll('.onb-prod:checked')].map(cb=>cb.value);
+  if(!products.length){toast('Select at least one product to enable',false);return}
+
+  const btn=document.getElementById('onb-run-btn');btn.disabled=true;btn.textContent='Running…';
+  document.getElementById('onb-log').innerHTML='';
+  try{
+    onbLog(`Creating tenant "${name}" (${slug})…`);
+    const tenant=await api('POST',`${PF}/tenants/`,{
+      name,slug,
+      tenant_type:document.getElementById('onb-type').value,
+      name_ar:document.getElementById('onb-name-ar').value.trim()||null,
+    });
+    onbLog(`Tenant created — id=${tenant.id}`,'ok');
+
+    for(const slugP of products){
+      onbLog(`Enabling product "${slugP}"…`);
+      await api('POST',`${PF}/products/tenants/${tenant.id}`,{product_slug:slugP});
+      onbLog(`Product "${slugP}" enabled`,'ok');
+    }
+
+    onbLog(`Sending invitation to ${adminEmail}…`);
+    await api('POST',`${PF}/invitations/`,{
+      email:adminEmail,
+      role:document.getElementById('onb-admin-role').value,
+      tenant_id:tenant.id,
+    });
+    onbLog(`Invitation sent (magic link valid 72h)`,'ok');
+
+    onbLog(`Done — ${name} is ready. The admin will set their password via the email link.`,'ok');
+    toast(`${name} onboarded`);
+  }catch(e){
+    onbLog(`Error: ${e.message}`,'err');
+    toast(e.message,false);
+  }finally{
+    btn.disabled=false;btn.textContent='Run onboarding';
+  }
 }
 
 // Portal

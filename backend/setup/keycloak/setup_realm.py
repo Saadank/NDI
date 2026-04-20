@@ -221,6 +221,34 @@ def main():
     except urllib.error.HTTPError as e:
         print(f"  ⚠ Role assignment error: {e}")
 
+    # 7. Grant realm-management roles to datasharing-backend service account
+    # so the backend can create/manage users, assign roles, etc. via admin API.
+    print(f"\n[7/7] Granting realm-management roles to '{CLIENT_ID}' service account...")
+    try:
+        clients = api("GET", f"/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(CLIENT_ID)}", token=token)
+        backend_client_uuid = clients[0]["id"] if clients else None
+
+        rm_clients = api("GET", f"/admin/realms/{REALM}/clients?clientId=realm-management", token=token)
+        rm_client_uuid = rm_clients[0]["id"] if rm_clients else None
+
+        if not backend_client_uuid or not rm_client_uuid:
+            print("  ⚠ Could not resolve service account or realm-management client")
+        else:
+            sa_user = api("GET", f"/admin/realms/{REALM}/clients/{backend_client_uuid}/service-account-user", token=token)
+            sa_user_id = sa_user["id"]
+
+            all_rm_roles = api("GET", f"/admin/realms/{REALM}/clients/{rm_client_uuid}/roles", token=token) or []
+            needed = {"manage-users", "view-users", "query-users", "query-groups", "query-clients", "manage-clients", "view-clients", "manage-realm", "view-realm"}
+            to_assign = [r for r in all_rm_roles if r["name"] in needed]
+
+            if to_assign:
+                api("POST", f"/admin/realms/{REALM}/users/{sa_user_id}/role-mappings/clients/{rm_client_uuid}", to_assign, token)
+                print(f"  ✓ Granted {len(to_assign)} realm-management roles to service account")
+            else:
+                print("  ⚠ No matching realm-management roles found")
+    except urllib.error.HTTPError as e:
+        print(f"  ⚠ Service account role grant error: {e}")
+
     print("\n" + "=" * 60)
     print("  Setup complete!")
     print("=" * 60)
