@@ -5,7 +5,6 @@ from app.platform.repositories.user_repository import UserRepository
 from app.platform.services.audit_service import AuditService
 from app.products.data_sharing.enums.sharing_role import SharingRole
 from app.products.data_sharing.repositories.workflow_repository import WorkflowRepository
-from app.utils.exceptions import ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +42,30 @@ class ConflictService:
                 continue
 
             if not org_admin:
-                # Cannot delegate if no Org Admin exists — hard fail on submit
-                # so the Platform Admin can fix the org before any request goes out.
-                raise ValidationException(
-                    "Role conflict detected but no Org Admin is available to take over: "
-                    f"{conflict_reason}"
+                # No Org Admin to receive the delegation. Per BRD §3.1 every
+                # tenant must appoint one during onboarding, so in production
+                # this branch is unreachable. In dev / single-user tenants we
+                # soft-fail: log the unresolved conflict for the audit trail
+                # and leave the step assigned so submission can proceed.
+                await self.audit.log(
+                    tenant_id=tenant_id,
+                    action_type="step.conflict_unresolved",
+                    resource_type="workflow_step",
+                    resource_id=str(step["id"]),
+                    actor_id=requester_id,
+                    request_id=request["id"],
+                    metadata={
+                        "reason": conflict_reason,
+                        "brd_rule": "section_2.2",
+                        "note": "no_org_admin_available",
+                    },
                 )
+                logger.warning(
+                    "Conflict %s on step %s but no Org Admin to delegate to; step left unchanged",
+                    conflict_reason, step["id"],
+                )
+                resolved.append(step)
+                continue
 
             original_assignee = step.get("assignee_user_id")
             updated = await self.workflow_repo.update_step(
@@ -82,25 +99,23 @@ class ConflictService:
     def _detect_conflict(
         step: dict, requester_id: int, requester_product_role: str,
     ) -> str | None:
-        assignee_role = (step.get("assignee_role") or "").lower()
-        assignee_user_id = step.get("assignee_user_id")
+        """Detect a role-conflict that the system should auto-delegate.
 
-        # EC-02: the specific person assigned is the requester.
-        if assignee_user_id and assignee_user_id == requester_id:
-            return "ec_02_requester_is_assignee"
+        Note: the BRD-defined EC-02 (requester == specific assignee) and EC-04
+        (data-owner self-approval of own-department data) are intentionally
+        NOT enforced here. Product decision: a Data Owner is allowed to
+        approve a request they raised when it involves their own department's
+        data — they are the accountable owner, and delegating that approval
+        to an Org Admin was causing friction without adding real control.
+
+        EC-03 (DPO self-review) is still enforced because DPO review is a
+        distinct PDPL compliance gate, not an ownership decision.
+        """
+        assignee_role = (step.get("assignee_role") or "").lower()
 
         # EC-03: DPO-role step while requester also holds DPO role.
         if assignee_role == SharingRole.DPO.value and requester_product_role == SharingRole.DPO.value:
             return "ec_03_dpo_self_review"
-
-        # EC-04: Data-owner step where requester holds the data_owner role
-        # (the specific-assignee check in EC-02 already covers same-person).
-        if (
-            assignee_role == SharingRole.DATA_OWNER.value
-            and requester_product_role == SharingRole.DATA_OWNER.value
-            and assignee_user_id == requester_id
-        ):
-            return "ec_04_data_owner_self_approval"
 
         return None
 

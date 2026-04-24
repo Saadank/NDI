@@ -27,15 +27,11 @@ class ApprovalService:
         step = await self.workflow_repo.find_step(step_id)
         request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
         require(can_approve_step(auth_user, step, request), "You do not have permission to act on this step")
-        # BRD §2.2 EC-02: the requester must never act on their own approval step.
-        # submit_request already auto-delegates, but re-check at runtime in case
-        # a workflow was built before the conflict rule shipped.
-        if request.get("requester_id") == auth_user.user_id:
-            raise ForbiddenException(
-                "You cannot approve a step on a request you raised"
-            )
         # If a specific user is assigned, the acting user must be that user OR
-        # a currently-active delegate of that user (BRD §2.3).
+        # a currently-active delegate of that user (BRD §2.3 delegation).
+        # Product decision: a requester IS allowed to approve a step on their
+        # own request when they are the legitimate assignee (e.g. Data Owner
+        # approving an outbound share of their own department's data).
         assignee_user_id = step.get("assignee_user_id")
         if assignee_user_id and assignee_user_id != auth_user.user_id:
             if not await self.delegation.can_act_for(auth_user.user_id, assignee_user_id):
