@@ -26,3 +26,10 @@ class InvitationRepository(PostgresqlAsyncRepository):
             query += ", accepted_at = CURRENT_TIMESTAMP"
         query += " WHERE id = $2 RETURNING *"
         return await self._fetch_row(query, (status, invitation_id))
+
+    async def count_pending(self, tenant_id: int) -> int:
+        return await self._fetch_value(
+            "SELECT COUNT(*) FROM t_invitations "
+            "WHERE tenant_id = $1 AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP",
+            (tenant_id,),
+        )

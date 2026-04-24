@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.gateways.email_gateway import EmailGateway
 from app.gateways.keycloak_gateway import KeycloakGateway
 from app.platform.repositories.invitation_repository import InvitationRepository
+from app.platform.repositories.tenant_repository import TenantRepository
 from app.platform.repositories.user_repository import UserRepository
 from app.products.data_sharing.permissions import can_manage_users
 from app.structures.auth_user import AuthUser
@@ -22,6 +23,7 @@ class InvitationService:
     def __init__(self) -> None:
         self.repo = InvitationRepository()
         self.user_repo = UserRepository()
+        self.tenant_repo = TenantRepository()
         self.keycloak = KeycloakGateway()
         self.email_gateway = EmailGateway()
 
@@ -40,6 +42,18 @@ class InvitationService:
         existing = await self.user_repo.find_by_email(email, tenant_id)
         if existing:
             raise ValidationException("User already exists in this organisation")
+
+        # BRD §1.3: enforce the tenant's contracted seat cap. Pending invitations
+        # count toward the cap to prevent over-provisioning between invite and accept.
+        tenant = await self.tenant_repo.find_by_id(tenant_id)
+        seat_limit = (tenant or {}).get("seat_limit")
+        if seat_limit is not None:
+            active_users = await self.user_repo.count_active(tenant_id)
+            pending = await self.repo.count_pending(tenant_id)
+            if active_users + pending >= seat_limit:
+                raise ValidationException(
+                    f"Cannot invite: seat limit of {seat_limit} reached for this organisation"
+                )
 
         token = secrets.token_urlsafe(48)
         expires_at = now() + timedelta(hours=INVITATION_EXPIRY_HOURS)

@@ -52,3 +52,37 @@ class UserRepository(PostgresqlAsyncRepository):
         return await self._execute(
             "UPDATE t_users SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", (user_id,)
         )
+
+    async def find_first_org_admin(self, tenant_id: int) -> dict | None:
+        """Return the lowest-id active Org Admin for a tenant.
+
+        Used as the fallback approver when a BRD role conflict triggers an
+        auto-delegation (§2.2 EC-02/03/04).
+        """
+        return await self._fetch_row_optional(
+            "SELECT * FROM t_users WHERE tenant_id = $1 AND platform_role = 'org_admin' "
+            "AND is_active = TRUE AND deleted_at IS NULL ORDER BY id LIMIT 1",
+            (tenant_id,),
+        )
+
+    async def set_delegation(
+        self, user_id: int, delegate_to: int | None,
+        start=None, end=None, reason: str | None = None,
+    ) -> dict:
+        return await self._fetch_row(
+            """UPDATE t_users
+               SET delegation_to_user_id = $1,
+                   delegation_start = $2,
+                   delegation_end = $3,
+                   delegation_reason = $4,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $5 RETURNING *""",
+            (delegate_to, start, end, reason, user_id),
+        )
+
+    async def count_active(self, tenant_id: int) -> int:
+        return await self._fetch_value(
+            "SELECT COUNT(*) FROM t_users "
+            "WHERE tenant_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+            (tenant_id,),
+        )

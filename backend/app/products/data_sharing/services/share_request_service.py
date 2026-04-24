@@ -9,6 +9,7 @@ from app.products.data_sharing.permissions import (
     can_submit_request, can_view_request, require,
 )
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
+from app.products.data_sharing.services.conflict_service import ConflictService
 from app.products.data_sharing.services.external_recipient_service import ExternalRecipientService
 from app.products.data_sharing.services.workflow_engine import WorkflowEngine
 from app.structures.auth_user import AuthUser
@@ -25,6 +26,7 @@ class ShareRequestService:
         self.workflow_engine = WorkflowEngine()
         self.audit = AuditService()
         self.external_recipients = ExternalRecipientService()
+        self.conflicts = ConflictService()
 
     async def create_draft(self, data: dict, auth_user: AuthUser) -> dict:
         require(can_create_request(auth_user), "Your role cannot create requests")
@@ -39,6 +41,11 @@ class ShareRequestService:
             group = await group_repo.find_by_id(receiver_group_id)
             if not group or group["tenant_id"] != tenant_id:
                 raise ValidationException("Receiver group not found in your organization")
+            # EC-01: the receiver department cannot be the requester's own department.
+            if auth_user.group_id and receiver_group_id == auth_user.group_id:
+                raise ValidationException(
+                    "You cannot request data from your own department"
+                )
 
         # Validate structured-data fields if this is a structured request
         data_type = data.get("data_type", "file")
@@ -124,6 +131,16 @@ class ShareRequestService:
         if request["status"] != "draft":
             raise ValidationException("Only draft requests can be submitted")
 
+        # EC-01 re-check: requester's group may have changed since draft.
+        if (
+            auth_user.group_id
+            and request.get("receiver_group_id")
+            and request["receiver_group_id"] == auth_user.group_id
+        ):
+            raise ValidationException(
+                "You cannot request data from your own department"
+            )
+
         # PDPL validation
         classification = request["data_classification"]
         if request["personal_data_involved"]:
@@ -144,7 +161,12 @@ class ShareRequestService:
             request["sharing_type"], request["data_classification"], tenant_id
         )
         if template:
-            await self.workflow_engine.create_workflow_steps(request_id, template, request)
+            steps = await self.workflow_engine.create_workflow_steps(
+                request_id, template, request
+            )
+            # BRD §2.2 role-conflict resolution: EC-02 / EC-03 / EC-04.
+            # Runs after step creation so every assignment is inspected in a single pass.
+            await self.conflicts.resolve_step_conflicts(request, steps, auth_user)
             await self.repo.update(request_id, workflow_template_id=template["id"])
 
         updated = await self.repo.update_status(request_id, "submitted", auth_user.user_id)

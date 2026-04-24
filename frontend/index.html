@@ -181,6 +181,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <div class="section" id="nav-pa-section">Administration</div>
       <button data-tab="onboard-company" id="nav-onb-btn" onclick="go('onboard-company')"><span class="ic">✦</span> Onboard Company</button>
       <div class="section">System</div>
+      <button data-tab="profile" onclick="go('profile')"><span class="ic">☺</span> My Profile</button>
       <button data-tab="notifications" onclick="go('notifications')"><span class="ic">◎</span> Notifications</button>
       <button data-tab="audit" onclick="go('audit')"><span class="ic">☰</span> Audit Trail</button>
     </nav>
@@ -516,6 +517,49 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
         </div>
       </div>
 
+      <!-- MY PROFILE -->
+      <div id="p-profile" class="panel">
+        <div class="card">
+          <h3>Out of Office / Delegation</h3>
+          <div style="font-size:12px;color:var(--slate-400);margin-bottom:14px">
+            Nominate a teammate to act on your approval steps during a defined window.
+            Their actions are logged as "on behalf of" you. The delegate must be in the
+            same department as you and hold the same or higher role.
+          </div>
+
+          <div id="prof-current" style="margin-bottom:14px"></div>
+
+          <div class="fr3">
+            <div class="fg">
+              <label>Delegate to</label>
+              <select id="prof-delegate">
+                <option value="">— none —</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label>Starts</label>
+              <input id="prof-start" type="datetime-local">
+            </div>
+            <div class="fg">
+              <label>Ends</label>
+              <input id="prof-end" type="datetime-local">
+            </div>
+          </div>
+          <div class="fg" style="margin-top:8px">
+            <label>Reason (optional)</label>
+            <input id="prof-reason" placeholder="e.g. Annual leave" maxlength="500">
+          </div>
+          <div class="bg" style="margin-top:12px">
+            <button class="btn btn-p" onclick="saveDelegation()">Save delegation</button>
+            <button class="btn btn-o" onclick="clearDelegation()">Clear</button>
+          </div>
+          <div style="font-size:11px;color:var(--slate-400);margin-top:8px">
+            BRD §2.3 — all approvals taken by your delegate appear in the audit trail as
+            “Approved by Delegate on behalf of You”.
+          </div>
+        </div>
+      </div>
+
       <!-- ONBOARD COMPANY -->
       <div id="p-onboard-company" class="panel">
         <div class="card">
@@ -644,11 +688,98 @@ function go(tab){
   document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
   const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
   const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
-  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail','onboard-company':'Onboard Company',users:'Users'};
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail','onboard-company':'Onboard Company',users:'Users',profile:'My Profile'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients,'onboard-company':loadOnboardCompany,users:loadUsers};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients,'onboard-company':loadOnboardCompany,users:loadUsers,profile:loadProfile};
   if(load[tab])load[tab]().catch(e=>console.error(e));
+}
+
+// ---------- My Profile / Delegation (BRD §2.3) ----------
+
+function toLocalInputValue(iso){
+  // Convert an ISO timestamp to the value format that <input type="datetime-local"> expects.
+  if(!iso)return '';
+  const d=new Date(iso);
+  if(isNaN(d))return '';
+  const pad=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadProfile(){
+  const current=document.getElementById('prof-current');
+  const sel=document.getElementById('prof-delegate');
+  current.innerHTML='<span style="color:var(--slate-400);font-size:12px">Loading…</span>';
+
+  // Populate the delegate dropdown with teammates only — same department,
+  // active, and not the caller themself. Backend enforces the same rule.
+  try{
+    if(!user.group_id){
+      sel.innerHTML='<option value="">— you are not assigned to a department —</option>';
+    }else{
+      const resp=await api('GET',`${PF}/users/?limit=100`);
+      const users=Array.isArray(resp)?resp:(resp.items||resp.users||resp.data||[]);
+      const teammates=users.filter(u=>
+        u.id!==user.id && u.is_active!==false && u.group_id===user.group_id
+      );
+      if(teammates.length===0){
+        sel.innerHTML='<option value="">— no other active members in your department —</option>';
+      }else{
+        sel.innerHTML='<option value="">— none —</option>'+teammates
+          .map(u=>`<option value="${u.id}">${((u.first_name||'')+' '+(u.last_name||'')).trim()||u.email||('#'+u.id)} — ${u.email||''}</option>`)
+          .join('');
+      }
+    }
+  }catch(e){sel.innerHTML=`<option value="">— failed to load teammates —</option>`}
+
+  // Fetch the caller's current row — the /me endpoint returns the AuthUser
+  // summary, so we pull the full record via /users/{id}.
+  try{
+    const me=await api('GET',`${PF}/users/${user.id}`);
+    const d=me.delegation_to_user_id;
+    if(d){
+      const sinceNow=new Date(me.delegation_end||0)>new Date();
+      current.innerHTML=`<div style="padding:10px 12px;background:${sinceNow?'#ecfdf5':'#fef3c7'};border:1px solid ${sinceNow?'#10b981':'#f59e0b'};border-radius:6px;font-size:12px">
+        <strong>${sinceNow?'Active':'Expired'} delegation</strong> to user #${d}
+        ${me.delegation_start?` · from ${fmtDt(me.delegation_start)}`:''}
+        ${me.delegation_end?` · until ${fmtDt(me.delegation_end)}`:''}
+        ${me.delegation_reason?`<br><span style="color:var(--slate-500)">${me.delegation_reason}</span>`:''}
+      </div>`;
+      sel.value=String(d);
+      document.getElementById('prof-start').value=toLocalInputValue(me.delegation_start);
+      document.getElementById('prof-end').value=toLocalInputValue(me.delegation_end);
+      document.getElementById('prof-reason').value=me.delegation_reason||'';
+    }else{
+      current.innerHTML=`<div style="padding:10px 12px;background:var(--slate-50);border:1px solid var(--slate-200);border-radius:6px;font-size:12px;color:var(--slate-500)">No delegation set.</div>`;
+      document.getElementById('prof-start').value='';
+      document.getElementById('prof-end').value='';
+      document.getElementById('prof-reason').value='';
+    }
+  }catch(e){current.innerHTML=`<div style="color:var(--red-600);font-size:12px">${e.message}</div>`}
+}
+
+async function saveDelegation(){
+  const toId=document.getElementById('prof-delegate').value;
+  const start=document.getElementById('prof-start').value;
+  const end=document.getElementById('prof-end').value;
+  const reason=document.getElementById('prof-reason').value.trim();
+  if(!toId){toast('Select a delegate (or use Clear to remove)',false);return}
+  if(!start||!end){toast('Both start and end are required',false);return}
+  // datetime-local gives naive local time; convert to real ISO so the backend
+  // lands on the moment the user intended.
+  const body={
+    delegate_to_user_id:parseInt(toId,10),
+    delegation_start:new Date(start).toISOString(),
+    delegation_end:new Date(end).toISOString(),
+    reason:reason||null,
+  };
+  try{await api('POST',`${PF}/users/me/delegation`,body);toast('Delegation saved');loadProfile()}
+  catch(e){toast(e.message,false)}
+}
+
+async function clearDelegation(){
+  try{await api('DELETE',`${PF}/users/me/delegation`);toast('Delegation cleared');loadProfile()}
+  catch(e){toast(e.message,false)}
 }
 
 // Users (org_admin + platform_admin)

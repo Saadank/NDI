@@ -42,8 +42,37 @@ class FileRepository(PostgresqlAsyncRepository):
             "SELECT * FROM t_files WHERE expires_at < CURRENT_TIMESTAMP AND status = 'uploaded'"
         )
 
+    async def find_files_expiring_within(self, hours: int) -> list[dict]:
+        """Files that expire in <= `hours` hours and have not yet been warned
+        (BRD §3.7 48-hour notice)."""
+        # Build the interval as an explicit make_interval() call so asyncpg
+        # can bind the int cleanly.
+        return await self._fetch_all(
+            "SELECT * FROM t_files "
+            "WHERE status = 'uploaded' "
+            "AND pre_expiry_notified_at IS NULL "
+            "AND expires_at IS NOT NULL "
+            "AND expires_at BETWEEN CURRENT_TIMESTAMP "
+            "AND CURRENT_TIMESTAMP + make_interval(hours => $1)",
+            (hours,),
+        )
+
+    async def mark_pre_expiry_notified(self, file_id: UUID) -> None:
+        await self._execute(
+            "UPDATE t_files SET pre_expiry_notified_at = CURRENT_TIMESTAMP WHERE id = $1",
+            (file_id,),
+        )
+
     async def soft_delete(self, file_id: UUID, reason: str) -> dict:
         return await self._fetch_row(
             "UPDATE t_files SET deleted_at = CURRENT_TIMESTAMP, deletion_reason = $1, status = 'deleted' WHERE id = $2 RETURNING *",
             (reason, file_id),
         )
+
+    async def total_bytes_for_tenant(self, tenant_id: int) -> int:
+        value = await self._fetch_value(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM t_files "
+            "WHERE tenant_id = $1 AND status = 'uploaded'",
+            (tenant_id,),
+        )
+        return int(value or 0)

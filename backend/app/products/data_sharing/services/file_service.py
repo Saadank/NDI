@@ -1,9 +1,11 @@
 import logging
 import uuid
+from datetime import timedelta
 from uuid import UUID
 
 from app.core.config import get_settings
 from app.gateways.object_store_gateway import ObjectStoreGateway
+from app.platform.repositories.tenant_repository import TenantRepository
 from app.platform.services.audit_service import AuditService
 from app.products.data_sharing.repositories.file_repository import FileRepository
 from app.products.data_sharing.repositories.share_request_repository import ShareRequestRepository
@@ -11,6 +13,9 @@ from app.structures.auth_user import AuthUser
 from app.products.data_sharing.permissions import can_view_request, require
 from app.utils.exceptions import ValidationException
 from app.utils.timezone import now
+
+# BRD §3.7 default retention when a tenant has not configured a custom value.
+DEFAULT_RETENTION_DAYS = 90
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +55,16 @@ class FileService:
     def __init__(self) -> None:
         self.repo = FileRepository()
         self.request_repo = ShareRequestRepository()
+        self.tenant_repo = TenantRepository()
         self.object_store = ObjectStoreGateway()
         self.audit = AuditService()
+
+    async def _default_expiry(self, tenant_id: int):
+        """Resolve the expiry date for a newly uploaded file when the caller
+        did not specify one (BRD §3.7)."""
+        tenant = await self.tenant_repo.find_by_id(tenant_id)
+        retention = (tenant or {}).get("retention_days") or DEFAULT_RETENTION_DAYS
+        return now() + timedelta(days=retention)
 
     async def initiate_upload(
         self, request_id: UUID, filename: str, size: int,
@@ -67,11 +80,29 @@ class FileService:
         if mime_type not in ALLOWED_MIME_TYPES:
             raise ValidationException(f"MIME type '{mime_type}' is not allowed")
 
+        # BRD §1.3 / §2.1: enforce the tenant's contracted storage cap.
+        tenant = await self.tenant_repo.find_by_id(auth_user.tenant_id)
+        storage_limit_gb = (tenant or {}).get("storage_limit_gb")
+        if storage_limit_gb:
+            used = await self.repo.total_bytes_for_tenant(auth_user.tenant_id)
+            limit_bytes = storage_limit_gb * (1024 ** 3)
+            if used + size > limit_bytes:
+                raise ValidationException(
+                    f"Upload would exceed your organisation's storage limit of "
+                    f"{storage_limit_gb} GB"
+                )
+
         request = await self.request_repo.find_by_id(request_id, auth_user.tenant_id)
         if request["status"] not in ("draft", "submitted", "in_review", "approved"):
             raise ValidationException("Request is not in a state that allows file uploads")
 
         storage_key = f"{auth_user.tenant_id}/{request_id}/{uuid.uuid4()}"
+
+        # Apply the BRD §3.7 retention policy if the caller didn't set an
+        # explicit expiry. Request-level expiry (if any) wins over the default.
+        resolved_expiry = expires_at or request.get("expiry_at")
+        if not resolved_expiry:
+            resolved_expiry = await self._default_expiry(auth_user.tenant_id)
 
         file_record = await self.repo.create(
             request_id=request_id,
@@ -82,7 +113,7 @@ class FileService:
             mime_type=mime_type,
             sha256_hash=sha256_hash,
             uploaded_by=auth_user.user_id,
-            expires_at=expires_at,
+            expires_at=resolved_expiry,
         )
 
         await self.audit.log(

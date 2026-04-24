@@ -1,8 +1,8 @@
 import logging
-from datetime import timedelta
 from uuid import UUID
 
 from app.products.data_sharing.repositories.workflow_repository import WorkflowRepository
+from app.utils.business_calendar import BusinessCalendar
 from app.utils.timezone import now
 
 logger = logging.getLogger(__name__)
@@ -49,13 +49,18 @@ class WorkflowEngine:
                 data_owner_user_id = group.get("data_owner_id")
 
         classification = request.get("data_classification") if request else None
+        tenant_id = request.get("tenant_id") if request else None
+        calendar = BusinessCalendar(tenant_id) if tenant_id else None
 
         created = []
         for i, ts in enumerate(template_steps):
             # Only the first step is "pending"; the rest wait their turn
             status = "pending" if i == 0 else "waiting"
             sla_days = _effective_sla_days(ts.get("sla_days"), classification)
-            sla_deadline = now() + timedelta(days=sla_days) if sla_days and i == 0 else None
+            # BRD §4.3: SLA clock pauses on Saudi non-working days.
+            sla_deadline = None
+            if sla_days and i == 0 and calendar:
+                sla_deadline = await calendar.add_business_days(now(), sla_days)
             # Route data_owner steps to the specific department data owner
             assignee_user_id = None
             if ts.get("assignee_role") == "data_owner" and data_owner_user_id:
@@ -100,13 +105,19 @@ class WorkflowEngine:
                     template_sla = ts["sla_days"]
             # Apply classification cap if the parent request is available
             classification = None
+            tenant_id = None
             req = await self.repo._fetch_row_optional(
-                "SELECT data_classification FROM t_share_requests WHERE id = $1", (request_id,)
+                "SELECT data_classification, tenant_id FROM t_share_requests WHERE id = $1",
+                (request_id,),
             )
             if req:
                 classification = req["data_classification"]
+                tenant_id = req["tenant_id"]
             sla_days = _effective_sla_days(template_sla, classification)
-            sla_deadline = now() + timedelta(days=sla_days) if sla_days else None
+            sla_deadline = None
+            if sla_days and tenant_id:
+                cal = BusinessCalendar(tenant_id)
+                sla_deadline = await cal.add_business_days(now(), sla_days)
             updated = await self.repo.update_step(next_step["id"], status="pending", sla_deadline=sla_deadline)
             return updated
 

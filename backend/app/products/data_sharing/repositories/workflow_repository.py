@@ -122,3 +122,20 @@ class WorkflowRepository(PostgresqlAsyncRepository):
         return await self._fetch_all(
             "SELECT * FROM t_workflow_steps WHERE sla_deadline < CURRENT_TIMESTAMP AND status = 'pending' AND escalated_at IS NULL"
         )
+
+    async def find_steps_awaiting_second_escalation(self) -> list[dict]:
+        """Steps already breached (escalation_level = 1) and still pending —
+        candidates for the BRD §2.3 Day-5 escalation."""
+        return await self._fetch_all(
+            "SELECT * FROM t_workflow_steps "
+            "WHERE status = 'pending' AND escalation_level = 1 "
+            "AND second_escalated_at IS NULL"
+        )
+
+    async def find_steps_awaiting_stall(self) -> list[dict]:
+        """Steps already at level 2 — candidates for the Day-7 auto-cancel."""
+        return await self._fetch_all(
+            "SELECT * FROM t_workflow_steps "
+            "WHERE status = 'pending' AND escalation_level = 2 "
+            "AND stalled_at IS NULL"
+        )
