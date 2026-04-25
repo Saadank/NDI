@@ -109,6 +109,13 @@ def main():
         print(f"  ✓ Realm '{REALM}' created")
     except urllib.error.HTTPError:
         print(f"  ⚠ Realm may already exist, continuing...")
+        try:
+            current = api("GET", f"/admin/realms/{REALM}", token=token)
+            current["sslRequired"] = "none"
+            api("PUT", f"/admin/realms/{REALM}", current, token)
+            print(f"  ✓ Patched sslRequired=none on existing realm")
+        except urllib.error.HTTPError as e:
+            print(f"  ! Could not patch sslRequired on existing realm: {e}")
 
     # 3. Create client
     print(f"\n[3/6] Creating client '{CLIENT_ID}'...")
