@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { useRequestDetail } from "@/lib/hooks/data-sharing/useRequestDetail";
 import { useRequestFiles } from "@/lib/hooks/data-sharing/useFiles";
 import { useApprovalSteps } from "@/lib/hooks/data-sharing/useApprovalSteps";
+import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { REQUEST_STATUS_LABELS } from "@/lib/utils/constants";
 
 export interface RequestDetailProps {
@@ -35,7 +36,13 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function RequestDetail({ id }: RequestDetailProps) {
+  // Any authenticated user can hit this URL — the backend's
+  // `can_view_request` permission decides whether the data is returned.
+  // The guard is here only to bounce unauthenticated users to /login.
+  const { isReady } = useRoleGuard();
   const reqQuery = useRequestDetail(id);
+
+  if (!isReady) return null;
   const filesQuery = useRequestFiles(id);
   const stepsQuery = useApprovalSteps(id);
 

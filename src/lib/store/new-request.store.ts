@@ -24,7 +24,7 @@ export interface NewRequestForm {
   personal_data_involved: boolean;
   estimated_data_subjects: number | null;
   data_subject_categories: string[];
-  retention_period: string; // free-text for now (backend has no field yet)
+  retention_period: 30 | 60 | 90 | 180 | null;
   dpia_confirmed: boolean;
   source_description: string;
 
@@ -62,7 +62,7 @@ const INITIAL: NewRequestForm = {
   personal_data_involved: false,
   estimated_data_subjects: null,
   data_subject_categories: [],
-  retention_period: "",
+  retention_period: 90,
   dpia_confirmed: false,
   source_description: "",
   data_type: "file",

@@ -1,16 +1,20 @@
 "use client";
 
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown, Info, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
+import { createRequest } from "@/lib/api/products/data-sharing/requests.api";
 import {
   DATA_CLASSIFICATIONS,
   LEGAL_BASIS_OPTIONS,
 } from "@/lib/utils/constants";
 import { useGroups } from "@/lib/hooks/platform/useGroups";
+import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { useAuthStore } from "@/lib/store/auth.store";
 import { useNewRequestStore } from "@/lib/store/new-request.store";
 import type {
+  CreateShareRequestBody,
   DataClassification,
   LegalBasis,
   SharingType,
@@ -62,12 +66,18 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 export function Step1_BasicInfo() {
+  // Raising new requests is restricted to requesters and data owners. DPOs
+  // and org admins still need to log in but are bounced back to "/" if they
+  // hit this URL directly.
+  const { isReady } = useRoleGuard({ allow: ["requester", "data_owner"] });
   const router = useRouter();
   const form = useNewRequestStore();
   const setField = useNewRequestStore((s) => s.set);
 
   const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
   const groupsQuery = useGroups();
+
+  if (!isReady) return null;
 
   const isSensitive = form.data_classification === "sensitive";
 
@@ -91,6 +101,41 @@ export function Step1_BasicInfo() {
   const goNext = () => {
     if (!canProceed) return;
     router.push("/data-sharing/new/step-2");
+  };
+
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  // Step 1 "Save as Draft" — wireframe shows it bottom-left. We post the
+  // current Step 1 fields so the partial draft shows up in My Requests.
+  const saveDraft = async () => {
+    setSavingDraft(true);
+    setDraftError(null);
+    try {
+      const body: CreateShareRequestBody = {
+        title: form.title.trim() || "Untitled draft",
+        purpose: form.purpose.trim() || " ",
+        legal_basis: form.legal_basis || "",
+        sharing_type: form.sharing_type,
+        data_classification: form.data_classification,
+        personal_data_involved: form.personal_data_involved,
+        estimated_data_subjects: form.estimated_data_subjects ?? null,
+        data_subject_categories:
+          form.data_subject_categories.length > 0
+            ? form.data_subject_categories
+            : null,
+        source_description: form.source_description || null,
+        receiver_group_id: form.receiver_group_id,
+        dpia_confirmed: form.dpia_confirmed,
+        data_type: form.data_type,
+        delivery_channel: form.delivery_channel,
+      };
+      await createRequest(body);
+      router.push("/data-sharing");
+    } catch (e) {
+      setDraftError(e instanceof Error ? e.message : "Could not save draft");
+      setSavingDraft(false);
+    }
   };
 
   return (
@@ -389,14 +434,34 @@ export function Step1_BasicInfo() {
 
         <div className="flex flex-1 flex-col gap-[6px]">
           <FieldLabel>Requested retention period</FieldLabel>
-          <input
-            type="text"
-            value={form.retention_period}
-            onChange={(e) => setField("retention_period", e.target.value)}
-            placeholder="e.g. 90 days, 1 year, Indefinite..."
-            className="h-9 w-full rounded-md border px-3 text-[13px] outline-none placeholder:text-[#BABABA]"
-            style={{ borderColor: "#EEEEEE" }}
-          />
+          <div className="flex gap-3">
+            {([30, 60, 90, 180] as const).map((days) => {
+              const selected = form.retention_period === days;
+              return (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => setField("retention_period", days)}
+                  className="flex items-center gap-2"
+                >
+                  <span
+                    className="flex h-4 w-4 items-center justify-center rounded-full border-2 transition-colors"
+                    style={{ borderColor: selected ? "#D76736" : "#CCCCCC" }}
+                  >
+                    {selected && (
+                      <span className="h-2 w-2 rounded-full bg-brand" />
+                    )}
+                  </span>
+                  <span
+                    className="text-[13px]"
+                    style={{ color: selected ? "#070709" : "#515157", fontWeight: selected ? "600" : "400" }}
+                  >
+                    {days} days
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -458,7 +523,23 @@ export function Step1_BasicInfo() {
         />
       </div>
 
-      <div className="mt-2 flex items-center justify-end">
+      {draftError && (
+        <p className="text-xs" style={{ color: "#EF4444" }}>
+          {draftError}
+        </p>
+      )}
+
+      <div className="mt-2 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={saveDraft}
+          disabled={savingDraft}
+          className="flex h-9 items-center gap-[6px] rounded-md border px-4 text-[13px] font-medium"
+          style={{ borderColor: "#EEEEEE", color: "#616161" }}
+        >
+          <Save className="h-[14px] w-[14px]" />
+          {savingDraft ? "Saving…" : "Save as Draft"}
+        </button>
         <button
           type="button"
           onClick={goNext}

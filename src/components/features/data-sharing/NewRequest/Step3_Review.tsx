@@ -2,7 +2,7 @@
 
 import { ArrowLeft, GitMerge, Send, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { uploadFileForRequest } from "@/lib/api/products/data-sharing/files.api";
 import {
@@ -10,6 +10,8 @@ import {
   submitRequest,
 } from "@/lib/api/products/data-sharing/requests.api";
 import { useGroups } from "@/lib/hooks/platform/useGroups";
+import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
+import { useWorkflowTemplates, useWorkflowTemplate } from "@/lib/hooks/data-sharing/useWorkflowTemplates";
 import { useNewRequestStore } from "@/lib/store/new-request.store";
 import {
   DATA_CLASSIFICATIONS,
@@ -40,8 +42,11 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function Step3_Review() {
+  const { isReady } = useRoleGuard({ allow: ["requester", "data_owner"] });
   const router = useRouter();
   const form = useNewRequestStore();
+
+  if (!isReady) return null;
   const reset = useNewRequestStore((s) => s.reset);
   const groupsQuery = useGroups();
   const receiverName =
@@ -50,6 +55,22 @@ export function Step3_Review() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const templatesQuery = useWorkflowTemplates();
+  const matchedTemplateId = useMemo(() => {
+    if (!templatesQuery.data) return null;
+    const match =
+      templatesQuery.data.find(
+        (t) =>
+          t.is_active &&
+          (t.sharing_type === null || t.sharing_type === form.sharing_type) &&
+          (t.data_classification === null ||
+            t.data_classification === form.data_classification),
+      ) ?? templatesQuery.data.find((t) => t.is_active) ?? null;
+    return match?.id ?? null;
+  }, [templatesQuery.data, form.sharing_type, form.data_classification]);
+  const templateDetailQuery = useWorkflowTemplate(matchedTemplateId);
+  const matchedTemplate = templateDetailQuery.data ?? null;
 
   const classificationLabel =
     DATA_CLASSIFICATIONS.find((c) => c.value === form.data_classification)
@@ -238,7 +259,7 @@ export function Step3_Review() {
               )}
               <Field
                 label="Retention Period"
-                value={form.retention_period}
+                value={form.retention_period != null ? `${form.retention_period} days` : "—"}
               />
               <Field
                 label="Source Description"
@@ -338,12 +359,50 @@ export function Step3_Review() {
               Approval Workflow
             </span>
           </div>
-          <div className="px-5 py-4">
-            <p className="text-xs" style={{ color: "#616161" }}>
-              The workflow is selected automatically by the backend on submit
-              based on your sharing type and data classification. You&rsquo;ll see
-              the assigned steps on the request detail page.
-            </p>
+          <div className="px-5 py-4 flex flex-col gap-3">
+            {templatesQuery.isLoading || templateDetailQuery.isLoading ? (
+              <p className="text-xs" style={{ color: "#9E9E9E" }}>Loading workflow…</p>
+            ) : matchedTemplate ? (
+              <>
+                <p className="text-[13px] font-semibold" style={{ color: "#1A1A1A" }}>
+                  {matchedTemplate.name}
+                </p>
+                <div className="flex items-center gap-0">
+                  {matchedTemplate.steps?.length ? (
+                    matchedTemplate.steps
+                      .slice()
+                      .sort((a, b) => a.step_order - b.step_order)
+                      .map((step, idx, arr) => (
+                        <div key={step.id} className="flex items-center">
+                          <div className="flex flex-col items-center gap-1">
+                            <span
+                              className="flex h-7 items-center justify-center rounded-full px-3 text-[11px] font-medium whitespace-nowrap"
+                              style={{ backgroundColor: "#FFF5F0", color: "#D76736", border: "1px solid #D76736" }}
+                            >
+                              {step.name || step.step_type}
+                            </span>
+                            {step.assignee_role && (
+                              <span className="text-[10px]" style={{ color: "#9E9E9E" }}>
+                                {step.assignee_role.replace(/_/g, " ")}
+                              </span>
+                            )}
+                          </div>
+                          {idx < arr.length - 1 && (
+                            <div className="mx-1.5 h-px w-6 shrink-0" style={{ backgroundColor: "#D76736" }} />
+                          )}
+                        </div>
+                      ))
+                  ) : (
+                    <p className="text-xs" style={{ color: "#9E9E9E" }}>Steps will be assigned on submission.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs" style={{ color: "#616161" }}>
+                The workflow is selected automatically by the backend on submit
+                based on your sharing type and data classification.
+              </p>
+            )}
           </div>
         </div>
       </div>

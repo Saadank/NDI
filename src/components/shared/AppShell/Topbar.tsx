@@ -5,17 +5,25 @@ import { usePathname } from "next/navigation";
 import { Bell } from "lucide-react";
 
 import { Logo } from "@/components/shared/Logo";
+import { useAuthStore } from "@/lib/store/auth.store";
+import { useNotifications } from "@/lib/hooks/platform/useNotifications";
 import { cn } from "@/lib/utils";
 
-interface TopbarProps {
-  hasUnread?: boolean;
-  userInitials?: string;
-}
-
-export function Topbar({ hasUnread = true, userInitials = "AA" }: TopbarProps) {
+export function Topbar() {
   const pathname = usePathname() ?? "";
   const bellActive = pathname.startsWith("/notifications");
   const avatarActive = pathname.startsWith("/profile");
+
+  const user = useAuthStore((s) => s.user);
+  const initials = user
+    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() ||
+      user.email?.[0]?.toUpperCase() ||
+      "?"
+    : "?";
+
+  // M-4: derive bell dot from real unread count
+  const notifQuery = useNotifications({ unread_only: true });
+  const hasUnread = (notifQuery.data ?? []).length > 0;
 
   return (
     <header className="h-16 shrink-0 border-b border-auth-border bg-white px-8 flex items-center justify-between">
@@ -50,7 +58,7 @@ export function Topbar({ hasUnread = true, userInitials = "AA" }: TopbarProps) {
           style={{ backgroundColor: "rgba(215, 103, 54, 0.15)" }}
           aria-label="User menu"
         >
-          {userInitials}
+          {initials}
         </Link>
       </div>
     </header>

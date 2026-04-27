@@ -18,6 +18,8 @@ export function useApprovalSteps(requestId: string) {
   });
 }
 
+// Acting on a step needs both the request id (in the URL) and the step id —
+// the backend is in the form `/requests/{request_id}/steps/{step_id}/{action}`.
 export function useActOnStep(requestId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -26,13 +28,16 @@ export function useActOnStep(requestId: string) {
       status: StepStatus;
       comment?: string;
     }) => {
-      if (vars.status === "approved") return approveStep(vars.stepId, vars.comment);
-      if (vars.status === "rejected") return rejectStep(vars.stepId, vars.comment);
-      return requestChangesOnStep(vars.stepId, vars.comment);
+      if (vars.status === "approved")
+        return approveStep(requestId, vars.stepId, vars.comment);
+      if (vars.status === "rejected")
+        return rejectStep(requestId, vars.stepId, vars.comment ?? "");
+      return requestChangesOnStep(requestId, vars.stepId, vars.comment ?? "");
     },
-    onSuccess: () =>
-      qc.invalidateQueries({
-        queryKey: ["data-sharing", "steps", requestId],
-      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["data-sharing", "steps", requestId] });
+      qc.invalidateQueries({ queryKey: ["data-sharing", "request", requestId] });
+      qc.invalidateQueries({ queryKey: ["data-sharing", "requests"] });
+    },
   });
 }

@@ -1,3 +1,5 @@
+"use client";
+
 import { ChevronDown } from "lucide-react";
 
 import {
@@ -8,15 +10,32 @@ import {
   ProfileLinkRow,
   ProfileShell,
 } from "@/components/features/profile/ProfileShell";
+import { useCurrentUser } from "@/lib/hooks/platform/useAuth";
+import { useAuthStore } from "@/lib/store/auth.store";
 
 export default function ProfilePage() {
+  // The auth store is hydrated from localStorage at login. We additionally
+  // refetch /users/me via React Query so the profile reflects any changes
+  // made server-side since this session was created.
+  const userQuery = useCurrentUser();
+  const storeUser = useAuthStore((s) => s.user);
+  const user = userQuery.data ?? storeUser;
+
+  const fullName = user
+    ? `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || user.email
+    : "—";
+  const initials = user
+    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() ||
+      user.email[0].toUpperCase()
+    : "?";
+
   return (
     <ProfileShell>
       <ProfileCard>
         <Identity
-          initials="NA"
-          name="Nora Al-Ashgar"
-          email="n.al-ashgar@aramco.com"
+          initials={initials}
+          name={fullName}
+          email={user?.email ?? "—"}
         />
 
         <ProfileDivider />
@@ -25,7 +44,7 @@ export default function ProfilePage() {
           <ProfileField label="Full Name">
             <input
               type="text"
-              defaultValue="Nora Al-Ashgar"
+              defaultValue={fullName}
               className="h-10 w-full rounded-md border border-auth-border bg-white px-3 text-sm text-auth-text outline-none focus:border-brand/60 focus:ring-2 focus:ring-brand/20"
             />
           </ProfileField>
@@ -33,10 +52,21 @@ export default function ProfilePage() {
           <ProfileField label="Email Address">
             <input
               type="email"
-              defaultValue="n.al-ashgar@aramco.com"
+              defaultValue={user?.email ?? ""}
               disabled
               className="h-10 w-full rounded-md border border-auth-border px-3 text-sm outline-none"
               style={{ backgroundColor: "#FAFAFA", color: "#9E9E9E" }}
+            />
+          </ProfileField>
+
+          <ProfileField label="Role">
+            <input
+              type="text"
+              value={user?.product_role ?? user?.platform_role ?? "—"}
+              disabled
+              className="h-10 w-full rounded-md border border-auth-border px-3 text-sm outline-none"
+              style={{ backgroundColor: "#FAFAFA", color: "#9E9E9E" }}
+              readOnly
             />
           </ProfileField>
 
@@ -66,15 +96,6 @@ export default function ProfilePage() {
             href="/profile/notifications"
           />
           <ProfileLinkRow label="Delegation Settings" href="/delegation" last />
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            type="button"
-            className="h-10 rounded-md bg-brand px-5 text-sm font-medium text-white hover:bg-brand-hover"
-          >
-            Save Changes
-          </button>
         </div>
       </ProfileCard>
     </ProfileShell>

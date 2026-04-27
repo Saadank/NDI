@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { Inbox, Plus } from "lucide-react";
 
+import { useGroups } from "@/lib/hooks/platform/useGroups";
 import { useRequests } from "@/lib/hooks/data-sharing/useRequests";
+import { useAuthStore } from "@/lib/store/auth.store";
 import { REQUEST_STATUS_LABELS } from "@/lib/utils/constants";
+import { formatDate } from "@/lib/utils/formatters";
 import type {
   RequestStatus,
   ShareRequest,
@@ -33,27 +36,36 @@ function StatusBadge({ status }: { status: RequestStatus }) {
   );
 }
 
-function formatClassification(c: string): string {
+function formatClassification(c: string) {
   return c.charAt(0).toUpperCase() + c.slice(1);
 }
 
-function formatRow(r: ShareRequest) {
-  return {
-    id: r.id,
-    title: r.title,
-    sub: `${r.request_number} · ${r.sharing_type}`,
-    classification: formatClassification(r.data_classification),
-    status: r.status,
-    sla: r.expiry_at ? new Date(r.expiry_at).toLocaleDateString() : "—",
-  };
-}
-
 export interface RequestsTableProps {
-  status?: RequestStatus;
+  // Filter applied to the API request — consistent with the wireframe tabs.
+  // 'mine'  → requests I raised (default)
+  // 'incoming' → requests sent TO my department
+  // 'all'   → everything I'm allowed to see
+  scope?: "mine" | "incoming" | "all";
 }
 
-export function RequestsTable({ status }: RequestsTableProps) {
-  const requestsQuery = useRequests({ page: 1, limit: 50, status });
+export function RequestsTable({ scope = "mine" }: RequestsTableProps) {
+  // Backend's list endpoint already filters by role. For "mine" we just take
+  // the unfiltered page (requesters only see their own). For "incoming" we
+  // filter client-side by receiver_group_id == my group_id.
+  const requestsQuery = useRequests({ page: 1, limit: 50 });
+  const groupsQuery = useGroups();
+  const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
+  const myUserId = useAuthStore((s) => s.user?.id ?? null);
+
+  const groupNameById = new Map<number, string>();
+  for (const g of groupsQuery.data ?? []) groupNameById.set(g.id, g.name);
+
+  const all = requestsQuery.data?.data ?? [];
+  const filtered = all.filter((r: ShareRequest) => {
+    if (scope === "mine") return r.requester_id === myUserId;
+    if (scope === "incoming") return r.receiver_group_id === myGroupId;
+    return true;
+  });
 
   if (requestsQuery.isLoading) {
     return (
@@ -78,9 +90,7 @@ export function RequestsTable({ status }: RequestsTableProps) {
     );
   }
 
-  const rows = (requestsQuery.data?.data ?? []).map(formatRow);
-
-  if (rows.length === 0) {
+  if (filtered.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-24">
         <div
@@ -90,9 +100,7 @@ export function RequestsTable({ status }: RequestsTableProps) {
           <Inbox className="h-7 w-7" style={{ color: "#D76736" }} />
         </div>
         <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-sm font-semibold text-auth-text">
-            No requests yet
-          </p>
+          <p className="text-sm font-semibold text-auth-text">No requests yet</p>
           <p
             className="text-[13px]"
             style={{ color: "#9E9E9E", maxWidth: 300 }}
@@ -115,41 +123,47 @@ export function RequestsTable({ status }: RequestsTableProps) {
 
   return (
     <>
-      {rows.map((row, i) => (
-        <Link
-          key={row.id}
-          href={`/data-sharing/${row.id}`}
-          className="flex h-16 shrink-0 items-center px-5 transition-colors hover:bg-[#FFFBF9]"
-          style={{
-            borderBottom:
-              i < rows.length - 1 ? "1px solid #EEEEEE" : undefined,
-          }}
-        >
-          <div className="flex flex-1 flex-col gap-1">
-            <span className="text-[13px] font-semibold text-auth-text">
-              {row.title}
-            </span>
-            <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
-              {row.sub}
-            </span>
-          </div>
-          <span
-            className="w-[130px] text-xs"
-            style={{ color: "#9E9E9E" }}
+      {filtered.map((r, i) => {
+        const highlight =
+          r.status === "rejected" || r.status === "in_review";
+        return (
+          <Link
+            key={r.id}
+            href={`/data-sharing/${r.id}`}
+            className="flex h-16 shrink-0 items-center px-5 transition-colors hover:bg-[#FFFBF9]"
+            style={{
+              backgroundColor: highlight ? "#FFFBF9" : undefined,
+              borderBottom:
+                i < filtered.length - 1 ? "1px solid #EEEEEE" : undefined,
+            }}
           >
-            {row.classification}
-          </span>
-          <div className="w-[150px]">
-            <StatusBadge status={row.status} />
-          </div>
-          <span
-            className="w-[100px] text-xs"
-            style={{ color: "#9E9E9E" }}
-          >
-            {row.sla}
-          </span>
-        </Link>
-      ))}
+            <div className="flex flex-1 flex-col gap-1">
+              <span className="text-[13px] font-semibold text-auth-text">
+                {r.title}
+              </span>
+              <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
+                {scope === "incoming" ? "← " : "→ "}
+                {groupNameById.get(r.receiver_group_id ?? 0) ??
+                  (r.sharing_type === "external" ? "External" : "—")}{" "}
+                · {r.request_number}
+              </span>
+            </div>
+            <span className="w-40 text-[13px]" style={{ color: "#515157" }}>
+              {groupNameById.get(r.receiver_group_id ?? 0) ?? "—"}
+            </span>
+            <span className="w-[130px] text-xs" style={{ color: "#9E9E9E" }}>
+              {formatClassification(r.data_classification)}
+            </span>
+            <div className="w-[150px]">
+              <StatusBadge status={r.status} />
+            </div>
+            <span className="w-[100px] text-xs" style={{ color: "#9E9E9E" }}>
+              {r.expiry_at ? formatDate(r.expiry_at) : "—"}
+            </span>
+          </Link>
+        );
+      })}
     </>
   );
 }
+

@@ -7,11 +7,7 @@ import {
   markNotificationRead,
 } from "@/lib/api/platform/notifications.api";
 
-export function useNotifications(params?: {
-  page?: number;
-  limit?: number;
-  unread_only?: boolean;
-}) {
+export function useNotifications(params?: { unread_only?: boolean }) {
   return useQuery({
     queryKey: ["notifications", params],
     queryFn: () => getNotifications(params),

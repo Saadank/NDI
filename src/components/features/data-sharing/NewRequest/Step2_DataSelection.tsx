@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useConnections } from "@/lib/hooks/data-sharing/useConnections";
 import { useSchemas } from "@/lib/hooks/data-sharing/useSchemas";
+import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { useNewRequestStore } from "@/lib/store/new-request.store";
 import type { DataType } from "@/lib/types/data-sharing/request.types";
 
@@ -399,8 +400,11 @@ function StructuredMode() {
 }
 
 export function Step2_DataSelection() {
+  const { isReady } = useRoleGuard({ allow: ["requester", "data_owner"] });
   const router = useRouter();
   const dataType = useNewRequestStore((s) => s.data_type);
+
+  if (!isReady) return null;
   const setField = useNewRequestStore((s) => s.set);
   const stagedFiles = useNewRequestStore((s) => s.staged_files);
   const connectionId = useNewRequestStore((s) => s.connection_id);
