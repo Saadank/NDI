@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -114,7 +115,7 @@ function WorkflowProgressBar({ steps }: { steps: WorkflowStep[] }) {
 
 // ─── PDPL Review right panel ──────────────────────────────────────
 
-type ReviewTab = "legal_basis" | "data_min" | "dpia_status" | "all_checks";
+type ReviewTab = "legal_basis" | "data_min" | "dpia_status";
 
 function PdplReviewPanel({
   classification,
@@ -137,14 +138,13 @@ function PdplReviewPanel({
   const [override, setOverride] = useState<"accept" | "override" | null>(null);
   const [justification, setJustification] = useState("");
   const [dataMinAssessment, setDataMinAssessment] = useState<"accept_with_note" | "request_changes" | null>(null);
-  const [dpiaVerification, setDpiaVerification] = useState("");
+  const [dpiaVerification, setDpiaVerification] = useState<"confirmed" | "request_update" | null>(null);
   const [dpiaAssessment, setDpiaAssessment] = useState<"proceed" | "request_update" | null>(null);
 
   const tabs: { id: ReviewTab; label: string }[] = [
     { id: "legal_basis", label: "Legal Basis" },
     { id: "data_min", label: "Data Minimisation" },
     { id: "dpia_status", label: "DPIA Status" },
-    { id: "all_checks", label: "Summary" },
   ];
 
   return (
@@ -257,22 +257,30 @@ function PdplReviewPanel({
           {tab === "data_min" && (
             <div className="flex flex-col gap-3">
               <p className="text-[11px] font-semibold" style={{ color: "#515157" }}>Data Minimisation Checked</p>
-              {[
-                { label: "Only necessary fields selected — SSN, salary excluded", pass: true },
-                { label: "Query limited to active employees only", pass: true },
-                { label: "Date range restricted to last 60 days", pass: true },
-                { label: "No sensitive demographic fields included", pass: true },
-                { label: "Email field included — consider pseudonymisation", pass: false },
-              ].map((item, i) => (
+              {([
+                { label: "Only necessary fields selected — SSN, salary excluded", type: "pass" },
+                { label: "Query limited to active employees only", type: "pass" },
+                { label: "Date range restricted to last 60 days", type: "pass" },
+                { label: "No sensitive demographic fields included", type: "pass" },
+                { label: "Email field included — consider pseudonymisation", type: "warn" },
+              ] as const).map((item, i) => (
                 <div
                   key={i}
                   className="flex items-start gap-2 rounded-md p-2.5 text-[11px]"
-                  style={{ backgroundColor: item.pass ? "#F0FAF0" : "#FFF0F0", color: item.pass ? "#449235" : "#D32F2F" }}
+                  style={{
+                    backgroundColor: item.type === "pass" ? "#F0FAF0" : "#FFF5F0",
+                    color: item.type === "pass" ? "#449235" : "#D76736",
+                  }}
                 >
-                  {item.pass ? <Check className="mt-0.5 h-3 w-3 shrink-0" /> : <X className="mt-0.5 h-3 w-3 shrink-0" />}
+                  {item.type === "pass"
+                    ? <Check className="mt-0.5 h-3 w-3 shrink-0" />
+                    : <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />}
                   {item.label}
                 </div>
               ))}
+              <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
+                Review the SQL query preview in left panel to verify field selection
+              </p>
               <p className="mt-1 text-[11px] font-semibold" style={{ color: "#515157" }}>DPO Assessment</p>
               {[
                 { value: "accept_with_note" as const, label: "Accept with note — email pseudonymisation recommended" },
@@ -307,14 +315,21 @@ function PdplReviewPanel({
               </span>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-semibold" style={{ color: "#515157" }}>DPO Verification</label>
-                <textarea
-                  value={dpiaVerification}
-                  onChange={(e) => setDpiaVerification(e.target.value)}
-                  placeholder="I have reviewed the DPIA and confirm it covers this processing activity."
-                  rows={3}
-                  className="resize-none rounded-md border p-2 text-[11px] outline-none"
-                  style={{ borderColor: "#EEEEEE" }}
-                />
+                {([
+                  { value: "confirmed" as const, label: "Reviewed DPIA-2026-014 and confirm it covers this processing activity" },
+                  { value: "request_update" as const, label: "Request DPIA update before proceeding" },
+                ] as const).map((opt) => (
+                  <label key={opt.value} className="flex cursor-pointer items-start gap-2 text-[11px]" style={{ color: "#515157" }}>
+                    <input
+                      type="radio"
+                      name="dpiaVerification"
+                      checked={dpiaVerification === opt.value}
+                      onChange={() => setDpiaVerification(opt.value)}
+                      className="mt-0.5 accent-[#D76736]"
+                    />
+                    {opt.label}
+                  </label>
+                ))}
               </div>
               <p className="text-[11px] font-semibold" style={{ color: "#515157" }}>DPO Assessment</p>
               {[
@@ -335,36 +350,6 @@ function PdplReviewPanel({
             </div>
           )}
 
-          {tab === "all_checks" && (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 rounded-md p-2.5 text-[11px] font-semibold" style={{ backgroundColor: "#F0FAF0", color: "#2D6B21" }}>
-                <Check className="h-3.5 w-3.5" />
-                All PDPL checks complete
-              </div>
-              {[
-                {
-                  label: "Legal Basis",
-                  detail: legalBasis ? `${legalBasis} — confirmed` : "Legal basis confirmed",
-                },
-                {
-                  label: "Data Minimisation",
-                  detail: "Data minimisation confirmed — pseudonymisation recommended",
-                },
-                {
-                  label: "DPIA Status",
-                  detail: dpia ? "DPIA: 2026-014 · On file — Medium risk" : "No DPIA required",
-                },
-              ].map((check, i) => (
-                <div key={i} className="flex items-start gap-2 rounded-md px-3 py-2.5" style={{ backgroundColor: "#F0FAF0" }}>
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "#449235" }} />
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[12px] font-semibold" style={{ color: "#1A1A1A" }}>{check.label}</span>
-                    <span className="text-[10px]" style={{ color: "#9E9E9E" }}>{check.detail}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
