@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, Pencil, Play, Plus, Trash2, X } from "lucide-react";
+import { Database, Eye, EyeOff, Pencil, Play, Plus, Trash2, User, X } from "lucide-react";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -260,6 +260,7 @@ function EditConnectionView({
   const [password, setPassword] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
+  const [showPass, setShowPass] = useState(false);
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -317,12 +318,18 @@ function EditConnectionView({
         </button>
       </div>
 
-      <div className="flex flex-1 overflow-auto">
-        {/* Left: form */}
-        <div className="flex flex-1 flex-col gap-5 px-8 py-6">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.5px]" style={{ color: "#9E9E9E" }}>
-            Connection Settings — Editing {connection?.description ?? connection?.database}
-          </p>
+      <div className="flex flex-1 gap-6 overflow-auto px-8 py-6">
+        {/* Left: form card */}
+        <div
+          className="flex flex-1 flex-col gap-5 rounded-lg p-6"
+          style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
+        >
+          <div>
+            <p className="text-[14px] font-semibold text-auth-text">Connection Settings</p>
+            <p className="text-[12px]" style={{ color: "#9E9E9E" }}>
+              Editing {connection?.description ?? connection?.database}
+            </p>
+          </div>
 
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
@@ -391,27 +398,40 @@ function EditConnectionView({
               <label className="text-[12px] font-semibold text-auth-text">
                 Read-only username <span style={{ color: "#D76736" }}>*</span>
               </label>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder={connection ? "Re-enter username" : ""}
-                className="h-9 rounded-md border px-3 text-[13px] outline-none"
-                style={{ borderColor: "#EEEEEE" }}
-              />
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={{ color: "#9E9E9E" }} />
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={connection ? "Re-enter username" : ""}
+                  className="h-9 w-full rounded-md border pl-8 pr-3 text-[13px] outline-none"
+                  style={{ borderColor: "#EEEEEE" }}
+                />
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-[12px] font-semibold text-auth-text">
                 New password <span style={{ color: "#D76736" }}>*</span>
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter new password..."
-                className="h-9 rounded-md border px-3 text-[13px] outline-none"
-                style={{ borderColor: "#EEEEEE" }}
-              />
+              <div className="relative">
+                <input
+                  type={showPass ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter new password..."
+                  className="h-9 w-full rounded-md border pl-3 pr-9 text-[13px] outline-none"
+                  style={{ borderColor: "#EEEEEE" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2"
+                  style={{ color: "#9E9E9E" }}
+                >
+                  {showPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
               <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
                 Leave blank to keep existing password — or enter a new one to replace it
               </p>
@@ -450,8 +470,8 @@ function EditConnectionView({
 
         {/* Right panel: connection info */}
         <div
-          className="flex w-[220px] shrink-0 flex-col gap-4 border-l px-6 py-6"
-          style={{ borderColor: "#EEEEEE" }}
+          className="flex w-[260px] shrink-0 flex-col gap-4 rounded-lg p-6"
+          style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
         >
           <p className="text-[12px] font-semibold uppercase tracking-[0.5px]" style={{ color: "#9E9E9E" }}>
             Connection Info
