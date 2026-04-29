@@ -348,32 +348,18 @@ export default function AuditTrailPage() {
     <div className="flex flex-1 flex-col" style={{ backgroundColor: "#FFFFF9" }}>
       {/* Header */}
       <div className="flex h-16 shrink-0 items-center justify-between px-8" style={{ backgroundColor: "#FFFFFF", borderBottom: "1px solid #EEEEEE" }}>
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-auth-text">Audit Trail</h1>
-          <span className="rounded px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: "#FFF5F0", color: "#D76736" }}>DPO</span>
-          <span className="rounded px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: "#F5F5F5", color: "#515157" }}>Data Sharing</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {total > 0 && <span className="text-[13px]" style={{ color: "#9E9E9E" }}>{total} events</span>}
-          {hasFilters && (
-            <button type="button" onClick={clearFilters} className="text-[13px]" style={{ color: "#9E9E9E" }}>
-              Clear filters
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowExportModal(true)}
-            className="flex h-9 items-center gap-2 rounded-md border px-4 text-[13px] font-medium"
-            style={{ borderColor: "#EEEEEE", color: "#616161" }}
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </button>
-        </div>
+        <h1 className="text-lg font-bold text-auth-text">Audit Trail</h1>
+        <span
+          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+          style={{ backgroundColor: "#FFF5F0", color: "#D76736" }}
+        >
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: "#D76736" }} />
+          DPO · Data Sharing
+        </span>
       </div>
 
       <div className="flex flex-1 flex-col gap-4 overflow-auto px-8 py-6">
-        {/* Filter chips */}
+        {/* Filter chips row */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-medium" style={{ color: "#515157" }}>Filter</span>
           <TextChip placeholder="Request" value={requestFilter} onChange={(v) => { setRequestFilter(v); setPage(1); }} />
@@ -389,12 +375,29 @@ export default function AuditTrailPage() {
             onFromChange={(v) => { setDateFrom(v); setPage(1); }}
             onToChange={(v) => { setDateTo(v); setPage(1); }}
           />
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowExportModal(true)}
+              className="flex h-8 items-center gap-1.5 rounded-md border px-3 text-[13px] font-medium"
+              style={{ borderColor: "#EEEEEE", color: "#616161" }}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </button>
+            {total > 0 && <span className="text-[13px]" style={{ color: "#9E9E9E" }}>{total} events</span>}
+            {hasFilters && (
+              <button type="button" onClick={clearFilters} className="text-[13px]" style={{ color: "#9E9E9E" }}>
+                Clear filters
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Append-only banner */}
-        <div className="flex items-center gap-2 rounded-md px-4 py-2" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E8E8E8" }}>
-          <Info className="h-3.5 w-3.5 shrink-0" style={{ color: "#9E9E9E" }} />
-          <p className="text-[12px]" style={{ color: "#616161" }}>
+        <div className="flex items-center gap-2 rounded-md px-4 py-2" style={{ backgroundColor: "#FFF5F0", border: "1px solid #FFCDB8" }}>
+          <Info className="h-3.5 w-3.5 shrink-0" style={{ color: "#D76736" }} />
+          <p className="text-[12px]" style={{ color: "#D76736" }}>
             Append-only · regulatory log — entries cannot be added or deleted
           </p>
         </div>

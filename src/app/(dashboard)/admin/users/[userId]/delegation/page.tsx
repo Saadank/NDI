@@ -92,7 +92,7 @@ export default function SetDelegationOnBehalfPage() {
       >
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-auth-text">Set Delegation</h1>
-          <span className="rounded px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: "#F5F5F5", color: "#515157" }}>
+          <span className="rounded px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: "#FFF5F0", color: "#D76736" }}>
             On behalf of
           </span>
         </div>
