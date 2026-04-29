@@ -142,18 +142,16 @@ function FileRow({
       style={{ borderBottom: "1px solid #F5F5F5" }}
     >
       <FileText className="h-4 w-4 shrink-0" style={{ color: "#9E9E9E" }} />
-      <div className="flex flex-1 flex-col gap-0.5">
-        <span className="text-[13px] font-medium" style={{ color: "#1A1A1A" }}>
-          {f.original_filename}
-        </span>
-        <div className="flex items-center gap-3">
-          <ScanChip status={f.status} />
-          {f.file_size_bytes > 0 && (
-            <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
-              {formatSize(f.file_size_bytes)}
-            </span>
-          )}
-        </div>
+      <span className="flex-1 text-[13px] font-medium" style={{ color: "#1A1A1A" }}>
+        {f.original_filename}
+      </span>
+      <div className="flex items-center gap-3">
+        <ScanChip status={f.status} />
+        {f.file_size_bytes > 0 && (
+          <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
+            {formatSize(f.file_size_bytes)}
+          </span>
+        )}
       </div>
       <button
         type="button"
@@ -693,7 +691,7 @@ export function PrepareAndUpload({ id }: { id: string }) {
                 <div className="grid grid-cols-2 gap-4">
                   {legalBasisLabel && (
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-[11px] font-medium" style={{ color: "#9E9E9E" }}>Legal item</span>
+                      <span className="text-[11px] font-medium" style={{ color: "#9E9E9E" }}>Legal basis</span>
                       <span className="text-[13px]" style={{ color: "#515157" }}>{legalBasisLabel}</span>
                     </div>
                   )}
@@ -742,7 +740,7 @@ export function PrepareAndUpload({ id }: { id: string }) {
                       Drag files here or click to browse
                     </span>
                     <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
-                      Supports CSV, XLSX, JSON, PDF — Max 4 GB per file
+                      Supports CSV, XLSX, JSON, PDF — Max 5 MB per file
                     </span>
                   </div>
                 </div>
