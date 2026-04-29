@@ -11,6 +11,7 @@ export interface WorkflowTemplate {
   version: number;
   created_at: string;
   created_by: number;
+  step_count?: number;
 }
 
 export interface WorkflowTemplateStep {

@@ -24,6 +24,7 @@ export type RequestStatus =
   | "in_review"
   | "approved"
   | "rejected"
+  | "changes_requested"
   | "cancelled"
   | "completed"
   | "expired";

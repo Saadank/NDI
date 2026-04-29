@@ -5,7 +5,6 @@ import {
   Lock,
   Plus,
   Search,
-  ShieldCheck,
   TriangleAlert,
   UserMinus,
   UserPlus,
@@ -21,6 +20,7 @@ import {
 } from "@/lib/api/platform/groups.api";
 import {
   clearMyDelegation,
+  getMyDelegationHistory,
   setMyDelegation,
 } from "@/lib/api/platform/delegation.api";
 import { getUsers } from "@/lib/api/platform/users.api";
@@ -51,6 +51,16 @@ export default function MyDepartmentPage() {
     enabled: isReady && myGroupId !== null,
   });
 
+  const delegationHistoryQuery = useQuery({
+    queryKey: ["platform", "delegation-history"],
+    queryFn: () => getMyDelegationHistory(),
+    enabled: isReady,
+  });
+
+  const activeDelegation = (delegationHistoryQuery.data ?? []).find(
+    (d) => new Date(d.delegation_end) > new Date(),
+  );
+
   const [pane, setPane] = useState<Pane>("members");
   const [showAddModal, setShowAddModal] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<{
@@ -71,6 +81,7 @@ export default function MyDepartmentPage() {
 
   const members = membersQuery.data ?? [];
   const stewardsCount = members.length;
+  const activeDelegates = members.filter((m) => m.is_acting_data_owner);
 
   return (
     <div className="flex flex-1 flex-col" style={{ backgroundColor: "#FFFFF9" }}>
@@ -96,6 +107,34 @@ export default function MyDepartmentPage() {
           </span>
         )}
       </div>
+
+      {/* Delegation active banner */}
+      {activeDelegates.length > 0 && (
+        <div
+          className="flex items-center justify-between px-8 py-3"
+          style={{ backgroundColor: "#FFF5F0", borderBottom: "1px solid #FDDCCC" }}
+        >
+          <p className="text-[13px]" style={{ color: "#D76736" }}>
+            <strong>Delegation active</strong>
+            {activeDelegation?.delegation_end
+              ? ` until ${new Date(activeDelegation.delegation_end).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+              : ""}
+            {" — "}
+            {activeDelegates
+              .map((m) => `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() || m.email)
+              .join(", ")}{" "}
+            {activeDelegates.length === 1 ? "is" : "are"} acting as Data Owner
+          </p>
+          <button
+            type="button"
+            onClick={() => setPane("delegation")}
+            className="text-[12px] font-medium hover:underline"
+            style={{ color: "#D76736" }}
+          >
+            View details →
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-1 flex-col gap-3 overflow-auto px-8 py-6">
         {/* Pane switcher */}
@@ -147,7 +186,7 @@ export default function MyDepartmentPage() {
             }
           />
         ) : (
-          <DelegationPane groupId={myGroupId} />
+          <DelegationPane groupId={myGroupId} groupName={myGroup?.name ?? ""} productRole={myProductRole ?? ""} />
         )}
       </div>
 
@@ -176,15 +215,6 @@ export default function MyDepartmentPage() {
 // Members pane (DO-10)
 // ───────────────────────────────────────────────────────────────
 
-interface MembersPaneProps {
-  group: Group | null;
-  members: ReturnType<typeof useQuery>["data"] extends infer T ? unknown : never;
-  isLoading: boolean;
-  stewardsCount: number;
-  onOpenAdd: () => void;
-  onRequestRemove: (m: { id: number; first_name: string | null; last_name: string | null; email: string }) => void;
-}
-
 function MembersPane(props: {
   group: Group | null;
   members: import("@/lib/api/platform/groups.api").GroupMember[];
@@ -193,39 +223,10 @@ function MembersPane(props: {
   onOpenAdd: () => void;
   onRequestRemove: (m: { id: number; first_name: string | null; last_name: string | null; email: string }) => void;
 }) {
-  const { group, members, isLoading, stewardsCount, onOpenAdd, onRequestRemove } =
-    props;
-  const activeDelegations = members.filter((m) => m.is_acting_data_owner).length;
+  const { group, members, isLoading, stewardsCount, onOpenAdd, onRequestRemove } = props;
+  const activeDelegationCount = members.filter((m) => m.is_acting_data_owner).length;
   return (
     <>
-      {/* Optional banner — show when at least one steward is acting as Data Owner */}
-      {activeDelegations > 0 && (
-        <div
-          className="flex items-center justify-between gap-3 rounded-md px-4 py-2.5"
-          style={{
-            backgroundColor: "#EEF4FF",
-            border: "1px solid #BDD0F4",
-          }}
-        >
-          <p className="text-xs" style={{ color: "#1E3A8A" }}>
-            <strong>Delegation active</strong> —{" "}
-            {members
-              .filter((m) => m.is_acting_data_owner)
-              .map((m) => `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim())
-              .filter(Boolean)
-              .join(", ")}{" "}
-            acting as Data Owner.
-          </p>
-          <a
-            href="#delegation"
-            className="text-xs font-medium hover:underline"
-            style={{ color: "#1E3A8A" }}
-          >
-            View details →
-          </a>
-        </div>
-      )}
-
       <section
         className="flex flex-col rounded-lg overflow-hidden"
         style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
@@ -244,12 +245,12 @@ function MembersPane(props: {
               Data Owner: {group?.data_owner_name ?? "—"}
               {" · "}
               <strong>{stewardsCount}</strong> Stewards
-              {activeDelegations > 0 ? (
+              {activeDelegationCount > 0 ? (
                 <>
                   {" · "}
                   <span style={{ color: "#1D4ED8" }}>
-                    {activeDelegations} Active Delegation
-                    {activeDelegations === 1 ? "" : "s"}
+                    {activeDelegationCount} Active Delegation
+                    {activeDelegationCount === 1 ? "" : "s"}
                   </span>
                 </>
               ) : null}
@@ -334,7 +335,7 @@ function MembersPane(props: {
                   {m.is_acting_data_owner && (
                     <span
                       className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                      style={{ backgroundColor: "#EEF4FF", color: "#1D4ED8" }}
+                      style={{ backgroundColor: "#FFF5F0", color: "#D76736" }}
                     >
                       Acting DO
                     </span>
@@ -662,7 +663,7 @@ function RemoveStewardModal({
 // Delegation pane (DO-12 main view)
 // ───────────────────────────────────────────────────────────────
 
-function DelegationPane({ groupId: _groupId }: { groupId: number }) {
+function DelegationPane({ groupId: _groupId, groupName, productRole }: { groupId: number; groupName: string; productRole: string }) {
   const qc = useQueryClient();
   const usersQuery = useQuery({
     queryKey: ["platform", "users"],
@@ -672,7 +673,6 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
   const [picked, setPicked] = useState<number | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
@@ -682,14 +682,13 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
         delegate_to_user_id: picked,
         delegation_start: start ? new Date(start).toISOString() : null,
         delegation_end: end ? new Date(end).toISOString() : null,
-        reason: reason.trim() || null,
+        reason: null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["platform", "users", "me"] });
       setPicked(null);
       setStart("");
       setEnd("");
-      setReason("");
     },
     onError: (e) => setError(e instanceof Error ? e.message : "Failed"),
   });
@@ -720,33 +719,25 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
       className="flex flex-col rounded-lg overflow-hidden"
       style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
     >
-      <div
-        className="flex items-center gap-2 px-5 py-4"
-        style={{
-          backgroundColor: "#F0FAF0",
-          borderBottom: "1px solid #C6E8C4",
-        }}
-      >
-        <ShieldCheck className="h-4 w-4" style={{ color: "#449235" }} />
-        <div className="flex flex-col gap-0.5">
-          <p className="text-[13px] font-semibold" style={{ color: "#2D6B21" }}>
+      <div className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-[15px] font-bold text-auth-text">
             Role Delegation
-          </p>
-          <p className="text-[11px]" style={{ color: "#365314" }}>
-            Configure a backup to act in your absence. All decisions during the
-            active window are logged with both your name and your backup&rsquo;s
-            name in the audit trail.
+            {(productRole || groupName) && (
+              <span className="font-normal text-[13px]" style={{ color: "#9E9E9E" }}>
+                {" "}— {productRole ? `${productRole.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} · ` : ""}{groupName} Department
+              </span>
+            )}
+          </h2>
+          <p className="text-[13px]" style={{ color: "#9E9E9E" }}>
+            Configure a backup to act in your absence. All decisions during the active window are
+            logged with both your name and your backup&rsquo;s name in the audit trail.
           </p>
         </div>
-      </div>
-
-      <div className="flex flex-col gap-4 p-5">
         <div className="flex flex-col gap-2">
-          <label className="text-xs font-medium" style={{ color: "#616161" }}>
-            Select Backup
-          </label>
+          <label className="text-[12px] font-semibold text-auth-text">Select Backup</label>
           <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
-            Only Data Owners with similar dept access are recommended.
+            Only Data Owners with Finance Dept access are shown.
           </p>
           <div
             className="flex h-9 items-center gap-2 rounded-md px-3"
@@ -825,6 +816,8 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
           </div>
         </div>
 
+        <div className="flex flex-col gap-3">
+          <label className="text-[12px] font-semibold text-auth-text">Delegation Window</label>
         <div className="flex gap-3">
           <div className="flex flex-1 flex-col gap-1.5">
             <label className="text-xs font-medium" style={{ color: "#616161" }}>
@@ -851,19 +844,6 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
             />
           </div>
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium" style={{ color: "#616161" }}>
-            Reason (optional)
-          </label>
-          <input
-            type="text"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. annual leave"
-            className="h-9 rounded-md border px-3 text-[13px] outline-none"
-            style={{ borderColor: "#EEEEEE" }}
-          />
         </div>
 
         <div
@@ -890,9 +870,9 @@ function DelegationPane({ groupId: _groupId }: { groupId: number }) {
             onClick={() => cancel.mutate()}
             disabled={cancel.isPending}
             className="flex h-9 items-center rounded-md border px-4 text-[13px] font-medium"
-            style={{ borderColor: "#EEEEEE", color: "#B91C1C" }}
+            style={{ borderColor: "#EEEEEE", color: "#616161" }}
           >
-            {cancel.isPending ? "Clearing…" : "Clear current delegation"}
+            {cancel.isPending ? "Clearing…" : "Cancel"}
           </button>
           <button
             type="button"

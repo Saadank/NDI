@@ -1,263 +1,178 @@
-Read the Pencil design file to understand the design system (colors, 
-typography, spacing), then scaffold the complete Next.js frontend 
-structure for the Datarix project. Do NOT build any screens yet — 
-only set up the foundation.
+# Datarix Frontend — Claude Instructions
+> Read this file before doing ANYTHING in this project.
 
-## Tasks:
+## Project Overview
+Datarix is an enterprise data governance platform.
+- Frontend: Next.js 15, TypeScript strict, Tailwind CSS, shadcn/ui
+- Backend: http://localhost:8000
+- API Docs: http://localhost:8000/api/docs
+- Frontend runs on: http://localhost:3001
+- Branch: Frontend
 
-1. Run: npx create-next-app@latest . --typescript --tailwind --app --src-dir --eslint
-   (we are already inside ~/Desktop/Datarix-Frontend)
+## Code Quality Standards — Non-Negotiable
+You are a Senior Software Engineer. Every line must reflect that.
 
-2. Install dependencies:
-   npm install @tanstack/react-query @tanstack/react-query-devtools
-   npm install axios zustand
-   npm install react-hook-form zod @hookform/resolvers
-   npm install next-intl
-   npx shadcn@latest init
-   npx shadcn@latest add button input label dialog select badge 
-       toast tabs separator card avatar dropdown-menu skeleton
-       alert progress sheet tooltip
+- TypeScript strict mode — zero `any` types ever
+- Every component has a typed props interface
+- Max 150 lines per file — split if longer
+- All API calls go through src/lib/api/client.ts ONLY
+- Never call axios or fetch directly in components
+- Use TanStack Query for ALL server state (GET → useQuery, mutations → useMutation)
+- Use React Hook Form + Zod for ALL forms
+- Use existing hooks in src/lib/hooks/ — never duplicate logic
+- Clean, readable, well-commented code
+- No dead code, no commented-out blocks
+- Consistent naming: PascalCase components, camelCase functions, kebab-case files
 
-3. Read the Pencil design file using MCP tools and extract:
-   - Primary color, background color, border color, text colors
-   - Font family and sizes
-   - Border radius values
-   - Any design tokens or variables defined
+## Design Rules — Non-Negotiable
+- Read EVERY Pencil frame before writing any code
+- Match Pencil designs PIXEL-PERFECT — nothing more, nothing less
+- NEVER add UI elements not shown in Pencil
+- NEVER guess any UI detail — if unclear STOP and ask
+- NEVER improve or enhance from your own ideas
+- If you have a suggestion or problem → STOP and tell the developer
+- Wait for response before continuing
+- The Pencil design file is the ONLY source of truth for UI
+- Always read sidebar frames from Pencil before changing sidebar
 
-4. Create this EXACT folder structure (empty files with correct exports):
+## Role System — CRITICAL
+This platform has 5 roles. Each role has completely different screens.
+NEVER mix screens between roles.
+ALWAYS read the frame name prefix to identify the role.
 
-src/
-├── app/
-│   ├── (auth)/
-│   │   ├── login/page.tsx
-│   │   ├── login/sso/page.tsx
-│   │   ├── login/totp/page.tsx
-│   │   └── login/forgot-password/page.tsx
-│   ├── (dashboard)/
-│   │   ├── layout.tsx
-│   │   └── data-sharing/
-│   │       ├── page.tsx
-│   │       ├── new/page.tsx
-│   │       └── [id]/page.tsx
-│   ├── pickup/
-│   │   └── [token]/page.tsx
-│   └── middleware.ts
-│
-├── components/
-│   ├── shared/
-│   │   ├── AppShell/
-│   │   │   ├── Sidebar.tsx
-│   │   │   ├── Topbar.tsx
-│   │   │   └── NavItem.tsx
-│   │   ├── DataTable/
-│   │   │   ├── DataTable.tsx
-│   │   │   └── DataTable.types.ts
-│   │   ├── StepWizard/
-│   │   │   ├── StepWizard.tsx
-│   │   │   ├── StepIndicator.tsx
-│   │   │   └── StepWizard.types.ts
-│   │   ├── StatusBadge.tsx
-│   │   ├── PageHeader.tsx
-│   │   ├── ConfirmDialog.tsx
-│   │   ├── EmptyState.tsx
-│   │   └── ErrorBoundary.tsx
-│   └── features/
-│       ├── data-sharing/
-│       │   ├── RequestsTable.tsx
-│       │   ├── RequestStatusBadge.tsx
-│       │   ├── RequestDetail/
-│       │   │   ├── RequestDetail.tsx
-│       │   │   ├── WorkflowTimeline.tsx
-│       │   │   └── FileAttachments.tsx
-│       │   └── NewRequest/
-│       │       ├── Step1_BasicInfo.tsx
-│       │       ├── Step2_DataSelection.tsx
-│       │       └── Step3_Review.tsx
-│       ├── ndi/
-│       │   └── .gitkeep
-│       ├── data-quality/
-│       │   └── .gitkeep
-│       └── dsr/
-│           └── .gitkeep
-│
-├── lib/
-│   ├── api/
-│   │   ├── client.ts
-│   │   ├── platform/
-│   │   │   ├── auth.api.ts
-│   │   │   ├── users.api.ts
-│   │   │   ├── notifications.api.ts
-│   │   │   └── audit.api.ts
-│   │   └── products/
-│   │       └── data-sharing/
-│   │           ├── requests.api.ts
-│   │           ├── steps.api.ts
-│   │           ├── files.api.ts
-│   │           ├── connections.api.ts
-│   │           ├── schemas.api.ts
-│   │           └── workflows.api.ts
-│   ├── hooks/
-│   │   ├── platform/
-│   │   │   ├── useAuth.ts
-│   │   │   └── useNotifications.ts
-│   │   └── data-sharing/
-│   │       ├── useRequests.ts
-│   │       ├── useRequestDetail.ts
-│   │       ├── useApprovalSteps.ts
-│   │       ├── useFiles.ts
-│   │       ├── useConnections.ts
-│   │       └── useSchemas.ts
-│   ├── types/
-│   │   ├── platform/
-│   │   │   ├── auth.types.ts
-│   │   │   └── user.types.ts
-│   │   ├── data-sharing/
-│   │   │   ├── request.types.ts
-│   │   │   ├── step.types.ts
-│   │   │   ├── file.types.ts
-│   │   │   └── connection.types.ts
-│   │   └── common.types.ts
-│   ├── store/
-│   │   ├── auth.store.ts
-│   │   └── ui.store.ts
-│   └── utils/
-│       ├── formatters.ts
-│       ├── validators.ts
-│       └── constants.ts
-│
-└── styles/
-    └── globals.css
+### Frame Name Prefixes:
+- "Shared" or no prefix → all roles (Login, Notifications, Profile, Delegation)
+- "DS ·" → Data Steward (requester)
+- "DO ·" → Data Owner
+- "DPO ·" → DPO
+- "OA ·" → Org Admin
+- "PA ·" → Platform Admin
 
-5. Implement these foundation files with REAL content (not placeholders):
+### Test Users:
+| Role | Email | Password |
+|------|-------|----------|
+| Data Steward | sara.fin@acme.local | Test123! |
+| Data Owner | ahmed.do@acme.local | Test123! |
+| DPO | nora.dpo@acme.local | Test123! |
+| Org Admin | superadmin@datasharing.local | SuperAdmin123! |
+| Platform Admin | superadmin@datasharing.local | SuperAdmin123! |
 
-### .env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_APP_NAME=Datarix
+### Role Guards — every role-specific page MUST have this:
+- Data Steward: useRoleGuard({ allow: ['requester', 'platform_admin'] })
+- Data Owner: useRoleGuard({ allow: ['data_owner', 'platform_admin'] })
+- DPO: useRoleGuard({ allow: ['dpo', 'platform_admin'] })
+- Org Admin: useRoleGuard({ allow: ['org_admin', 'platform_admin'] })
+- Platform Admin: useRoleGuard({ allow: ['platform_admin'] })
 
-### tailwind.config.ts
-Extract actual values from Pencil design variables and set:
-- colors.primary → main brand color from Pencil
-- colors.sidebar → sidebar background color
-- All other design tokens found in Pencil
+### Sidebar Per Role — EXACT from Pencil (NEVER change without reading Pencil):
 
-### src/lib/types/common.types.ts
-export interface PaginatedResponse<T> {
-  items: T[]
-  total: number
-  page: number
-  limit: number
-}
-export interface ApiError {
-  detail: string
-  status: number
-}
+DATA STEWARD:
+  Header: DATARIX logo (standard)
+  Main:
+    My Requests (orange icon + orange count badge) → /data-sharing
+    Raise New Request → /data-sharing/new
+    Prepare & Upload → /prepare
+  Bottom:
+    All Products → /
+    Notifications → /notifications
+    Profile → /profile
+  ⚠️ NO Delegation item
 
-### src/lib/types/platform/auth.types.ts
-export interface LoginRequest { username: string; password: string }
-export interface AuthTokens { access_token: string; refresh_token: string }
-export interface LoginResponse extends AuthTokens { user: CurrentUser }
-export interface CurrentUser {
-  id: number
-  email: string
-  first_name: string
-  last_name: string
-  roles: string[]
-  tenant_id: number
-}
+DATA OWNER:
+  Header: DATARIX logo (standard)
+  Main:
+    Approvals Inbox (orange icon + orange count badge) → /approvals
+    Request Detail + Actions → /approvals (highlights on /approvals/[id])
+    My Department → /my-department
+  Bottom:
+    Product Portal → /
+    Notifications → /notifications
+    Profile → /profile
+    Delegation → /delegation
 
-### src/lib/types/data-sharing/request.types.ts
-export type SharingType = 'internal' | 'external'
-export type DataType = 'file' | 'structured'
-export type SelectionMode = 'tables' | 'query'
-export type DeliveryChannel = 'portal' | 'email' | 'api'
-export type RequestStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'cancelled'
-export interface ShareRequest {
-  id: number
-  title: string
-  purpose: string
-  legal_basis: string
-  sharing_type: SharingType
-  data_classification: string
-  personal_data_involved: boolean
-  estimated_data_subjects: number
-  data_subject_categories: string[]
-  source_description: string
-  receiving_tenant_id?: number
-  receiver_group_id?: number
-  dpia_confirmed: boolean
-  data_type: DataType
-  connection_id?: number
-  selection_mode?: SelectionMode
-  selected_items?: string[]
-  custom_sql?: string
-  delivery_channel: DeliveryChannel
-  status: RequestStatus
-  created_at: string
-  updated_at: string
-}
-export type CreateShareRequestBody = Omit<ShareRequest, 'id' | 'status' | 'created_at' | 'updated_at'>
+DPO:
+  Header: DATARIX logo (standard)
+  Main:
+    Organisation Request List → /dpo
+    Request Detail + PDPL Review → /dpo/[id]
+    Workflow Editor → /dpo/workflows
+    Request Templates → /dpo/templates
+    Audit Trail → /dpo/audit
+  Bottom:
+    Product Portal → /
+    Notifications → /notifications
+    Profile → /profile
+    Delegation → /delegation
 
-### src/lib/types/data-sharing/step.types.ts
-export type StepStatus = 'pending' | 'approved' | 'rejected' | 'changes_requested'
-export interface WorkflowStep {
-  id: number
-  request_id: number
-  order: number
-  assignee_id: number
-  assignee_name: string
-  status: StepStatus
-  comment?: string
-  can_act: boolean
-  acted_at?: string
-}
+ORG ADMIN:
+  Header: DATARIX logo (standard)
+  Section "GOVERNANCE":
+    Request List → /admin/requests
+    Request Detail → /admin/requests/[id]
+    Workflow Editor → /admin/workflows
+    Request Templates → /admin/templates
+    Audit Trail → /admin/audit
+  Section "ADMINISTRATION":
+    Departments → /admin/departments
+    Users → /admin/users
+    Database Connections → /admin/connections
+    Business Holidays → /admin/holidays
+    Retention Policy → /admin/retention
+  Bottom:
+    Product Portal → /
+    Notifications → /notifications
+    Profile → /profile
+    Delegation → /delegation
 
-### src/lib/api/client.ts
-- Single Axios instance reading NEXT_PUBLIC_API_URL
-- Request interceptor: attach Bearer token from auth.store
-- Response interceptor: on 401 → auto-refresh using POST /api/v1/platform/auth/refresh
-- On refresh failure: clear auth.store + redirect to /login
-- Export: apiClient (default), and typed get/post/put/delete/patch wrappers
+PLATFORM ADMIN:
+  Header: DATARIX logo + "PLATFORM ADMIN" text + orange "ADMIN" badge
+  Main:
+    Organisations → /platform/organisations
+    Onboard Company → /platform/onboard
+  Bottom:
+    Platform Vendor name + avatar (no Product Portal link)
 
-### src/lib/store/auth.store.ts
-Zustand store with:
-- state: user (CurrentUser | null), accessToken, refreshToken, isAuthenticated
-- actions: setTokens, setUser, logout, initialize
+## Process — Follow for EVERY Screen
+1. Read frame from Pencil MCP (screenshot + node details)
+2. Identify role from frame name prefix
+3. Check CHECKLIST.md — is it already done?
+4. If done → compare with Pencil and fix differences only
+5. If not done → implement pixel-perfect from Pencil
+6. Add useRoleGuard for correct role
+7. Connect to real API endpoint
+8. Run: npx tsc --noEmit → must be 0 errors
+9. Update CHECKLIST.md → mark as done
+10. NEVER move to next screen until all 9 steps pass
 
-### src/lib/store/ui.store.ts
-Zustand store with:
-- state: sidebarOpen (boolean), currentFeature (string)
-- actions: toggleSidebar, setCurrentFeature
+## API Rules
+- Base URL: http://localhost:8000
+- All calls through src/lib/api/client.ts
+- Bearer token handled automatically by interceptor
+- On 401 → auto-refresh → on fail → redirect to /login
+- Always show loading skeleton while fetching
+- Always show error toast on failure
 
-### src/lib/api/platform/auth.api.ts
-import { apiClient } from '../client'
-- login(body: LoginRequest): Promise<LoginResponse>
-- refresh(refreshToken: string): Promise<AuthTokens>
-- logout(refreshToken: string): Promise<{ success: boolean }>
+## Known Issues to Fix (in order):
+1. DS /data-sharing/[id] → Changes Requested banner wrong condition
+2. /prepare/[id] → Missing request info card + virus scan states
+3. /approvals → Empty state missing buttons
+4. /approvals/[id] → Flagged for Technical Review state missing
+5. /dpo → Presets panel missing
+6. /dpo → Export modal missing (direct CSV download instead)
+7. /dpo/[id] → Data Minimisation tab shows wrong content
+8. /dpo/[id] → DPIA tab shows wrong content
+9. /dpo/[id] → Missing 4th PDPL checks summary tab
+10. /my-department → Missing delegation-active banner
+11. /my-department → Delegation pane layout wrong
+12. /admin/departments → Delete-blocked modal shows wrong content + wrong button
+13. /admin/users → Deactivate modal missing blocking requests list
+14. /admin/holidays → Add Holiday should be full page not modal
+15. /pickup/[token] → Complete stub only (returns null)
+16. /prepare/[id] → Mode B (SQL structured data) flow not built
+17. /admin/connections → Add Connection wizard step 2 missing
 
-### src/lib/api/products/data-sharing/requests.api.ts
-- getRequests(params: { page?: number; limit?: number; status?: string }): Promise<PaginatedResponse<ShareRequest>>
-- createRequest(body: CreateShareRequestBody): Promise<ShareRequest>
-- getRequest(id: number): Promise<ShareRequest>
-- submitRequest(id: number): Promise<ShareRequest>
-- cancelRequest(id: number): Promise<ShareRequest>
-
-### src/lib/utils/constants.ts
-export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = { ... }
-export const REQUEST_STATUS_COLORS: Record<RequestStatus, string> = { ... }
-export const FEATURES = ['data-sharing', 'ndi', 'data-quality', 'dsr'] as const
-export type Feature = typeof FEATURES[number]
-
-### src/middleware.ts
-Protect all (dashboard) routes — redirect to /login if no valid token in store
-
-6. After creating all files, run:
-   npx tsc --noEmit
-   
-   Fix ALL TypeScript errors before finishing.
-
-7. Final check — confirm:
-   ✓ npx tsc --noEmit passes with 0 errors
-   ✓ All folders exist
-   ✓ No any types used
-   ✓ All API functions are typed
-   ✓ Tailwind colors match Pencil design tokens
+## Git Rules
+- Branch: Frontend
+- After every feature: git add -A && git commit -m "descriptive message"
+- Push: git push origin Frontend
+- Commit messages must describe what changed specifically

@@ -1,29 +1,40 @@
 "use client";
 
-import { CalendarOff, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { get, post, del } from "@/lib/api/client";
+import { get, post } from "@/lib/api/client";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
-import { RoleBadge } from "@/components/shared/RoleBadge";
 
 interface Holiday {
   id: string;
   date: string;
   name: string;
+  name_ar?: string | null;
   is_recurring: boolean;
 }
 
 const BASE = "/api/v1/products/data-sharing/admin/holidays";
 
+function formatHolidayDate(dateStr: string): string {
+  try {
+    return new Date(dateStr).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+type View = "list" | "add";
+
 export default function AdminHolidaysPage() {
-  const { isReady } = useRoleGuard({ allow: ["org_admin"] });
+  const { isReady } = useRoleGuard({ allow: ["org_admin", "platform_admin"] });
   const qc = useQueryClient();
-  const [showAdd, setShowAdd] = useState(false);
-  const [newDate, setNewDate] = useState("");
-  const [newName, setNewName] = useState("");
-  const [isRecurring, setIsRecurring] = useState(false);
+  const [view, setView] = useState<View>("list");
 
   const holidaysQuery = useQuery({
     queryKey: ["admin", "holidays"],
@@ -31,25 +42,21 @@ export default function AdminHolidaysPage() {
     enabled: isReady,
   });
 
-  const addMutation = useMutation({
-    mutationFn: () => post<Holiday>(BASE, { date: newDate, name: newName, is_recurring: isRecurring }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["admin", "holidays"] });
-      setNewDate("");
-      setNewName("");
-      setIsRecurring(false);
-      setShowAdd(false);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => del(`${BASE}/${id}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin", "holidays"] }),
-  });
-
   if (!isReady) return null;
 
   const holidays = (holidaysQuery.data ?? []).slice().sort((a, b) => a.date.localeCompare(b.date));
+
+  if (view === "add") {
+    return (
+      <AddHolidayPage
+        onBack={() => setView("list")}
+        onSaved={() => {
+          void qc.invalidateQueries({ queryKey: ["admin", "holidays"] });
+          setView("list");
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-1 flex-col" style={{ backgroundColor: "#FFFFF9" }}>
@@ -59,68 +66,36 @@ export default function AdminHolidaysPage() {
       >
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold text-auth-text">Business Holidays</h1>
-          <RoleBadge label="Org Admin" />
+          {holidays.length > 0 && (
+            <span
+              className="rounded px-2 py-0.5 text-xs font-medium"
+              style={{ backgroundColor: "#F5F5F5", color: "#515157" }}
+            >
+              {holidays.length} holidays
+            </span>
+          )}
         </div>
         <button
           type="button"
-          onClick={() => setShowAdd(true)}
-          className="flex h-9 items-center gap-2 rounded-md px-4 text-[13px] font-medium text-white"
+          onClick={() => setView("add")}
+          className="flex h-9 items-center gap-2 rounded-md px-4 text-[13px] font-semibold text-white"
           style={{ backgroundColor: "#D76736" }}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add Holiday
+          Add holiday
         </button>
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 overflow-auto px-8 py-6">
-        {showAdd && (
-          <div
-            className="flex flex-col gap-3 rounded-lg p-5"
-            style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
-          >
-            <h2 className="text-[13px] font-semibold text-auth-text">Add Holiday</h2>
-            <div className="flex items-end gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium" style={{ color: "#9E9E9E" }}>Date</label>
-                <input
-                  type="date"
-                  value={newDate}
-                  onChange={(e) => setNewDate(e.target.value)}
-                  className="h-9 rounded-md border px-3 text-[13px] outline-none"
-                  style={{ borderColor: "#EEEEEE" }}
-                />
-              </div>
-              <div className="flex flex-col gap-1 flex-1">
-                <label className="text-[11px] font-medium" style={{ color: "#9E9E9E" }}>Name</label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g. National Day"
-                  className="h-9 w-full rounded-md border px-3 text-[13px] outline-none"
-                  style={{ borderColor: "#EEEEEE" }}
-                />
-              </div>
-              <label className="flex items-center gap-2 text-[13px]" style={{ color: "#515157" }}>
-                <input type="checkbox" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)} />
-                Recurring annually
-              </label>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setShowAdd(false)}
-                  className="h-9 rounded-md border px-4 text-[13px]"
-                  style={{ borderColor: "#EEEEEE", color: "#515157" }}>
-                  Cancel
-                </button>
-                <button type="button" onClick={() => addMutation.mutate()}
-                  disabled={!newDate || !newName || addMutation.isPending}
-                  className="h-9 rounded-md px-4 text-[13px] font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#D76736" }}>
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex flex-1 flex-col gap-3 overflow-auto px-8 py-6">
+        <div
+          className="flex items-center gap-2 rounded-md px-4 py-2.5"
+          style={{ backgroundColor: "#FFF5F0", border: "1px solid #FFCDB8" }}
+        >
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" style={{ color: "#D76736" }} />
+          <p className="text-xs" style={{ color: "#D76736" }}>
+            Weekends (Fri–Sat) are automatically excluded from business day calculations.
+          </p>
+        </div>
 
         <div
           className="flex flex-col overflow-hidden rounded-lg"
@@ -130,43 +105,198 @@ export default function AdminHolidaysPage() {
             className="flex h-10 shrink-0 items-center px-5"
             style={{ backgroundColor: "#FAFAFA", borderBottom: "1px solid #EEEEEE" }}
           >
-            <span className="w-[140px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>DATE</span>
-            <span className="flex-1 text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>NAME</span>
-            <span className="w-[120px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>RECURRING</span>
-            <span className="w-[60px]" />
+            <span className="w-[130px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>DATE</span>
+            <span className="flex-1 text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>HOLIDAY NAME (EN)</span>
+            <span className="w-[200px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>HOLIDAY NAME (AR)</span>
+            <span className="w-[140px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>RECURS ANNUALLY</span>
           </div>
 
           {holidaysQuery.isLoading ? (
             <div className="py-20 text-center text-sm text-auth-text-subtle">Loading…</div>
           ) : holidays.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-20">
-              <CalendarOff className="h-10 w-10" style={{ color: "#EEEEEE" }} />
               <p className="text-sm font-medium text-auth-text">No holidays configured</p>
               <p className="text-xs" style={{ color: "#9E9E9E" }}>Holidays are excluded from SLA calculations.</p>
             </div>
           ) : (
-            holidays.map((h, i) => (
-              <div
-                key={h.id}
-                className="flex h-12 items-center px-5"
-                style={{ borderBottom: i < holidays.length - 1 ? "1px solid #F5F5F5" : undefined }}
-              >
-                <span className="w-[140px] text-[13px] font-medium text-auth-text">{h.date}</span>
-                <span className="flex-1 text-[13px]" style={{ color: "#515157" }}>{h.name}</span>
-                <span className="w-[120px] text-xs" style={{ color: h.is_recurring ? "#D76736" : "#9E9E9E" }}>
-                  {h.is_recurring ? "Yes" : "No"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => deleteMutation.mutate(h.id)}
-                  className="flex w-[60px] justify-center rounded p-1.5 transition-colors hover:bg-red-50"
-                  style={{ color: "#CCCCCC" }}
+            <>
+              {holidays.map((h, i) => (
+                <div
+                  key={h.id}
+                  className="flex h-12 items-center px-5"
+                  style={{ borderBottom: i < holidays.length - 1 ? "1px solid #F5F5F5" : undefined }}
                 >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                  <span className="w-[130px] text-[13px] font-medium text-auth-text">
+                    {formatHolidayDate(h.date)}
+                  </span>
+                  <span className="flex-1 text-[13px]" style={{ color: "#515157" }}>{h.name}</span>
+                  <span className="w-[200px] text-[13px]" style={{ color: "#9E9E9E", direction: "rtl" }}>
+                    {h.name_ar ?? "—"}
+                  </span>
+                  <span className="w-[140px]">
+                    {h.is_recurring ? (
+                      <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "#449235" }}>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Annual
+                      </span>
+                    ) : (
+                      <span className="text-xs" style={{ color: "#9E9E9E" }}>One-time</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+              <div
+                className="flex h-10 items-center justify-between px-5"
+                style={{ borderTop: "1px solid #F5F5F5" }}
+              >
+                <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
+                  Showing {holidays.length} of {holidays.length} holidays
+                </span>
+                <span className="text-[11px]" style={{ color: "#9E9E9E" }}>← Page 1 of 1 →</span>
               </div>
-            ))
+            </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Holiday full page ─────────────────────────────────────────
+
+function AddHolidayPage({
+  onBack,
+  onSaved,
+}: {
+  onBack: () => void;
+  onSaved: () => void;
+}) {
+  const [date, setDate] = useState("");
+  const [name, setName] = useState("");
+  const [nameAr, setNameAr] = useState("");
+  const [isRecurring, setIsRecurring] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const add = useMutation({
+    mutationFn: () =>
+      post<Holiday>(BASE, {
+        date,
+        name: name.trim(),
+        name_ar: nameAr.trim() || undefined,
+        is_recurring: isRecurring,
+      }),
+    onSuccess: onSaved,
+    onError: (e) => setError(e instanceof Error ? e.message : "Failed"),
+  });
+
+  return (
+    <div className="flex flex-1 flex-col" style={{ backgroundColor: "#FFFFF9" }}>
+      <div
+        className="flex h-16 shrink-0 items-center justify-between px-8"
+        style={{ backgroundColor: "#FFFFFF", borderBottom: "1px solid #EEEEEE" }}
+      >
+        <h1 className="text-lg font-bold text-auth-text">Add Holiday</h1>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-[13px] font-medium"
+          style={{ color: "#616161" }}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Back to list
+        </button>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-5 overflow-auto px-8 py-6" style={{ maxWidth: 600 }}>
+        <div
+          className="flex flex-col gap-5 rounded-lg p-6"
+          style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
+        >
+          <h2 className="text-[14px] font-semibold text-auth-text">Holiday details</h2>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[12px] font-semibold text-auth-text">
+              Date <span style={{ color: "#D76736" }}>*</span>
+            </label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-10 rounded-md border px-3 text-[13px] outline-none"
+              style={{ borderColor: "#EEEEEE" }}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[12px] font-semibold text-auth-text">
+              Holiday Name (English) <span style={{ color: "#D76736" }}>*</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. National Day"
+              className="h-10 rounded-md border px-3 text-[13px] outline-none"
+              style={{ borderColor: "#EEEEEE" }}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[12px] font-semibold text-auth-text">Holiday Name (Arabic)</label>
+            <input
+              value={nameAr}
+              onChange={(e) => setNameAr(e.target.value)}
+              dir="rtl"
+              placeholder="مثال: اليوم الوطني"
+              className="h-10 rounded-md border px-3 text-[13px] outline-none"
+              style={{ borderColor: "#EEEEEE" }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[13px] font-medium text-auth-text">Recurs annually</span>
+              <span className="text-[11px]" style={{ color: "#9E9E9E" }}>
+                This holiday recurs on the same date each year.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsRecurring((v) => !v)}
+              className="relative h-6 w-11 rounded-full transition-colors"
+              style={{ backgroundColor: isRecurring ? "#D76736" : "#BABABA" }}
+              aria-checked={isRecurring}
+              role="switch"
+            >
+              <span
+                className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                style={{ left: isRecurring ? "calc(100% - 22px)" : "2px" }}
+              />
+            </button>
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: "#D32F2F" }}>{error}</p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-9 items-center rounded-md border px-5 text-[13px] font-medium"
+            style={{ borderColor: "#EEEEEE", color: "#616161" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => add.mutate()}
+            disabled={!date || !name.trim() || add.isPending}
+            className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-60"
+            style={{ backgroundColor: "#D76736" }}
+          >
+            {add.isPending ? "Saving…" : "Save holiday"}
+          </button>
         </div>
       </div>
     </div>

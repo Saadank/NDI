@@ -14,14 +14,15 @@ import type {
 } from "@/lib/types/data-sharing/request.types";
 
 const STATUS_STYLE: Record<RequestStatus, { bg: string; color: string }> = {
-  draft: { bg: "#EEEEEE", color: "#616161" },
-  submitted: { bg: "#EEF2FF", color: "#3B4FD6" },
-  in_review: { bg: "#FFF7E6", color: "#B45309" },
-  approved: { bg: "#F0FAF0", color: "#449235" },
-  rejected: { bg: "#FFF0F0", color: "#D32F2F" },
-  cancelled: { bg: "#F5F5F5", color: "#9E9E9E" },
-  completed: { bg: "#F0FAF0", color: "#449235" },
-  expired: { bg: "#F5F5F5", color: "#9E9E9E" },
+  draft:             { bg: "#EEEEEE",  color: "#616161" },
+  submitted:         { bg: "#EEF2FF",  color: "#3B4FD6" },
+  in_review:         { bg: "#FFF7E6",  color: "#B45309" },
+  approved:          { bg: "#F0FAF0",  color: "#449235" },
+  rejected:          { bg: "#FFF0F0",  color: "#D32F2F" },
+  changes_requested: { bg: "#FFFBEB",  color: "#B45309" },
+  cancelled:         { bg: "#F5F5F5",  color: "#9E9E9E" },
+  completed:         { bg: "#F0FAF0",  color: "#449235" },
+  expired:           { bg: "#F5F5F5",  color: "#9E9E9E" },
 };
 
 function StatusBadge({ status }: { status: RequestStatus }) {
@@ -41,14 +42,14 @@ function formatClassification(c: string) {
 }
 
 export interface RequestsTableProps {
-  // Filter applied to the API request — consistent with the wireframe tabs.
-  // 'mine'  → requests I raised (default)
-  // 'incoming' → requests sent TO my department
-  // 'all'   → everything I'm allowed to see
   scope?: "mine" | "incoming" | "all";
+  search?: string;
+  actionRequired?: boolean;
 }
 
-export function RequestsTable({ scope = "mine" }: RequestsTableProps) {
+const ACTION_REQUIRED_STATUSES = new Set<RequestStatus>(["draft", "in_review", "approved"]);
+
+export function RequestsTable({ scope = "mine", search = "", actionRequired = false }: RequestsTableProps) {
   // Backend's list endpoint already filters by role. For "mine" we just take
   // the unfiltered page (requesters only see their own). For "incoming" we
   // filter client-side by receiver_group_id == my group_id.
@@ -62,8 +63,17 @@ export function RequestsTable({ scope = "mine" }: RequestsTableProps) {
 
   const all = requestsQuery.data?.data ?? [];
   const filtered = all.filter((r: ShareRequest) => {
-    if (scope === "mine") return r.requester_id === myUserId;
-    if (scope === "incoming") return r.receiver_group_id === myGroupId;
+    if (scope === "mine" && r.requester_id !== myUserId) return false;
+    if (scope === "incoming" && r.receiver_group_id !== myGroupId) return false;
+    if (actionRequired && !ACTION_REQUIRED_STATUSES.has(r.status)) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (
+        !r.title.toLowerCase().includes(q) &&
+        !r.request_number.toLowerCase().includes(q)
+      )
+        return false;
+    }
     return true;
   });
 

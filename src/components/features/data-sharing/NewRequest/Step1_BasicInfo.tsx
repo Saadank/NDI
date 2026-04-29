@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Info, Save } from "lucide-react";
+import { ChevronDown, FileText, Heart, Info, Save, Scale, ShieldCheck, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -65,6 +65,124 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+const LEGAL_BASIS_INFO: {
+  value: LegalBasis;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  iconBg: string;
+}[] = [
+  {
+    value: "consent",
+    label: "Consent",
+    description: "Your data subjects have given clear consent for the specific purpose.",
+    icon: <Users className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#D76736",
+  },
+  {
+    value: "contract",
+    label: "Contract",
+    description: "Processing is necessary to perform or prepare a contract with the data subject.",
+    icon: <FileText className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#3B82F6",
+  },
+  {
+    value: "legal_obligation",
+    label: "Legal obligation",
+    description: "Processing is required to comply with a legal duty (e.g. NDMO regulations, SAMA rules).",
+    icon: <Scale className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#D76736",
+  },
+  {
+    value: "vital_interest",
+    label: "Vital interest",
+    description: "Processing is necessary to protect someone's life or physical integrity.",
+    icon: <Heart className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#8B5CF6",
+  },
+  {
+    value: "public_interest",
+    label: "Public interest",
+    description: "Processing is necessary for a public task or the exercise of official authority.",
+    icon: <ShieldCheck className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#449235",
+  },
+  {
+    value: "legitimate_interest",
+    label: "Legitimate interest",
+    description: "Your organisation has a genuine and proportionate interest — use only if no overriding risk.",
+    icon: <ShieldCheck className="h-3.5 w-3.5 text-white" />,
+    iconBg: "#3B82F6",
+  },
+];
+
+function LegalBasisModal({
+  onClose,
+  onSelect,
+}: {
+  onClose: () => void;
+  onSelect: (v: LegalBasis) => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+    >
+      <div
+        className="flex w-[480px] flex-col gap-4 rounded-lg p-6"
+        style={{ backgroundColor: "#FFFFFF" }}
+      >
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[15px] font-semibold text-auth-text">
+            Which legal basis applies?
+          </h2>
+          <p className="text-xs" style={{ color: "#9E9E9E" }}>
+            Under PDPL, all of these six bases must cover your data sharing.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {LEGAL_BASIS_INFO.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onSelect(opt.value); onClose(); }}
+              className="flex items-start gap-3 rounded-md p-3 text-left transition-colors hover:bg-[#FAFAFA]"
+              style={{ border: "1px solid #EEEEEE" }}
+            >
+              <span
+                className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                style={{ backgroundColor: opt.iconBg }}
+              >
+                {opt.icon}
+              </span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[13px] font-semibold text-auth-text">
+                  {opt.label}
+                </span>
+                <span className="text-[12px]" style={{ color: "#9E9E9E" }}>
+                  {opt.description}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-md border px-5 text-[13px] font-medium"
+            style={{ borderColor: "#EEEEEE", color: "#515157" }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Step1_BasicInfo() {
   // Raising new requests is restricted to requesters and data owners. DPOs
   // and org admins still need to log in but are bounced back to "/" if they
@@ -105,6 +223,7 @@ export function Step1_BasicInfo() {
 
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [showLegalModal, setShowLegalModal] = useState(false);
 
   // Step 1 "Save as Draft" — wireframe shows it bottom-left. We post the
   // current Step 1 fields so the partial draft shows up in My Requests.
@@ -139,6 +258,13 @@ export function Step1_BasicInfo() {
   };
 
   return (
+    <>
+    {showLegalModal && (
+      <LegalBasisModal
+        onClose={() => setShowLegalModal(false)}
+        onSelect={(v) => setField("legal_basis", v)}
+      />
+    )}
     <div className="flex flex-col gap-4">
       <SectionHeader>Request Details</SectionHeader>
 
@@ -163,23 +289,6 @@ export function Step1_BasicInfo() {
           className="h-20 w-full resize-none rounded-md border p-3 text-[13px] text-auth-text outline-none placeholder:text-[#BABABA]"
           style={{ borderColor: "#EEEEEE" }}
         />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <FieldLabel required>Priority</FieldLabel>
-        <div className="flex items-center gap-6">
-          {(["normal", "urgent"] as const).map((p) => (
-            <button
-              type="button"
-              key={p}
-              className="flex cursor-pointer items-center gap-2"
-              onClick={() => setField("priority", p)}
-            >
-              <Radio checked={form.priority === p} />
-              <span className="text-[13px] capitalize text-auth-text">{p}</span>
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="h-px w-full" style={{ backgroundColor: "#EEEEEE" }} />
@@ -353,15 +462,25 @@ export function Step1_BasicInfo() {
       <SectionHeader>Legal &amp; Compliance</SectionHeader>
 
       <div className="flex flex-col gap-[6px]">
-        <FieldLabel
-          required={
-            form.personal_data_involved ||
-            form.data_classification === "confidential" ||
-            form.data_classification === "sensitive"
-          }
-        >
-          Legal basis
-        </FieldLabel>
+        <div className="flex items-center justify-between">
+          <FieldLabel
+            required={
+              form.personal_data_involved ||
+              form.data_classification === "confidential" ||
+              form.data_classification === "sensitive"
+            }
+          >
+            Legal basis
+          </FieldLabel>
+          <button
+            type="button"
+            onClick={() => setShowLegalModal(true)}
+            className="text-[12px] font-medium"
+            style={{ color: "#D76736" }}
+          >
+            Help me pick →
+          </button>
+        </div>
         <div className="relative">
           <select
             value={form.legal_basis}
@@ -555,5 +674,6 @@ export function Step1_BasicInfo() {
         </button>
       </div>
     </div>
+    </>
   );
 }

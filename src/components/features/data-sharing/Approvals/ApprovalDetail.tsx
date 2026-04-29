@@ -583,7 +583,7 @@ function ApproveModal({
 // Main page
 // ───────────────────────────────────────────────────────────────
 
-type ModalKey = null | "approve" | "reject" | "changes";
+type ModalKey = null | "approve" | "reject" | "changes" | "flag";
 
 export function ApprovalDetail({ id }: { id: string }) {
   const { isReady } = useRoleGuard({
@@ -605,6 +605,7 @@ export function ApprovalDetail({ id }: { id: string }) {
   })();
 
   const [modal, setModal] = useState<ModalKey>(null);
+  const [flaggedBy, setFlaggedBy] = useState<string | null>(null);
 
   if (!isReady) return null;
 
@@ -626,6 +627,10 @@ export function ApprovalDetail({ id }: { id: string }) {
   const r = reqQuery.data;
   const steps = stepsQuery.data ?? [];
   const myStep = steps.find((s) => s.can_act);
+
+  // Detect flagged state from API data in addition to local optimistic state
+  const flaggedStep = steps.find((s) => s.status === "flagged");
+  const flaggedContact = flaggedBy ?? (flaggedStep?.comment?.replace(/^Flagged for technical review — awaiting: /i, "") ?? null);
 
   const senderGroupName =
     groupsQuery.data?.find((g) => g.id === (r.requester_group_id ?? -1))?.name ??
@@ -681,6 +686,17 @@ export function ApprovalDetail({ id }: { id: string }) {
     });
     setModal(null);
     router.push("/approvals");
+  };
+
+  const handleFlag = async (technicalContact: string) => {
+    if (!myStep) return;
+    await act.mutateAsync({
+      stepId: myStep.id,
+      status: "flagged",
+      comment: `Flagged for technical review — awaiting: ${technicalContact}`,
+    });
+    setFlaggedBy(technicalContact);
+    setModal(null);
   };
 
   return (
@@ -768,6 +784,25 @@ export function ApprovalDetail({ id }: { id: string }) {
             <PriorityChip urgent={urgent} />
           </div>
         </div>
+
+        {/* Flagged-for-review banner */}
+        {flaggedContact && (
+          <div
+            className="flex items-start gap-3 rounded-lg px-4 py-3"
+            style={{ backgroundColor: "#EFF6FF", border: "1px solid #BFDBFE" }}
+          >
+            <Flag className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#1D4ED8" }} />
+            <div className="flex flex-col gap-1">
+              <p className="text-[13px] font-semibold" style={{ color: "#1D4ED8" }}>
+                Flagged for Technical Review
+              </p>
+              <p className="text-xs" style={{ color: "#1E40AF" }}>
+                Awaiting input from <strong>{flaggedContact}</strong>. You will be notified when they respond.
+                You can still approve, reject, or request changes at any time.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-1 gap-4">
           {/* Left column — Metadata + (optional Mode B) + Files */}
@@ -1047,16 +1082,25 @@ export function ApprovalDetail({ id }: { id: string }) {
             borderTop: "1px solid #EEEEEE",
           }}
         >
-          <button
-            type="button"
-            disabled
-            title="Coming soon"
-            className="flex h-9 items-center gap-1.5 text-[13px] font-medium"
-            style={{ color: "#9E9E9E" }}
-          >
-            <Flag className="h-3.5 w-3.5" />
-            Flag for Technical Review
-          </button>
+          {flaggedContact ? (
+            <span
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold"
+              style={{ backgroundColor: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE" }}
+            >
+              <Flag className="h-3 w-3" />
+              Flagged — Waiting on {flaggedContact}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setModal("flag")}
+              className="flex h-9 items-center gap-1.5 text-[13px] font-medium"
+              style={{ color: "#515157" }}
+            >
+              <Flag className="h-3.5 w-3.5" />
+              Flag for Technical Review
+            </button>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1111,6 +1155,74 @@ export function ApprovalDetail({ id }: { id: string }) {
           pending={act.isPending}
         />
       )}
+      {modal === "flag" && (
+        <FlagModal
+          onClose={() => setModal(null)}
+          onConfirm={handleFlag}
+          pending={act.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+function FlagModal({
+  onClose,
+  onConfirm,
+  pending,
+}: {
+  onClose: () => void;
+  onConfirm: (contact: string) => Promise<void>;
+  pending: boolean;
+}) {
+  const [contact, setContact] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    if (!contact.trim()) return;
+    try {
+      await onConfirm(contact.trim());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+    }
+  };
+  return (
+    <ModalShell title="Flag for Technical Review" onClose={onClose}>
+      <p className="text-xs" style={{ color: "#515157", lineHeight: 1.6 }}>
+        Escalate this request to a technical expert. You&apos;ll still be able to approve,
+        reject, or request changes at any time.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[12px] font-semibold text-auth-text">
+          Who should review? <span style={{ color: "#D76736" }}>*</span>
+        </label>
+        <input
+          value={contact}
+          onChange={(e) => setContact(e.target.value)}
+          placeholder="Name or team (e.g. IT Security)"
+          className="h-10 rounded-md border px-3 text-[13px] outline-none"
+          style={{ borderColor: "#EEEEEE" }}
+        />
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-9 items-center rounded-md border px-4 text-[13px] font-medium"
+          style={{ borderColor: "#EEEEEE", color: "#616161" }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={pending || !contact.trim()}
+          className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-50"
+          style={{ backgroundColor: "#1D4ED8" }}
+        >
+          {pending ? "Flagging…" : "Flag for review"}
+        </button>
+      </div>
+    </ModalShell>
   );
 }

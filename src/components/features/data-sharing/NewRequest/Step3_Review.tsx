@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, GitMerge, Send, Save } from "lucide-react";
+import { ArrowLeft, GitMerge, Send, Save, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/products/data-sharing/requests.api";
 import { useGroups } from "@/lib/hooks/platform/useGroups";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
+import { useAuthStore } from "@/lib/store/auth.store";
 import { useWorkflowTemplates, useWorkflowTemplate } from "@/lib/hooks/data-sharing/useWorkflowTemplates";
 import { useNewRequestStore } from "@/lib/store/new-request.store";
 import {
@@ -49,12 +50,14 @@ export function Step3_Review() {
   if (!isReady) return null;
   const reset = useNewRequestStore((s) => s.reset);
   const groupsQuery = useGroups();
+  const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
   const receiverName =
     groupsQuery.data?.find((g) => g.id === form.receiver_group_id)?.name ??
     "—";
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSameReceiverModal, setShowSameReceiverModal] = useState(false);
 
   const templatesQuery = useWorkflowTemplates();
   const matchedTemplateId = useMemo(() => {
@@ -80,6 +83,15 @@ export function Step3_Review() {
     "—";
 
   const handleSubmit = async () => {
+    // Guard: source department cannot equal receiver department.
+    if (
+      form.receiver_group_id !== null &&
+      myGroupId !== null &&
+      String(form.receiver_group_id) === String(myGroupId)
+    ) {
+      setShowSameReceiverModal(true);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -201,6 +213,53 @@ export function Step3_Review() {
   };
 
   return (
+    <>
+    {showSameReceiverModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center"
+        style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+      >
+        <div
+          className="flex w-[440px] flex-col gap-5 rounded-lg p-6"
+          style={{ backgroundColor: "#FFFFFF" }}
+        >
+          <div className="flex items-start justify-between">
+            <h2 className="text-[15px] font-semibold text-auth-text">
+              Cannot submit — source equals receiver
+            </h2>
+            <button type="button" onClick={() => setShowSameReceiverModal(false)}>
+              <X className="h-4 w-4" style={{ color: "#9E9E9E" }} />
+            </button>
+          </div>
+          <p className="text-[13px]" style={{ color: "#515157" }}>
+            The requesting department and receiver department are the same. A
+            department cannot request data from itself. Go back to Step 1 and
+            change the receiver department before submitting.
+          </p>
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setShowSameReceiverModal(false)}
+              className="h-9 rounded-md border px-4 text-[13px]"
+              style={{ borderColor: "#EEEEEE", color: "#515157" }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSameReceiverModal(false);
+                router.push("/data-sharing/new");
+              }}
+              className="h-9 rounded-md px-4 text-[13px] font-medium text-white"
+              style={{ backgroundColor: "#D76736" }}
+            >
+              Go to Step 1 · Change receiver
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="flex flex-col gap-4">
       <div className="flex gap-4">
         <div className="flex flex-1 flex-col gap-4">
@@ -230,7 +289,6 @@ export function Step3_Review() {
             <div className="flex flex-col px-5 py-2">
               <Field label="Title" value={form.title} />
               <Field label="Purpose" value={form.purpose} />
-              <Field label="Priority" value={form.priority} />
               <Field label="Sharing Type" value={form.sharing_type} />
               <Field label="Receiver Department" value={receiverName} />
               <Field label="Classification" value={classificationLabel} />
@@ -458,5 +516,6 @@ export function Step3_Review() {
         </div>
       </div>
     </div>
+    </>
   );
 }

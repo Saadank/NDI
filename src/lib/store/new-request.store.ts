@@ -16,7 +16,6 @@ export interface NewRequestForm {
   // Step 1 — details
   title: string;
   purpose: string;
-  priority: "normal" | "urgent";
   sharing_type: SharingType;
   receiver_group_id: number | null;
   data_classification: DataClassification;
@@ -54,7 +53,6 @@ interface NewRequestActions {
 const INITIAL: NewRequestForm = {
   title: "",
   purpose: "",
-  priority: "normal",
   sharing_type: "internal",
   receiver_group_id: null,
   data_classification: "internal",

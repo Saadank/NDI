@@ -1,5 +1,6 @@
 export interface Pagination {
   total_pages: number;
+  total?: number;
   next_page: number | null;
   previous_page: number | null;
   page: number;

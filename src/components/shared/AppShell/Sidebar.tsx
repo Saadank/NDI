@@ -79,11 +79,17 @@ const ITEM = {
     href: "/approvals",
     icon: Inbox,
     badgeKey: "approvals",
-    match: (p: string) => p === "/approvals" || p.startsWith("/approvals/"),
+    match: (p: string) => p === "/approvals",
+  } as NavItem,
+  requestDetailActions: {
+    label: "Request Detail + Actions",
+    href: "/approvals",
+    icon: FileText,
+    match: (p: string) => p.startsWith("/approvals/"),
   } as NavItem,
   myDepartment: { label: "My Department", href: "/my-department", icon: UsersIcon } as NavItem,
 
-  // DPO + Admin shared governance
+  // Governance (shared DPO / Org Admin)
   orgRequestList: {
     label: "Organisation Request List",
     href: "/dpo",
@@ -94,7 +100,11 @@ const ITEM = {
     label: "Request Detail + PDPL Review",
     href: "/dpo",
     icon: FileText,
-    match: (p: string) => p.startsWith("/dpo/") && !p.startsWith("/dpo/workflows") && !p.startsWith("/dpo/recipients") && !p.startsWith("/dpo/audit"),
+    match: (p: string) =>
+      p.startsWith("/dpo/") &&
+      !p.startsWith("/dpo/workflows") &&
+      !p.startsWith("/dpo/templates") &&
+      !p.startsWith("/dpo/audit"),
   } as NavItem,
   workflowEditor: {
     label: "Workflow Editor",
@@ -102,16 +112,11 @@ const ITEM = {
     icon: GitBranch,
     match: (p: string) => p === "/dpo/workflows",
   } as NavItem,
-  workflowTemplates: {
-    label: "Workflow Templates",
+  requestTemplates: {
+    label: "Request Templates",
     href: "/dpo/templates",
     icon: ClipboardList,
     match: (p: string) => p === "/dpo/templates",
-  } as NavItem,
-  externalRecipients: {
-    label: "External Recipients Directory",
-    href: "/dpo/recipients",
-    icon: ClipboardList,
   } as NavItem,
   auditTrail: { label: "Audit Trail", href: "/dpo/audit", icon: ListChecks } as NavItem,
 
@@ -126,54 +131,45 @@ const ITEM = {
   organisations: { label: "Organisations", href: "/platform/organisations", icon: Building2 } as NavItem,
   onboardCompany: { label: "Onboard Company", href: "/platform/onboard", icon: Plus } as NavItem,
 
-  // Footer (shared)
-  productPortal: { label: "All Products", href: "/", icon: LayoutGrid } as NavItem,
+  // Footer
+  allProducts: { label: "All Products", href: "/", icon: LayoutGrid } as NavItem,
+  productPortal: { label: "Product Portal", href: "/", icon: LayoutGrid } as NavItem,
   notifications: { label: "Notifications", href: "/notifications", icon: Bell } as NavItem,
   profile: { label: "Profile", href: "/profile", icon: UserIcon } as NavItem,
   delegation: { label: "Delegation", href: "/delegation", icon: UserCog } as NavItem,
 };
 
-const PRIMARY_NAV: Record<EffectiveRole, NavSection[]> = {
-  requester: [
-    { items: [ITEM.myRequests, ITEM.raise, ITEM.prepare] },
-  ],
-  data_owner: [
-    { items: [ITEM.approvalsInbox, ITEM.myDepartment] },
-  ],
-  dpo: [
-    {
-      items: [
-        ITEM.orgRequestList,
-        ITEM.requestDetailPdpl,
-        ITEM.workflowEditor,
-        ITEM.workflowTemplates,
-        ITEM.externalRecipients,
-        ITEM.auditTrail,
-      ],
-    },
-  ],
-  org_admin: [
-    {
-      items: [
-        ITEM.adminDepartments,
-        ITEM.adminUsers,
-        ITEM.adminConnections,
-        ITEM.adminHolidays,
-        ITEM.adminRetention,
-      ],
-    },
-  ],
-  platform_admin: [
-    { items: [ITEM.organisations, ITEM.onboardCompany] },
+const GOVERNANCE_SECTION: NavSection = {
+  title: "GOVERNANCE",
+  items: [
+    ITEM.orgRequestList,
+    ITEM.requestDetailPdpl,
+    ITEM.workflowEditor,
+    ITEM.requestTemplates,
+    ITEM.auditTrail,
   ],
 };
 
+const PRIMARY_NAV: Record<EffectiveRole, NavSection[]> = {
+  requester: [{ items: [ITEM.myRequests, ITEM.raise, ITEM.prepare] }],
+  data_owner: [{ items: [ITEM.approvalsInbox, ITEM.requestDetailActions, ITEM.myDepartment] }],
+  dpo: [{ items: [ITEM.orgRequestList, ITEM.requestDetailPdpl, ITEM.workflowEditor, ITEM.requestTemplates, ITEM.auditTrail] }],
+  org_admin: [
+    GOVERNANCE_SECTION,
+    {
+      title: "ADMINISTRATION",
+      items: [ITEM.adminDepartments, ITEM.adminUsers, ITEM.adminConnections, ITEM.adminHolidays, ITEM.adminRetention],
+    },
+  ],
+  platform_admin: [{ items: [ITEM.organisations, ITEM.onboardCompany] }],
+};
+
 const FOOTER_NAV: Record<EffectiveRole, NavItem[]> = {
-  requester: [ITEM.productPortal, ITEM.notifications, ITEM.profile],
+  requester: [ITEM.allProducts, ITEM.notifications, ITEM.profile],
   data_owner: [ITEM.productPortal, ITEM.notifications, ITEM.profile, ITEM.delegation],
   dpo: [ITEM.productPortal, ITEM.notifications, ITEM.profile, ITEM.delegation],
-  org_admin: [ITEM.productPortal, ITEM.notifications, ITEM.profile],
-  platform_admin: [ITEM.productPortal, ITEM.notifications, ITEM.profile],
+  org_admin: [ITEM.productPortal, ITEM.notifications, ITEM.profile, ITEM.delegation],
+  platform_admin: [],
 };
 
 // ───────────────────────────────────────────────────────────────
@@ -192,7 +188,7 @@ function resolveEffectiveRole(
 }
 
 // ───────────────────────────────────────────────────────────────
-// Rendering
+// Sub-components
 // ───────────────────────────────────────────────────────────────
 
 function defaultMatch(href: string): Matcher {
@@ -236,57 +232,39 @@ function NavLink({
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mb-1 mt-3 px-3 text-[10px] font-semibold uppercase tracking-[0.6px] text-[#9E9E9E]">
+    <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.6px] text-[#9E9E9E]">
       {children}
     </p>
   );
 }
 
+// ───────────────────────────────────────────────────────────────
+// Sidebar
+// ───────────────────────────────────────────────────────────────
+
 export function Sidebar() {
   const pathname = usePathname() ?? "";
-  const productRole = useAuthStore((s) => s.user?.product_role ?? null);
-  const platformRole = useAuthStore((s) => s.user?.platform_role ?? null);
+  const user = useAuthStore((s) => s.user);
+  const productRole = user?.product_role ?? null;
+  const platformRole = user?.platform_role ?? null;
 
   const role = resolveEffectiveRole(productRole, platformRole);
   const primary = PRIMARY_NAV[role];
   const footer = FOOTER_NAV[role];
 
-  // M-9: count badges — only fetch what's relevant for the role
   const requestsQuery = useRequests({ page: 1, limit: 1 });
   const notifQuery = useNotifications({ unread_only: true });
+  void notifQuery;
 
-  const requestCount =
-    role === "requester"
-      ? (requestsQuery.data?.pagination?.total_pages !== undefined
-          ? undefined // total isn't directly available, use pagination
-          : undefined)
-      : undefined;
-
-  // For simplicity, show notification badge count as proxy for "my requests" count
-  // The actual total comes from the pagination object
-  const totalRequests =
-    role === "requester"
-      ? (requestsQuery.data?.pagination
-          ? requestsQuery.data.pagination.page *
-              (requestsQuery.data.data?.length ?? 0) || undefined
-          : undefined)
-      : undefined;
-
-  // We get the total from the pagination next_page / total_pages heuristic.
-  // The backend doesn't expose a direct count on the list endpoint so we fall
-  // back to showing the badge only when data has loaded.
   const myRequestsBadge =
     role === "requester" && requestsQuery.isSuccess
-      ? requestsQuery.data?.data?.length ?? 0
+      ? (requestsQuery.data?.data?.length ?? 0)
       : undefined;
 
   const approvalsBadge =
     role === "data_owner" && requestsQuery.isSuccess
-      ? requestsQuery.data?.data?.length ?? 0
+      ? (requestsQuery.data?.data?.length ?? 0)
       : undefined;
-
-  void requestCount;
-  void totalRequests;
 
   const isActive = (item: NavItem) => {
     const matcher = item.match ?? defaultMatch(item.href);
@@ -300,18 +278,39 @@ export function Sidebar() {
     return undefined;
   };
 
-  void notifQuery;
+  const isPlatformAdmin = role === "platform_admin";
+  const vendorName =
+    user
+      ? `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || user.email
+      : "Platform Admin";
+  const vendorInitials = user
+    ? `${(user.first_name?.[0] ?? "").toUpperCase()}${(user.last_name?.[0] ?? "").toUpperCase()}`
+    : "PA";
 
   return (
     <aside className="sticky top-0 flex h-screen w-[240px] shrink-0 flex-col border-r border-auth-border bg-white px-3 py-5">
-      <Link
-        href="/"
-        aria-label="Datarix home"
-        className="mb-4 flex items-center gap-2 px-3"
-      >
-        <Logo height={22} />
-      </Link>
+      {/* Header */}
+      {isPlatformAdmin ? (
+        <div className="mb-4 flex items-center gap-2 px-3">
+          <div className="flex flex-1 flex-col gap-0.5">
+            <span className="text-[11px] font-bold uppercase tracking-[0.8px] text-[#515157]">
+              Platform Admin
+            </span>
+          </div>
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-bold"
+            style={{ backgroundColor: "#D76736", color: "#FFFFFF" }}
+          >
+            ADMIN
+          </span>
+        </div>
+      ) : (
+        <Link href="/" aria-label="Datarix home" className="mb-4 flex items-center gap-2 px-3">
+          <Logo height={22} />
+        </Link>
+      )}
 
+      {/* Primary nav */}
       <nav className="flex flex-col gap-0.5">
         {primary.map((section, sIdx) => (
           <div key={`section-${sIdx}`} className="flex flex-col gap-0.5">
@@ -328,15 +327,28 @@ export function Sidebar() {
         ))}
       </nav>
 
+      {/* Footer */}
       <div className="mt-auto flex flex-col gap-0.5">
         <div className="my-3 h-px bg-auth-border" />
-        {footer.map((item, i) => (
-          <NavLink
-            key={`footer-${item.label}-${i}`}
-            item={item}
-            active={isActive(item)}
-          />
-        ))}
+        {isPlatformAdmin ? (
+          <div className="flex items-center gap-2.5 px-3 py-2">
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{ backgroundColor: "#D7673626", color: "#D76736" }}
+            >
+              {vendorInitials}
+            </div>
+            <span className="truncate text-[13px] font-medium text-[#515157]">{vendorName}</span>
+          </div>
+        ) : (
+          footer.map((item, i) => (
+            <NavLink
+              key={`footer-${item.label}-${i}`}
+              item={item}
+              active={isActive(item)}
+            />
+          ))
+        )}
       </div>
     </aside>
   );

@@ -6,6 +6,7 @@ export type StepStatus =
   | "approved"
   | "rejected"
   | "changes_requested"
+  | "flagged"
   | "skipped";
 
 export interface WorkflowStep {

@@ -1,4 +1,4 @@
-import { del, post } from "@/lib/api/client";
+import { del, get, post } from "@/lib/api/client";
 
 // Mirrors the backend's `DelegationBody` Pydantic model and the response
 // shape from `users.set_my_delegation`.
@@ -33,4 +33,17 @@ export function clearMyDelegation(): Promise<{
   delegation_to_user_id: number | null;
 }> {
   return del<{ delegation_to_user_id: number | null }>(BASE);
+}
+
+export interface DelegationHistoryItem {
+  id: string;
+  delegate_to_user_id: number;
+  delegate_name: string | null;
+  delegation_start: string;
+  delegation_end: string;
+  summary: string | null;
+}
+
+export function getMyDelegationHistory(): Promise<DelegationHistoryItem[]> {
+  return get<DelegationHistoryItem[]>(`${BASE}/history`);
 }
