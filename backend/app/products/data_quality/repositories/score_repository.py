@@ -110,9 +110,11 @@ class ScoreRepository(PostgresqlAsyncRepository):
         self, *, tenant_id: int, scan_id: int,
     ) -> list[dict]:
         """Per-rule pass-rate breakdown for the rule-occurrences table on
-        the Metrics tab. Mirrors Informatica's Results table columns."""
+        the Metrics tab. Mirrors Informatica's Results table columns.
+        Includes `active_rule_id` so the caller can join active exceptions."""
         return await self._fetch_all(
             """SELECT i.id              AS issue_id,
+                      i.active_rule_id,
                       i.column_name,
                       i.dimension,
                       i.rule_type,

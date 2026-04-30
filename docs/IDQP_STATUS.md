@@ -1,8 +1,8 @@
 # IDQP — Build Status & Roadmap
 
 **Last updated:** 2026-05-01
-**Phase 1 + Phase 1.5 + Step 4 (scoring) + first-run UX rework:** complete and verified end-to-end.
-**Next up:** Step 4.5 (dense column dashboard) or Step 5 (governed exception engine).
+**Phase 1 + Phase 1.5 + Step 4 + UX rework + Step 4.5 + Step 5:** complete and verified end-to-end.
+**Next up:** Step 8 (scheduler + concurrency) or Step 6 (Excel + LLM SQL).
 
 ---
 
@@ -101,6 +101,24 @@ docker exec -i datasharing-1st-postgres-1 \
 | **3b** — Concept matcher | Migration 015: `dq.t_dq_active_rules`. Two-tier matcher: (1) fuzzy via `difflib` on synonym list, (2) Anthropic Haiku 4.5 fallback for ambiguous cases. HIGH-confidence → auto_applied; MEDIUM/LOW → proposed (await human approval). |
 | **3c** — Validator | Migration 016: `dq.t_dq_issues`. Five rule evaluators (`not_null`, `max_null_rate`, `no_pseudo_nulls`, `unique`, `format_regex`) with per-rule failure isolation. Validator runs at the end of every scan. |
 
+### Step 5 — Governed exception engine (all complete — 2026-05-01)
+
+| Step | What landed |
+|---|---|
+| **5.a** | Migration 022: `t_dq_exceptions` + history trigger. Reason categories (`legacy_data` / `business_accepted` / `in_progress` / `data_provider` / `other`), optional `violation_count_ceiling`, mandatory `expires_at`. Partial unique index — at most one active exception per active rule. Replacements revoke the prior row first. |
+| **5.b** | `ExceptionRepository` + `ExceptionService` — full CRUD with admin-only mutations, 365-day max horizon, automatic re-score on create / revoke / extend. |
+| **5.c** | ScoringService rewritten to compute raw vs governed separately. Per issue: `raw_pass = 1 - violation_rate`; `governed_pass = 1.0` iff an active exception covers the rule (no ceiling, OR violation_count ≤ ceiling). Tier band uses governed score. |
+| **5.d** | `/exceptions` router: `GET /profile/{id}` (with `?include_revoked=`), `POST /` (creates or replaces; default 90-day expiry), `POST /{id}/revoke`, `PUT /{id}/extend`. |
+| **5.e** | UI: new **Exceptions** sub-tab on profile detail. Suppress button on failing rules in the Metrics tab opens a modal (reason / explanation / ceiling / days). Donuts show governed score; raw line appears only when raw ≠ governed. Suppressed rule rows get a violet badge. |
+| **5.f** | Read-time expiry: rows with `status='active' AND expires_at > now()` are the only ones honored by scoring or list-active. Rows past expiry get a "past expiry" pill in the UI. The Step 8 sweeper will eventually flip them to `status='expired'` for cleanliness. |
+
+### Step 4.5 — Dense column dashboard (all complete — 2026-05-01)
+
+| Step | What landed |
+|---|---|
+| **4.5.a** | Profiler now captures `character_maximum_length` (Postgres/MySQL/MSSQL) / `data_length` (Oracle) per column and stashes it on `raw_metrics.declared_length`. No migration — JSONB. |
+| **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag when `declared >= 20 && max*4 <= declared`, and per-column rule-status dots (green/red/grey) keyed off the latest issue per active rule. |
+
 ### First-run UX rework (all complete — 2026-04-29)
 
 After walking through the tool as a new user, the team flagged that the original
@@ -185,6 +203,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 | 019 | `dq_profile_id_required.sql` | tightens `profile_id` to NOT NULL |
 | 020 | `dq_score_history.sql` | `t_dq_score_history` — per-(scan, dimension) pass-rate, tier, raw/governed/weighted scores (Step 4) |
 | 021 | `dq_score_thresholds.sql` | `t_dq_score_thresholds` — per-tenant tier bands + severity-weighting toggle (Step 4) |
+| 022 | `dq_exceptions.sql` | `t_dq_exceptions` + history trigger — governed exceptions with reason, ceiling, expiry (Step 5) |
 
 ### Backend (`backend/app/products/data_quality/`)
 
@@ -204,7 +223,8 @@ data_quality/
 │   ├── active_rule_repository.py
 │   ├── issue_repository.py
 │   ├── profile_repository.py        ← Phase 1.5
-│   └── score_repository.py          ← Step 4
+│   ├── score_repository.py          ← Step 4
+│   └── exception_repository.py      ← Step 5
 ├── services/
 │   ├── table_type_service.py
 │   ├── profiler_service.py          ← runs aggregates + sampling
@@ -215,7 +235,8 @@ data_quality/
 │   ├── active_rule_service.py       ← matcher orchestrator
 │   ├── validator_service.py         ← five rule evaluators
 │   ├── profile_service.py           ← Phase 1.5
-│   └── scoring_service.py           ← Step 4 (per-dim + overall + tiers + delta)
+│   ├── scoring_service.py           ← Step 4 + raw/governed split (Step 5)
+│   └── exception_service.py         ← Step 5 (governed exceptions)
 └── routers/
     ├── health.py
     ├── connections.py
@@ -225,7 +246,8 @@ data_quality/
     ├── active_rules.py
     ├── issues.py
     ├── profiles.py                  ← Phase 1.5
-    └── scores.py                    ← Step 4 (metrics, trend, recompute, thresholds)
+    ├── scores.py                    ← Step 4 (metrics, trend, recompute, thresholds)
+    └── exceptions.py                ← Step 5 (create / revoke / extend)
 ```
 
 ### Frontend (`frontend/`)

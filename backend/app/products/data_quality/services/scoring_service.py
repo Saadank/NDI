@@ -34,19 +34,19 @@ _SEVERITY_WEIGHTS = {"critical": 4.0, "high": 3.0, "medium": 2.0, "low": 1.0}
 class _IssueAggReader(PostgresqlAsyncRepository):
     """Tiny helper repo — keeps the SUM(pass_rate)/COUNT(*) query co-located
     with the scoring service rather than scattering it across IssueRepository.
+
+    Step 5: switched to per-issue rows so we can apply per-rule exception
+    forgiveness (governed score) before aggregating. Pure SQL aggregation
+    can't see exceptions efficiently, so we move the bucket logic to Python.
     """
 
-    async def aggregate_for_scan(self, *, tenant_id: int, scan_id: int) -> list[dict]:
+    async def issues_for_scan(self, *, tenant_id: int, scan_id: int) -> list[dict]:
         return await self._fetch_all(
             """SELECT
-                  dimension,
-                  severity,
-                  status,
-                  COUNT(*) AS n,
-                  COALESCE(SUM(1 - COALESCE(violation_rate, 0)), 0) AS sum_pass
+                  active_rule_id, dimension, severity, status,
+                  violation_count, violation_rate
                 FROM dq.t_dq_issues
-               WHERE tenant_id = $1 AND scan_id = $2
-            GROUP BY dimension, severity, status""",
+               WHERE tenant_id = $1 AND scan_id = $2""",
             (tenant_id, scan_id),
         )
 
@@ -62,95 +62,136 @@ class ScoringService:
     ) -> list[dict]:
         """Compute and persist one score row per dimension + one 'overall'
         for the given scan. Idempotent — safe to re-run if the validator is
-        re-invoked on the same scan."""
-        rows = await self._issue_reader.aggregate_for_scan(
+        re-invoked on the same scan, or when an exception change requires
+        a recompute.
+
+        Step 5 — raw vs governed:
+          - raw_pass     = 1 - violation_rate (or 1.0 for status='pass')
+          - governed_pass = 1.0 if an active exception covers this rule
+                            (no ceiling, OR violation_count <= ceiling),
+                            else raw_pass
+        """
+        issues = await self._issue_reader.issues_for_scan(
             tenant_id=tenant_id, scan_id=scan_id,
         )
         thresholds_map, weighting_on, snapshot = await self._load_thresholds(tenant_id)
 
-        # Bucket the aggregate rows.
+        # Pull active exceptions covering any rule in this scan.
+        from app.products.data_quality.repositories.exception_repository import (
+            ExceptionRepository,
+        )
+        exc_repo = ExceptionRepository()
+        exceptions_by_rule = await exc_repo.find_active_for_scan(
+            tenant_id=tenant_id, scan_id=scan_id,
+        )
+
+        # Bucket per-dimension. Track raw + governed separately.
         per_dim: dict[str, dict] = {
-            d: {"sum_pass": 0.0, "rule_count": 0, "pass": 0,
-                "fail": 0, "error": 0, "weighted_sum": 0.0, "weight_sum": 0.0}
+            d: {"rule_count": 0, "pass": 0, "fail": 0, "error": 0,
+                "raw_sum": 0.0, "gov_sum": 0.0, "eligible": 0,
+                "raw_w_num": 0.0, "gov_w_num": 0.0, "w_den": 0.0,
+                "exception_count": 0}
             for d in _DIMENSIONS
         }
-        for r in rows:
-            dim = r["dimension"]
+        for issue in issues:
+            dim = issue["dimension"]
             if dim not in per_dim:
                 continue
-            n = int(r["n"])
-            sp = float(r["sum_pass"])
-            status = r["status"]
-            severity = r["severity"]
-            per_dim[dim]["rule_count"] += n
-            per_dim[dim][status] = per_dim[dim].get(status, 0) + n
-            # Errors don't have a meaningful pass_rate — exclude from raw.
-            if status in ("pass", "fail"):
-                per_dim[dim]["sum_pass"] += sp
-                w = _SEVERITY_WEIGHTS.get(severity, 1.0)
-                per_dim[dim]["weighted_sum"] += sp * w
-                per_dim[dim]["weight_sum"] += n * w
+            status = issue["status"]
+            severity = issue["severity"]
+            per_dim[dim]["rule_count"] += 1
+            per_dim[dim][status] = per_dim[dim].get(status, 0) + 1
+            if status not in ("pass", "fail"):
+                # error rows have no meaningful pass_rate
+                continue
+
+            vr = float(issue["violation_rate"] or 0.0)
+            raw_pass = 1.0 - vr
+            gov_pass = raw_pass
+
+            exc = exceptions_by_rule.get(issue["active_rule_id"])
+            if exc is not None:
+                ceiling = exc.get("violation_count_ceiling")
+                vc = int(issue.get("violation_count") or 0)
+                if ceiling is None or vc <= int(ceiling):
+                    gov_pass = 1.0
+                    per_dim[dim]["exception_count"] += 1
+
+            per_dim[dim]["raw_sum"] += raw_pass
+            per_dim[dim]["gov_sum"] += gov_pass
+            per_dim[dim]["eligible"] += 1
+            w = _SEVERITY_WEIGHTS.get(severity, 1.0)
+            per_dim[dim]["raw_w_num"] += raw_pass * w
+            per_dim[dim]["gov_w_num"] += gov_pass * w
+            per_dim[dim]["w_den"] += w
 
         persisted: list[dict] = []
-
-        # Per-dimension rows.
-        overall_sum_pass = 0.0
-        overall_eligible = 0
-        overall_pass = overall_fail = overall_error = 0
-        overall_w_num = overall_w_den = 0.0
+        overall = {"raw_sum": 0.0, "gov_sum": 0.0, "eligible": 0,
+                   "pass": 0, "fail": 0, "error": 0,
+                   "raw_w_num": 0.0, "gov_w_num": 0.0, "w_den": 0.0,
+                   "exception_count": 0}
 
         for dim in _DIMENSIONS:
             agg = per_dim[dim]
-            eligible = agg["pass"] + agg["fail"]
+            eligible = agg["eligible"]
             rule_count = agg["rule_count"]
-            pass_rate = (agg["sum_pass"] / eligible) if eligible else None
-            tier = self._tier_for(pass_rate, thresholds_map.get(dim, thresholds_map["*"]))
-            weighted = (agg["weighted_sum"] / agg["weight_sum"]) if (weighting_on and agg["weight_sum"]) else None
+            raw_rate = (agg["raw_sum"] / eligible) if eligible else None
+            gov_rate = (agg["gov_sum"] / eligible) if eligible else None
+            # Tier band uses governed score (the team's acknowledged reality).
+            tier = self._tier_for(gov_rate, thresholds_map.get(dim, thresholds_map["*"]))
+            weighted = (agg["gov_w_num"] / agg["w_den"]) if (weighting_on and agg["w_den"]) else None
 
             row = await self.score_repo.insert_score(
                 tenant_id=tenant_id, profile_id=profile_id, scan_id=scan_id,
                 scope_type="profile", scope_key="",
                 dimension=dim,
-                pass_rate=_round5(pass_rate if pass_rate is not None else 0.0),
+                # `pass_rate` is the user-facing headline; we surface the
+                # governed view there since that's what the tier band uses.
+                pass_rate=_round5(gov_rate if gov_rate is not None else 0.0),
                 rule_count=rule_count,
                 pass_count=agg.get("pass", 0),
                 fail_count=agg.get("fail", 0),
                 error_count=agg.get("error", 0),
-                raw_score=_round5(pass_rate if pass_rate is not None else 0.0),
-                governed_score=_round5(pass_rate if pass_rate is not None else 0.0),
+                raw_score=_round5(raw_rate if raw_rate is not None else 0.0),
+                governed_score=_round5(gov_rate if gov_rate is not None else 0.0),
                 tier=tier,
-                thresholds_snapshot=snapshot,
+                thresholds_snapshot={**snapshot, "exceptions_applied": agg["exception_count"]},
                 weighted_score=_round5(weighted) if weighted is not None else None,
             )
             persisted.append(row)
 
-            overall_sum_pass += agg["sum_pass"]
-            overall_eligible += eligible
-            overall_pass += agg.get("pass", 0)
-            overall_fail += agg.get("fail", 0)
-            overall_error += agg.get("error", 0)
-            overall_w_num += agg["weighted_sum"]
-            overall_w_den += agg["weight_sum"]
+            overall["raw_sum"] += agg["raw_sum"]
+            overall["gov_sum"] += agg["gov_sum"]
+            overall["eligible"] += eligible
+            overall["pass"] += agg.get("pass", 0)
+            overall["fail"] += agg.get("fail", 0)
+            overall["error"] += agg.get("error", 0)
+            overall["raw_w_num"] += agg["raw_w_num"]
+            overall["gov_w_num"] += agg["gov_w_num"]
+            overall["w_den"] += agg["w_den"]
+            overall["exception_count"] += agg["exception_count"]
 
-        # Overall row — one score across every dimension's eligible rules.
-        overall_rate = (overall_sum_pass / overall_eligible) if overall_eligible else None
-        overall_tier = self._tier_for(
-            overall_rate, thresholds_map.get("overall", thresholds_map["*"]),
+        elig = overall["eligible"]
+        raw_overall = (overall["raw_sum"] / elig) if elig else None
+        gov_overall = (overall["gov_sum"] / elig) if elig else None
+        tier_overall = self._tier_for(
+            gov_overall, thresholds_map.get("overall", thresholds_map["*"]),
         )
-        overall_weighted = (overall_w_num / overall_w_den) if (weighting_on and overall_w_den) else None
-        total_rules = overall_pass + overall_fail + overall_error
+        weighted_overall = (overall["gov_w_num"] / overall["w_den"]) if (
+            weighting_on and overall["w_den"]) else None
+        total_rules = overall["pass"] + overall["fail"] + overall["error"]
         overall_row = await self.score_repo.insert_score(
             tenant_id=tenant_id, profile_id=profile_id, scan_id=scan_id,
             scope_type="profile", scope_key="",
             dimension="overall",
-            pass_rate=_round5(overall_rate if overall_rate is not None else 0.0),
+            pass_rate=_round5(gov_overall if gov_overall is not None else 0.0),
             rule_count=total_rules,
-            pass_count=overall_pass, fail_count=overall_fail, error_count=overall_error,
-            raw_score=_round5(overall_rate if overall_rate is not None else 0.0),
-            governed_score=_round5(overall_rate if overall_rate is not None else 0.0),
-            tier=overall_tier,
-            thresholds_snapshot=snapshot,
-            weighted_score=_round5(overall_weighted) if overall_weighted is not None else None,
+            pass_count=overall["pass"], fail_count=overall["fail"], error_count=overall["error"],
+            raw_score=_round5(raw_overall if raw_overall is not None else 0.0),
+            governed_score=_round5(gov_overall if gov_overall is not None else 0.0),
+            tier=tier_overall,
+            thresholds_snapshot={**snapshot, "exceptions_applied": overall["exception_count"]},
+            weighted_score=_round5(weighted_overall) if weighted_overall is not None else None,
         )
         persisted.append(overall_row)
         return persisted
@@ -205,13 +246,24 @@ class ScoringService:
             tenant_id=tenant_id, scan_id=scan_id,
         )
 
+        # Mark which rule occurrences are covered by an active exception so
+        # the UI can render the "Suppressed" badge + de-emphasize them.
+        from app.products.data_quality.repositories.exception_repository import (
+            ExceptionRepository,
+        )
+        exc_by_rule = await ExceptionRepository().find_active_for_scan(
+            tenant_id=tenant_id, scan_id=scan_id,
+        )
+
         return {
             "scan_id": scan_id,
             "dimensions": dimensions,
             "overall": overall,
+            "active_exception_count": len(exc_by_rule),
             "rule_occurrences": [
                 {
                     "issue_id": r["issue_id"],
+                    "active_rule_id": r["active_rule_id"],
                     "column_name": r["column_name"],
                     "concept": r["concept"],
                     "concept_description": r.get("concept_description"),
@@ -225,6 +277,9 @@ class ScoringService:
                     "status": r["status"],
                     "diagnostic_text": r["diagnostic_text"],
                     "created_at": r["created_at"],
+                    # Step 5 — UI tags suppressed rows with a badge.
+                    "suppressed": r["active_rule_id"] in exc_by_rule,
+                    "exception_id": (exc_by_rule.get(r["active_rule_id"]) or {}).get("id"),
                 }
                 for r in rule_occ
             ],

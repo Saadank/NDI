@@ -32,6 +32,7 @@ from app.products.data_quality.routers import (
     issues as dq_issues,
     profiles as dq_profiles,
     scores as dq_scores,
+    exceptions as dq_exceptions,
 )
 
 
@@ -95,7 +96,7 @@ app.include_router(pickup.router, prefix="/api/v1")
 # Same pattern as Data Sharing: every route is gated by the tenant having
 # the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
 for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
-          dq_active_rules, dq_issues, dq_profiles, dq_scores]:
+          dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions]:
     app.include_router(
         r.router,
         prefix="/api/v1/products/data-quality",

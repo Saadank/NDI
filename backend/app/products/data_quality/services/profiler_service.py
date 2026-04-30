@@ -519,6 +519,11 @@ class ProfilerService:
                     column_name=col["name"], declared=col["data_type"],
                     ordinal=ordinal, row_count=row_count,
                 )
+                # Step 4.5 — stash declared_length into raw_metrics so the
+                # dense dashboard can flag over-allocated columns (avoiding
+                # a schema migration; raw_metrics is JSONB).
+                if col.get("declared_length") is not None:
+                    profile.setdefault("raw_metrics", {})["declared_length"] = col["declared_length"]
                 await self.profile_repo.insert(
                     scan_id=scan_id, tenant_id=tenant_id,
                     connection_id=scan["connection_id"],
@@ -590,22 +595,29 @@ class ProfilerService:
 
         Uses information_schema where possible. We do this directly rather than
         going through DbConnectorGateway.list_schemas() because we want only
-        the target table's columns, not the entire schema."""
+        the target table's columns, not the entire schema.
+
+        Step 4.5 — also capture `character_maximum_length` (and Oracle's
+        DATA_LENGTH) so the dense dashboard can flag over-allocated columns
+        (declared length much greater than observed max length)."""
         if db_type in ("postgresql", "mysql", "mariadb", "mssql"):
             sql = (
-                "SELECT column_name, data_type FROM information_schema.columns "
+                "SELECT column_name, data_type, character_maximum_length "
+                "FROM information_schema.columns "
                 f"WHERE table_schema = '{schema}' AND table_name = '{table}' "
                 "ORDER BY ordinal_position"
             )
         elif db_type == "oracle":
             sql = (
-                "SELECT column_name, data_type FROM all_tab_columns "
+                "SELECT column_name, data_type, data_length "
+                "FROM all_tab_columns "
                 f"WHERE owner = '{schema.upper()}' AND table_name = '{table.upper()}' "
                 "ORDER BY column_id"
             )
         elif db_type == "clickhouse":
             sql = (
-                f"SELECT name AS column_name, type AS data_type FROM system.columns "
+                f"SELECT name AS column_name, type AS data_type, NULL AS data_length "
+                f"FROM system.columns "
                 f"WHERE database = '{schema}' AND table = '{table}' "
                 "ORDER BY position"
             )
@@ -615,10 +627,17 @@ class ProfilerService:
         result = await gateway.execute_query(sql)
         if not result.success or not result.data:
             return []
-        return [
-            {"name": row[0], "data_type": row[1]}
-            for row in result.data["rows"]
-        ]
+        out: list[dict] = []
+        for row in result.data["rows"]:
+            declared_length: int | None = None
+            try:
+                if len(row) >= 3 and row[2] is not None:
+                    declared_length = int(row[2])
+            except (TypeError, ValueError):
+                declared_length = None
+            out.append({"name": row[0], "data_type": row[1],
+                        "declared_length": declared_length})
+        return out
 
     async def _fetch_row_count(
         self, gateway: DbConnectorGateway, qtable: str,

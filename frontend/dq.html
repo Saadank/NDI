@@ -108,6 +108,32 @@
   .preview-rows-card table{font-family:ui-monospace,monospace;font-size:11px}
   .preview-rows-card td{white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}
   @media (max-width: 900px){.preview-grid{grid-template-columns:1fr}}
+  /* ---- Step 4.5: dense column dashboard ---- */
+  .dense-bar{display:flex;height:10px;border-radius:4px;overflow:hidden;background:#e2e8f0;min-width:80px}
+  .dense-bar > span{display:block;height:100%}
+  .dense-null{background:#94a3b8}
+  .dense-distinct{background:#22c55e}
+  .dense-non-distinct{background:#f59e0b}
+  .dense-rule-icon{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 1px;vertical-align:middle}
+  .ri-pass{background:#22c55e}
+  .ri-fail{background:#ef4444}
+  .ri-error{background:#94a3b8}
+  .typegap-flag{background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px}
+  .view-toggle{display:inline-flex;background:#f1f5f9;border-radius:6px;padding:2px;font-size:11px}
+  .view-toggle button{border:0;background:transparent;padding:4px 10px;border-radius:4px;cursor:pointer;color:var(--mute);font-weight:600}
+  .view-toggle button.active{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  /* ---- Step 5: governed exceptions ---- */
+  .pill-suppressed{background:#ede9fe;color:#5b21b6}
+  .pill-revoked{background:#e2e8f0;color:#475569}
+  .pill-expired{background:#fee2e2;color:#991b1b}
+  .pill-past_expiry{background:#fef3c7;color:#92400e}
+  .reason-legacy_data{background:#dbeafe;color:#1e40af}
+  .reason-business_accepted{background:#dcfce7;color:#166534}
+  .reason-in_progress{background:#fef3c7;color:#92400e}
+  .reason-data_provider{background:#fce7f3;color:#9d174d}
+  .reason-other{background:#e2e8f0;color:#475569}
+  tr.suppressed-row td:not(:last-child){opacity:.55}
+  .raw-vs-gov{font-size:10.5px;color:var(--mute);margin-top:2px}
 </style>
 </head>
 <body>
@@ -433,16 +459,18 @@
         </div>
         <div class="tabs" style="padding:0 18px;margin-top:0">
           <div class="tab active" id="pd-tab-definition" onclick="pdSwitch('definition')">Definition</div>
-          <div class="tab" id="pd-tab-rules"   onclick="pdSwitch('rules')">Rules</div>
-          <div class="tab" id="pd-tab-scans"   onclick="pdSwitch('scans')">Scans</div>
-          <div class="tab" id="pd-tab-metrics" onclick="pdSwitch('metrics')">Metrics</div>
-          <div class="tab" id="pd-tab-issues"  onclick="pdSwitch('issues')">Issues</div>
+          <div class="tab" id="pd-tab-rules"      onclick="pdSwitch('rules')">Rules</div>
+          <div class="tab" id="pd-tab-scans"      onclick="pdSwitch('scans')">Scans</div>
+          <div class="tab" id="pd-tab-metrics"    onclick="pdSwitch('metrics')">Metrics</div>
+          <div class="tab" id="pd-tab-exceptions" onclick="pdSwitch('exceptions')">Exceptions</div>
+          <div class="tab" id="pd-tab-issues"     onclick="pdSwitch('issues')">Issues</div>
         </div>
         <div class="modal-body" style="max-height:65vh;overflow-y:auto">
           <div id="pd-panel-definition"></div>
           <div id="pd-panel-rules" class="hidden"></div>
           <div id="pd-panel-scans" class="hidden"></div>
           <div id="pd-panel-metrics" class="hidden"></div>
+          <div id="pd-panel-exceptions" class="hidden"></div>
           <div id="pd-panel-issues" class="hidden"></div>
         </div>
       </div>
@@ -482,6 +510,52 @@
         <div class="modal-foot">
           <button class="alt" onclick="closeBindModal()">Cancel</button>
           <button onclick="saveBindManual()">Add rule</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUPPRESS / GOVERNED EXCEPTION MODAL -->
+    <div class="modal-overlay" id="exc-modal" onclick="if(event.target===this)closeExcModal()">
+      <div class="modal" style="width:620px">
+        <div class="modal-head">
+          <strong id="exc-title">Suppress issue</strong>
+          <span class="api" id="exc-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeExcModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <p class="api" style="margin:0 0 10px">
+            Acknowledges this rule's violations against the <strong>governed score</strong>.
+            Issues still record (raw_score keeps counting them); governed_score
+            treats covered violations as PASS up to the optional ceiling.
+          </p>
+          <input type="hidden" id="exc-active-rule-id">
+          <div id="exc-rule-summary" class="api mono" style="background:#f8fafc;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:10px"></div>
+          <label>Reason</label>
+          <select id="exc-reason">
+            <option value="legacy_data">legacy_data — pre-existing rows that pre-date the rule</option>
+            <option value="business_accepted">business_accepted — known/approved business behavior</option>
+            <option value="in_progress">in_progress — data still being onboarded / cleaned up</option>
+            <option value="data_provider">data_provider — upstream system limitation</option>
+            <option value="other">other</option>
+          </select>
+          <label>Explanation</label>
+          <textarea id="exc-explanation" placeholder="Why is this acceptable?"></textarea>
+          <div class="row" style="gap:10px;margin-top:10px">
+            <div style="flex:1">
+              <label>Violation ceiling
+                <span class="api">— blank = unconditional. Above this many violations, the exception stops covering.</span>
+              </label>
+              <input type="number" id="exc-ceiling" min="0" step="1" placeholder="e.g. 12">
+            </div>
+            <div style="flex:1">
+              <label>Expires in (days)</label>
+              <input type="number" id="exc-days" value="90" min="1" max="365" step="1">
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeExcModal()">Cancel</button>
+          <button onclick="saveException()">Save exception</button>
         </div>
       </div>
     </div>
@@ -841,38 +915,166 @@ function pct(v){return v==null?'—':(Number(v)*100).toFixed(1)+'%'}
 function fmtNum(v){if(v==null)return '—';if(typeof v==='number')return Number.isInteger(v)?v.toLocaleString():v.toFixed(3);return v}
 function trunc(s,n){s=String(s??'');return s.length>n?s.slice(0,n)+'…':s}
 
+let _profileViewMode='classic';  // 'classic' | 'dense'
+let _profileLastLoad=null;
+
 async function loadProfile(scanId){
   try{
     const resp=await api('GET','/api/v1/products/data-quality/scans/'+scanId+'/profiles');
-    const s=resp.scan;
-    $('profile-card').classList.remove('hidden');
-    $('profile-title').textContent=s.schema_name+'.'+s.table_name;
-    $('profile-meta').textContent=`scan #${s.id} · ${s.row_count?.toLocaleString()??'?'} rows · ${resp.profiles.length} columns`;
-    if(!resp.profiles.length){
-      $('profile-tb').innerHTML='<tr><td class="empty" colspan="10">No profile rows.</td></tr>';
-      return;
-    }
-    $('profile-tb').innerHTML=resp.profiles.map(p=>{
-      const tps=Array.isArray(p.top_patterns)?p.top_patterns.slice(0,3)
-        .map(x=>`${x.pattern} (${x.count})`).join(' · '):'';
-      const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,40)}</span>`:'—';
-      const tooltip=tps?` title="top: ${tps.replace(/"/g,'&quot;')}"`:'';
-      return `<tr${tooltip}>
-        <td class="mono">${p.column_name}</td>
-        <td class="cell-mute">${p.type_category||'—'}</td>
-        <td><span class="pill pill-ok" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
-        <td class="num">${pct(p.null_rate)}</td>
-        <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
-        <td class="num">${fmtNum(p.mean_value)}</td>
-        <td class="num">${fmtNum(p.stddev_value)}</td>
-        <td class="num">${fmtNum(p.avg_length)}</td>
-        <td>${dom}</td>
-        <td class="num">${pct(p.pattern_conformance_rate)}</td>
-      </tr>`;
-    }).join('');
-    // Scroll the detail card into view so the user sees what they clicked.
-    $('profile-card').scrollIntoView({behavior:'smooth',block:'start'});
+    // Try to pull active rules + latest issues for this scan to power the
+    // dense view's per-column rule indicators. Best-effort — failure here
+    // just means the dense view shows blank rule columns.
+    let activeRules=[]; let issues=[];
+    try{
+      if(resp.scan && resp.scan.profile_id){
+        const ar=await api('GET','/api/v1/products/data-quality/active-rules?profile_id='+resp.scan.profile_id);
+        activeRules=ar.items||[];
+      }
+      const ii=await api('GET','/api/v1/products/data-quality/issues/scan/'+scanId);
+      issues=ii.items||[];
+    }catch(e){/* non-fatal */}
+    _profileLastLoad={scan:resp.scan, profiles:resp.profiles||[], activeRules, issues};
+    renderProfileView();
   }catch(e){toast(e.message,false)}
+}
+
+function setProfileViewMode(mode){
+  _profileViewMode=mode;
+  renderProfileView();
+}
+
+function renderProfileView(){
+  if(!_profileLastLoad)return;
+  const {scan, profiles, activeRules, issues}=_profileLastLoad;
+  $('profile-card').classList.remove('hidden');
+  $('profile-title').textContent=scan.schema_name+'.'+scan.table_name;
+  const metaBase=`scan #${scan.id} · ${scan.row_count?.toLocaleString()??'?'} rows · ${profiles.length} columns`;
+  $('profile-meta').innerHTML=`${metaBase}
+    <span class="view-toggle" style="margin-left:14px">
+      <button class="${_profileViewMode==='classic'?'active':''}" onclick="setProfileViewMode('classic')">Classic</button>
+      <button class="${_profileViewMode==='dense'?'active':''}" onclick="setProfileViewMode('dense')">Dense</button>
+    </span>`;
+  if(!profiles.length){
+    document.getElementById('profile-tb').innerHTML='<tr><td class="empty" colspan="10">No profile rows.</td></tr>';
+    return;
+  }
+  if(_profileViewMode==='classic') renderProfileClassic(profiles);
+  else                              renderProfileDense(profiles, activeRules, issues);
+  $('profile-card').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function renderProfileClassic(profiles){
+  // Restore the original column order in case the dense view rewrote the head.
+  const tableEl=document.querySelector('#profile-card table');
+  tableEl.querySelector('thead').innerHTML=`<tr>
+    <th>Column</th><th style="width:80px">Type</th>
+    <th style="width:110px">Inferred</th>
+    <th class="num" style="width:70px">Null %</th>
+    <th class="num" style="width:80px">Distinct</th>
+    <th class="num" style="width:80px">Mean</th>
+    <th class="num" style="width:80px">StdDev</th>
+    <th class="num" style="width:70px">Avg len</th>
+    <th>Pattern</th>
+    <th class="num" style="width:70px">Match %</th>
+  </tr>`;
+  $('profile-tb').innerHTML=profiles.map(p=>{
+    const tps=Array.isArray(p.top_patterns)?p.top_patterns.slice(0,3)
+      .map(x=>`${x.pattern} (${x.count})`).join(' · '):'';
+    const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,40)}</span>`:'—';
+    const tooltip=tps?` title="top: ${tps.replace(/"/g,'&quot;')}"`:'';
+    return `<tr${tooltip}>
+      <td class="mono">${escapeHtml(p.column_name)}</td>
+      <td class="cell-mute">${p.type_category||'—'}</td>
+      <td><span class="pill pill-ok" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
+      <td class="num">${pct(p.null_rate)}</td>
+      <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
+      <td class="num">${fmtNum(p.mean_value)}</td>
+      <td class="num">${fmtNum(p.stddev_value)}</td>
+      <td class="num">${fmtNum(p.avg_length)}</td>
+      <td>${dom}</td>
+      <td class="num">${pct(p.pattern_conformance_rate)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderProfileDense(profiles, activeRules, issues){
+  // Build per-column rule and issue indices for fast lookup.
+  const rulesByCol={};
+  for(const r of (activeRules||[])){
+    (rulesByCol[r.column_name]=rulesByCol[r.column_name]||[]).push(r);
+  }
+  const issuesByCol={};
+  for(const i of (issues||[])){
+    (issuesByCol[i.column_name]=issuesByCol[i.column_name]||[]).push(i);
+  }
+  const tableEl=document.querySelector('#profile-card table');
+  tableEl.querySelector('thead').innerHTML=`<tr>
+    <th style="width:60px" class="num">#</th>
+    <th>Column</th>
+    <th style="width:140px">Declared / inferred</th>
+    <th style="width:160px" title="Null / Distinct / Repeated mix across the column's rows">Value distribution</th>
+    <th class="num" style="width:80px">Rows</th>
+    <th class="num" style="width:90px">Null %</th>
+    <th class="num" style="width:80px">Distinct</th>
+    <th class="num" style="width:90px">Length / declared</th>
+    <th>Dominant pattern</th>
+    <th style="width:130px">Rules · status</th>
+  </tr>`;
+  $('profile-tb').innerHTML=profiles.map(p=>{
+    const total=Math.max(1, Number(p.row_count)||1);
+    const nullN=Number(p.null_count)||0;
+    const distN=Number(p.distinct_count)||0;
+    const nonNull=Math.max(0, total-nullN);
+    // Repeated rows = non-null rows that share a value with another row.
+    // Approximation: repeated_count = max(0, nonNull - distinctCount). Distinct
+    // bar therefore shows the share of the column that is "unique non-null".
+    const repeated=Math.max(0, nonNull-distN);
+    const distinctVisible=Math.max(0, nonNull-repeated);
+    const wNull=nullN/total*100;
+    const wDist=distinctVisible/total*100;
+    const wRep=repeated/total*100;
+    const distBar=`<div class="dense-bar"
+        title="null ${nullN.toLocaleString()} · distinct ${distN.toLocaleString()} · repeated ${repeated.toLocaleString()}">
+      <span class="dense-null" style="width:${wNull.toFixed(2)}%"></span>
+      <span class="dense-distinct" style="width:${wDist.toFixed(2)}%"></span>
+      <span class="dense-non-distinct" style="width:${wRep.toFixed(2)}%"></span>
+    </div>`;
+    // Type-gap flag: declared_length stashed on raw_metrics by the profiler.
+    const declared=(p.raw_metrics&&p.raw_metrics.declared_length)||null;
+    const maxLen=Number(p.max_length)||null;
+    let gapFlag='';
+    if(declared && maxLen!=null && declared>=20 && maxLen*4<=declared){
+      gapFlag=`<span class="typegap-flag" title="Declared ${declared} chars but max observed is ${maxLen}">over-allocated</span>`;
+    }
+    const lenCell=(maxLen!=null||declared)
+      ? `${maxLen!=null?maxLen:'—'}${declared?` / ${declared}`:''}${gapFlag}`
+      : '—';
+    // Per-column rule indicators.
+    const rules=rulesByCol[p.column_name]||[];
+    const colIssues=issuesByCol[p.column_name]||[];
+    const issueByRuleId={};
+    for(const i of colIssues) issueByRuleId[i.active_rule_id]=i;
+    const ruleDots=rules.length?rules.map(r=>{
+      const i=issueByRuleId[r.id];
+      const cls=!i?'ri-error':(i.status==='pass'?'ri-pass':(i.status==='fail'?'ri-fail':'ri-error'));
+      const tip=`${r.c_concept} (${r.c_rule_type})${i?' — '+i.status:' — not yet validated'}`;
+      return `<span class="dense-rule-icon ${cls}" title="${escapeHtml(tip)}"></span>`;
+    }).join('') : '<span class="cell-mute">—</span>';
+    const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,30)}</span>`:'—';
+    return `<tr>
+      <td class="num cell-mute">${p.ordinal_position??'—'}</td>
+      <td class="mono">${escapeHtml(p.column_name)}</td>
+      <td><span class="cell-mute mono">${escapeHtml(p.declared_data_type||'—')}</span><br>
+        <span class="pill" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
+      <td>${distBar}</td>
+      <td class="num">${total.toLocaleString()}</td>
+      <td class="num">${pct(p.null_rate)}</td>
+      <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
+      <td class="num">${lenCell}</td>
+      <td>${dom}</td>
+      <td>${ruleDots} <span class="api">${rules.length||''}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 function closeProfile(){$('profile-card').classList.add('hidden')}
@@ -1253,16 +1455,17 @@ function closeProfileDetail(){
 
 function pdSwitch(name){
   _pdActiveTab=name;
-  ['definition','rules','scans','metrics','issues'].forEach(n=>{
+  ['definition','rules','scans','metrics','exceptions','issues'].forEach(n=>{
     $('pd-tab-'+n).classList.toggle('active', n===name);
     $('pd-panel-'+n).classList.toggle('hidden', n!==name);
   });
   if(!_pdProfile)return;
-  if(name==='definition') pdRenderDefinition();
-  if(name==='rules')      pdRenderRules();
-  if(name==='scans')      pdRenderScans();
-  if(name==='metrics')    pdRenderMetrics();
-  if(name==='issues')     pdRenderIssues();
+  if(name==='definition')  pdRenderDefinition();
+  if(name==='rules')       pdRenderRules();
+  if(name==='scans')       pdRenderScans();
+  if(name==='metrics')     pdRenderMetrics();
+  if(name==='exceptions')  pdRenderExceptions();
+  if(name==='issues')      pdRenderIssues();
 }
 
 function pdRenderDefinition(){
@@ -1481,19 +1684,31 @@ async function pdRenderMetrics(){
     }
     const dimMeta={completeness:'#10b981',validity:'#3b82f6',uniqueness:'#8b5cf6',overall:'#1d4ed8'};
     const donutHtml=(d)=>{
-      const pct=d.pass_rate==null?0:Math.max(0,Math.min(100,d.pass_rate*100));
+      // Donut + tier band track GOVERNED score (the team's acknowledged truth).
+      const gov=d.governed_score==null?(d.pass_rate||0):d.governed_score;
+      const raw=d.raw_score==null?gov:d.raw_score;
+      const pct=Math.max(0,Math.min(100,gov*100));
       const col=dimMeta[d.dimension]||'#1d4ed8';
       const tier=`<span class="pill pill-${d.tier}">${d.tier.replace('_',' ')}</span>`;
       const delta=fmtDelta(d.delta);
+      // Show raw next to governed only when they actually differ — otherwise
+      // the line is noise.
+      const rawLine=Math.abs(raw-gov)>0.0005
+        ? `<div class="raw-vs-gov">raw: ${(raw*100).toFixed(1)}% · governed: ${(gov*100).toFixed(1)}%</div>`
+        : '';
       return `<div class="donut-card">
         <div class="donut" style="--pct:${pct.toFixed(1)};--col:${col}"><span>${pct.toFixed(0)}%</span></div>
         <div class="donut-meta">
           <div class="name">${d.dimension}</div>
           <div class="pct">${(pct).toFixed(1)}%</div>
           <div class="sub">${tier} · ${d.rule_count} rule(s) · ${delta}</div>
+          ${rawLine}
         </div></div>`;
     };
     const donuts=[m.overall, ...(m.dimensions||[])].filter(Boolean).map(donutHtml).join('');
+    const excBadge=m.active_exception_count
+      ?`<span class="pill pill-suppressed" style="margin-left:8px">${m.active_exception_count} active exception${m.active_exception_count!==1?'s':''}</span>`
+      :'';
     const stackHtml=(d)=>{
       const total=Math.max(1,(d.pass_count||0)+(d.fail_count||0)+(d.error_count||0));
       // Within the dimension, classify pass_count rules into the dimension's own tier.
@@ -1519,8 +1734,14 @@ async function pdRenderMetrics(){
       const pr=r.pass_rate!=null?(Number(r.pass_rate)*100).toFixed(2)+'%':'—';
       const total=r.row_count!=null?Number(r.row_count).toLocaleString():'—';
       const failed=r.violation_count!=null?Number(r.violation_count).toLocaleString():'—';
-      return `<tr>
-        <td>${escapeHtml(r.concept||'')}</td>
+      const suppressBadge=r.suppressed?'<span class="pill pill-suppressed" style="margin-left:6px" title="An active exception covers this rule">suppressed</span>':'';
+      const rowClass=r.suppressed?' class="suppressed-row"':'';
+      // Show "Suppress…" only on FAIL rows that are not already suppressed.
+      const action=(r.status==='fail' && !r.suppressed)
+        ?`<button class="tiny" onclick="openSuppressModal(${r.active_rule_id},${JSON.stringify(r.column_name).replace(/"/g,'&quot;')},${JSON.stringify(r.concept).replace(/"/g,'&quot;')},${r.violation_count||0})">Suppress…</button>`
+        :'';
+      return `<tr${rowClass}>
+        <td>${escapeHtml(r.concept||'')}${suppressBadge}</td>
         <td class="cell-mute">${r.dimension}</td>
         <td class="num">${pr}</td>
         <td>${stat}</td>
@@ -1528,13 +1749,14 @@ async function pdRenderMetrics(){
         <td class="num">${failed}</td>
         <td class="mono">${escapeHtml(r.column_name||'')}</td>
         <td class="cell-mute">${sev}</td>
-        <td class="cell-mute">${escapeHtml(trunc(r.diagnostic_text||r.concept_description||'',80))}</td>
+        <td class="cell-mute">${escapeHtml(trunc(r.diagnostic_text||r.concept_description||'',80))}${action?'<br>'+action:''}</td>
       </tr>`;
     }).join('') : '<tr><td class="empty" colspan="9">No rules ran for the latest scan.</td></tr>';
 
     $('pd-panel-metrics').innerHTML=`
       <div style="padding:10px 14px;display:flex;align-items:center;gap:10px">
-        <span class="api">Latest scan #${m.scan_id} · raw scoring</span>
+        <span class="api">Latest scan #${m.scan_id} · raw vs governed</span>
+        ${excBadge}
         <button class="alt tiny" style="margin-left:auto" onclick="pdRecomputeScores(${m.scan_id})">Recompute</button>
       </div>
       <div style="padding:0 14px 14px"><div class="donut-grid">${donuts}</div></div>
@@ -1550,7 +1772,7 @@ async function pdRenderMetrics(){
           <th class="num" style="width:110px">Failed rows</th>
           <th>Column</th>
           <th style="width:80px">Severity</th>
-          <th>Diagnostic</th>
+          <th>Diagnostic / action</th>
         </tr></thead>
         <tbody>${ruleRows}</tbody>
       </table>`;
@@ -1575,6 +1797,117 @@ function fmtDelta(d){
 }
 
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+// ---- Step 5: Suppress / governed exceptions ----
+function openSuppressModal(activeRuleId, columnName, concept, currentViolations){
+  $('exc-active-rule-id').value=activeRuleId;
+  $('exc-rule-summary').innerHTML=`<strong>${escapeHtml(concept||'')}</strong> on <code>${escapeHtml(columnName||'')}</code> · current violations: <strong>${currentViolations.toLocaleString()}</strong>`;
+  $('exc-reason').value='legacy_data';
+  $('exc-explanation').value='';
+  $('exc-ceiling').value=currentViolations>0?currentViolations:'';
+  $('exc-days').value='90';
+  $('exc-modal').classList.add('show');
+}
+
+function closeExcModal(){$('exc-modal').classList.remove('show')}
+
+async function saveException(){
+  const active_rule_id=parseInt($('exc-active-rule-id').value,10);
+  const explanation=$('exc-explanation').value.trim();
+  if(!explanation){toast('Explanation is required',false);return}
+  const ceilingRaw=$('exc-ceiling').value.trim();
+  const ceiling=ceilingRaw===''?null:parseInt(ceilingRaw,10);
+  if(ceiling!==null && (isNaN(ceiling)||ceiling<0)){toast('Ceiling must be >= 0',false);return}
+  const days=parseInt($('exc-days').value,10)||90;
+  try{
+    await api('POST','/api/v1/products/data-quality/exceptions',{
+      profile_id:_pdProfile.id, active_rule_id,
+      reason_category:$('exc-reason').value,
+      explanation,
+      violation_count_ceiling:ceiling,
+      expires_in_days:days,
+    });
+    toast('Exception saved · scores recomputed');
+    closeExcModal();
+    if(_pdActiveTab==='metrics') pdRenderMetrics();
+    if(_pdActiveTab==='exceptions') pdRenderExceptions();
+  }catch(e){toast(e.message,false)}
+}
+
+async function pdRenderExceptions(){
+  $('pd-panel-exceptions').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
+  try{
+    const includeRevoked=window._pdShowRevoked?true:false;
+    const resp=await api('GET',`/api/v1/products/data-quality/exceptions/profile/${_pdProfile.id}?include_revoked=${includeRevoked}`);
+    const items=resp.items||[];
+    const rows=items.length?items.map(e=>{
+      const reason=`<span class="pill reason-${e.reason_category}">${escapeHtml(e.reason_category)}</span>`;
+      const expiresMs=new Date(e.expires_at).getTime()-Date.now();
+      const daysLeft=Math.ceil(expiresMs/86400000);
+      let statusPill;
+      if(e.status==='revoked') statusPill='<span class="pill pill-revoked">revoked</span>';
+      else if(e.status==='expired') statusPill='<span class="pill pill-expired">expired</span>';
+      else if(e.is_past_expiry) statusPill='<span class="pill pill-past_expiry" title="Beyond expires_at — treated as expired at read time">past expiry</span>';
+      else statusPill='<span class="pill pill-good">active</span>';
+      const expiry=`${fmtDt(e.expires_at)}${e.status==='active' && !e.is_past_expiry?` <span class="api">(${daysLeft}d left)</span>`:''}`;
+      const ceiling=e.violation_count_ceiling==null?'<span class="cell-mute">unconditional</span>':Number(e.violation_count_ceiling).toLocaleString();
+      const actions=(e.status==='active' && !e.is_past_expiry)
+        ?`<button class="tiny" onclick="extendException(${e.id})">+90d</button>
+          <button class="tiny" onclick="revokeException(${e.id})">Revoke</button>`
+        :'';
+      return `<tr>
+        <td>${reason}</td>
+        <td class="mono">${escapeHtml(e.column_name)}</td>
+        <td>${escapeHtml(e.c_concept)} <span class="cell-mute">(${e.c_dimension})</span></td>
+        <td class="cell-mute">${escapeHtml(trunc(e.explanation||'',80))}</td>
+        <td class="num">${ceiling}</td>
+        <td>${statusPill}</td>
+        <td>${expiry}</td>
+        <td style="white-space:nowrap">${actions}</td>
+      </tr>`;
+    }).join('') : '<tr><td class="empty" colspan="8">No exceptions yet. From the Metrics tab, click <strong>Suppress…</strong> on a failing rule to add one.</td></tr>';
+    $('pd-panel-exceptions').innerHTML=`
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:10px">
+        <span class="api">Exceptions acknowledge legitimate violations. They affect <strong>governed score</strong> only — raw_score still counts them.</span>
+        <label style="display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11px">
+          <input type="checkbox" ${includeRevoked?'checked':''} onchange="window._pdShowRevoked=this.checked;pdRenderExceptions()">
+          Show revoked / expired
+        </label>
+      </div>
+      <table>
+        <thead><tr>
+          <th style="width:140px">Reason</th>
+          <th style="width:130px">Column</th>
+          <th>Rule</th>
+          <th>Explanation</th>
+          <th class="num" style="width:110px">Ceiling</th>
+          <th style="width:110px">Status</th>
+          <th style="width:200px">Expires</th>
+          <th style="width:130px"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }catch(e){$('pd-panel-exceptions').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
+}
+
+async function extendException(id){
+  try{
+    await api('PUT','/api/v1/products/data-quality/exceptions/'+id+'/extend',{days:90});
+    toast('Extended +90 days');
+    pdRenderExceptions();
+  }catch(e){toast(e.message,false)}
+}
+
+async function revokeException(id){
+  const reason=prompt('Revoke reason (optional):','');
+  if(reason===null) return;
+  try{
+    await api('POST','/api/v1/products/data-quality/exceptions/'+id+'/revoke',{reason:reason||null});
+    toast('Exception revoked · scores recomputed');
+    pdRenderExceptions();
+    if(_pdActiveTab==='metrics') pdRenderMetrics();
+  }catch(e){toast(e.message,false)}
+}
 
 async function pdRenderIssues(){
   $('pd-panel-issues').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
