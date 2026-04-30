@@ -1,0 +1,1879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IDQP — Data Quality (standalone)</title>
+<style>
+  :root{--bg:#f7f8fa;--ink:#0f172a;--mute:#64748b;--line:#e2e8f0;--blue:#1d4ed8;--ok:#059669;--warn:#d97706;--err:#dc2626}
+  *{box-sizing:border-box}
+  body{margin:0;font:13px/1.5 -apple-system,Segoe UI,sans-serif;color:var(--ink);background:var(--bg)}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:12px 20px;display:flex;align-items:center;gap:14px}
+  header h1{font-size:14px;margin:0}
+  header .who{margin-left:auto;font-size:12px;color:var(--mute)}
+  main{padding:20px;max-width:1100px;margin:0 auto}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+  label{display:block;font-size:11px;color:var(--mute);margin-bottom:4px}
+  input,select,button{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:#fff}
+  button{cursor:pointer;background:var(--blue);color:#fff;border-color:var(--blue)}
+  button.alt{background:#fff;color:var(--ink)}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+  .row > div{flex:1;min-width:180px}
+  table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{background:#f8fafc;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600}
+  .pill-ok{background:#dcfce7;color:#166534}
+  .pill-warn{background:#fef3c7;color:#92400e}
+  .pill-stale{background:#fee2e2;color:#991b1b}
+  .mono{font-family:ui-monospace,monospace}
+  .empty{text-align:center;padding:24px;color:var(--mute)}
+  .toast{position:fixed;top:14px;right:14px;padding:10px 14px;border-radius:6px;font-size:12px;display:none;color:#fff;z-index:99}
+  .toast.ok{background:var(--ok)}
+  .toast.err{background:var(--err)}
+  .hidden{display:none!important}
+  .api{font-size:11px;color:var(--mute)}
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--line);margin-bottom:16px}
+  .tab{padding:9px 16px;cursor:pointer;font-size:12px;font-weight:600;color:var(--mute);border-bottom:2px solid transparent}
+  .tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+  .pill-pending{background:#e0e7ff;color:#3730a3}
+  .pill-running{background:#fef3c7;color:#92400e}
+  .pill-success{background:#dcfce7;color:#166534}
+  .pill-failed{background:#fee2e2;color:#991b1b}
+  button.tiny{padding:3px 8px;font-size:11px;background:#fff;color:var(--ink);border-color:var(--line)}
+  button.tiny:hover{background:#f1f5f9}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  td.cell-mute{color:var(--mute)}
+  .pill-critical{background:#fee2e2;color:#991b1b}
+  .pill-high{background:#fed7aa;color:#9a3412}
+  .pill-medium{background:#fef3c7;color:#92400e}
+  .pill-low{background:#e0e7ff;color:#3730a3}
+  .pill-disabled{background:#e2e8f0;color:#475569}
+  .chip{display:inline-block;background:#f1f5f9;color:#334155;padding:2px 8px;border-radius:999px;font-size:11px;margin:1px 2px;font-family:ui-monospace,monospace}
+  .dim-section{margin-bottom:18px}
+  .dim-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .dim-header h3{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink)}
+  .dim-count{font-size:11px;color:var(--mute)}
+  .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;z-index:50;align-items:flex-start;justify-content:center;padding:60px 20px;overflow-y:auto}
+  .modal-overlay.show{display:flex}
+  .modal{background:#fff;border-radius:8px;width:560px;max-width:100%;padding:0;box-shadow:0 20px 40px rgba(15,23,42,.25)}
+  .modal-head{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .modal-body{padding:14px 18px}
+  .modal-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  .modal-body label{margin-top:10px}
+  .modal-body label:first-child{margin-top:0}
+  .modal-body textarea{width:100%;min-height:60px;font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;resize:vertical}
+  .modal-body input[type=text]{width:100%}
+  /* ---- Step 4: scoring / metrics ---- */
+  .pill-good{background:#dcfce7;color:#166534}
+  .pill-acceptable{background:#fef3c7;color:#92400e}
+  .pill-not_acceptable{background:#fee2e2;color:#991b1b}
+  .pill-no_rules{background:#e2e8f0;color:#475569}
+  .donut-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+  .donut-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;display:flex;align-items:center;gap:14px}
+  .donut{--pct:0;--col:#94a3b8;width:78px;height:78px;border-radius:50%;flex:0 0 auto;
+    background:conic-gradient(var(--col) calc(var(--pct)*1%), #e2e8f0 0);position:relative}
+  .donut::after{content:'';position:absolute;inset:8px;background:#fff;border-radius:50%}
+  .donut > span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:14px;font-weight:700;color:var(--ink);z-index:1}
+  .donut-meta{flex:1;min-width:0}
+  .donut-meta .name{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);margin-bottom:4px}
+  .donut-meta .pct{font-size:22px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+  .donut-meta .sub{font-size:11px;color:var(--mute);margin-top:2px}
+  .delta-up{color:var(--ok);font-weight:600}
+  .delta-down{color:var(--err);font-weight:600}
+  .delta-flat{color:var(--mute)}
+  .stack-bar{display:flex;height:14px;border-radius:6px;overflow:hidden;background:#f1f5f9;margin:6px 0 4px}
+  .stack-bar > span{display:block;height:100%}
+  .stack-good{background:#22c55e}
+  .stack-acceptable{background:#f59e0b}
+  .stack-not_acceptable{background:#ef4444}
+  .stack-no_rules{background:#cbd5e1}
+  .stack-row{display:grid;grid-template-columns:120px 1fr 200px;gap:10px;align-items:center;font-size:11px;margin-bottom:6px}
+  .stack-row .lbl{text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+  .stack-row .legend{color:var(--mute);font-variant-numeric:tabular-nums}
+  /* ---- dimension picker (Dictionary first-screen) ---- */
+  .dim-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .dim-tile{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;cursor:pointer;
+    transition:transform .15s, box-shadow .15s, border-color .15s}
+  .dim-tile:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(15,23,42,.08);border-color:#94a3b8}
+  .dim-tile h3{margin:0 0 6px;font-size:14px;letter-spacing:.04em;text-transform:uppercase}
+  .dim-tile .dim-blurb{color:var(--mute);font-size:12px;line-height:1.5;margin:0 0 10px}
+  .dim-tile .dim-pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;background:#eef2ff;color:#3730a3}
+  .dim-back{cursor:pointer;color:var(--blue);font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
+  /* ---- table preview (sample rows) ---- */
+  .preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .preview-cols-card{padding:0}
+  .preview-rows-card{padding:0;overflow-x:auto}
+  .preview-rows-card table{font-family:ui-monospace,monospace;font-size:11px}
+  .preview-rows-card td{white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+  @media (max-width: 900px){.preview-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<header>
+  <h1>IDQP — Data Quality (standalone)</h1>
+  <span class="api mono" id="api-label"></span>
+  <span class="who" id="who"></span>
+  <button class="alt" id="logout-btn" onclick="doLogout()" style="display:none">Logout</button>
+</header>
+
+<main>
+
+  <!-- LOGIN -->
+  <div class="card" id="login-card">
+    <h3 style="margin-top:0">Sign in</h3>
+    <p class="api">Uses the same Keycloak-backed login as the main portal. Your tenant must have <span class="mono">data_quality</span> enabled in <span class="mono">t_tenant_products</span>.</p>
+    <div class="row">
+      <div>
+        <label>API base</label>
+        <input id="api-base" value="http://localhost:8000">
+      </div>
+      <div>
+        <label>Email / username</label>
+        <input id="l-user" autocomplete="username">
+      </div>
+      <div>
+        <label>Password</label>
+        <input id="l-pass" type="password" autocomplete="current-password">
+      </div>
+      <div style="flex:0">
+        <button onclick="doLogin()">Sign in</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden">
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Connection</label>
+          <select id="conn" onchange="loadTables()"></select>
+        </div>
+        <div style="flex:0">
+          <button class="alt" onclick="loadConnections()">Refresh connections</button>
+        </div>
+        <div style="flex:0">
+          <button class="alt" onclick="loadTables()">Reload tables</button>
+        </div>
+      </div>
+      <div id="meta" class="api" style="margin-top:8px"></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" id="tab-profiles" onclick="switchTab('profiles')">Profiles</div>
+      <div class="tab" id="tab-tables" onclick="switchTab('tables')">Sources</div>
+      <div class="tab" id="tab-scans" onclick="switchTab('scans')">All scans</div>
+      <div class="tab" id="tab-dictionary" onclick="switchTab('dictionary')">Dictionary</div>
+    </div>
+
+    <!-- PROFILES TAB -->
+    <div id="panel-profiles">
+      <div class="card" style="padding:12px 14px;margin-bottom:14px">
+        <div class="row">
+          <div style="flex:1">
+            <strong>Profile assets</strong> — a profile is the saved unit of DQ work for one source table.
+            <span class="api">It owns its rules, scan history, and scoring config.</span>
+          </div>
+          <div style="flex:0">
+            <button class="alt" onclick="loadProfiles()">Refresh</button>
+          </div>
+          <div style="flex:0">
+            <button onclick="openProfileEditor()">+ New profile</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr>
+            <th>Name</th>
+            <th style="width:130px">Location</th>
+            <th>Source</th>
+            <th style="width:130px">Sampling</th>
+            <th class="num" style="width:70px">Scans</th>
+            <th class="num" style="width:70px">Rules</th>
+            <th style="width:140px">Last scan</th>
+            <th style="width:200px"></th>
+          </tr></thead>
+          <tbody id="profiles-tb"><tr><td class="empty" colspan="8">Sign in to load profiles.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SOURCES TAB — browse schemas/tables, preview data, kick off profile creation -->
+    <div id="panel-tables" class="hidden">
+      <div class="card" style="padding:10px 12px;margin-bottom:10px">
+        <div class="row" style="gap:10px">
+          <div style="flex:1">
+            <label>Filter</label>
+            <input id="tbl-filter" placeholder="Filter by table name…"
+                   oninput="applyTableFilter()">
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr>
+            <th>Schema</th><th>Table</th>
+            <th style="width:120px">Status</th>
+            <th style="width:240px"></th>
+          </tr></thead>
+          <tbody id="tb"><tr><td class="empty" colspan="4">Sign in to load tables.</td></tr></tbody>
+        </table>
+      </div>
+      <p class="api">
+        Click <strong>Preview</strong> to inspect a table's columns and 10 sample rows
+        (live SELECT, never persisted). Click <strong>+ Profile</strong> to create a
+        DQ profile — semantic type is set during profile creation.
+      </p>
+    </div>
+
+    <!-- TABLE PREVIEW MODAL (live columns + sample rows) -->
+    <div class="modal-overlay" id="tp-modal" onclick="if(event.target===this)closeTablePreview()">
+      <div class="modal" style="width:1100px">
+        <div class="modal-head">
+          <strong id="tp-title">Table preview</strong>
+          <span class="api" id="tp-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="tpCreateProfile()">+ Profile from here</button>
+          <button class="alt tiny" onclick="closeTablePreview()">Close</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+          <p class="api" style="margin:0 0 10px">
+            Live preview — fetched on each open via <span class="mono">SELECT … LIMIT 10</span>.
+            Nothing is stored; column metadata reads from the source's <span class="mono">information_schema</span>.
+          </p>
+          <div class="preview-grid">
+            <div class="card preview-cols-card">
+              <div style="padding:10px 14px;border-bottom:1px solid var(--line)"><strong>Columns</strong> <span class="api" id="tp-col-count"></span></div>
+              <table>
+                <thead><tr>
+                  <th style="width:40px" class="num">#</th>
+                  <th>Name</th>
+                  <th style="width:140px">Type</th>
+                  <th style="width:80px">Null?</th>
+                </tr></thead>
+                <tbody id="tp-cols-tb"><tr><td class="empty" colspan="4">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="card preview-rows-card">
+              <div style="padding:10px 14px;border-bottom:1px solid var(--line)"><strong>Sample rows</strong> <span class="api" id="tp-row-count"></span></div>
+              <div id="tp-rows-wrap"><div class="empty" style="padding:24px">Loading…</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCANS TAB -->
+    <div id="panel-scans" class="hidden">
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr>
+            <th style="width:60px">#</th><th>Table</th><th style="width:110px">Status</th>
+            <th class="num" style="width:90px">Rows</th><th class="num" style="width:70px">Cols</th>
+            <th class="num" style="width:90px">Duration</th><th>Started</th>
+            <th style="width:90px"></th>
+          </tr></thead>
+          <tbody id="scan-tb"><tr><td class="empty" colspan="8">Loading scans…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card hidden" id="profile-card" style="padding:0">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+          <strong id="profile-title"></strong>
+          <span class="api" id="profile-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeProfile()">Close</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Column</th><th style="width:80px">Type</th>
+              <th style="width:110px">Inferred</th>
+              <th class="num" style="width:70px">Null %</th>
+              <th class="num" style="width:80px">Distinct</th>
+              <th class="num" style="width:80px">Mean</th>
+              <th class="num" style="width:80px">StdDev</th>
+              <th class="num" style="width:70px">Avg len</th>
+              <th>Pattern</th>
+              <th class="num" style="width:70px">Match %</th>
+            </tr></thead>
+            <tbody id="profile-tb"></tbody>
+          </table>
+          <p class="api" style="padding:10px 16px;margin:0">
+            DQ holds metadata only — no raw row values. Patterns use a tokenized
+            signature (<span class="mono">A</span> = upper, <span class="mono">a</span> = lower,
+            <span class="mono">9</span> = digit) plus known-format labels (EMAIL, UUID, ISO_DATE…).
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- DICTIONARY TAB — pick a dimension first, then see only its rules -->
+    <div id="panel-dictionary" class="hidden">
+      <div class="card" style="padding:12px 14px;margin-bottom:14px">
+        <div class="row">
+          <div style="flex:1">
+            <strong>Concept dictionary</strong> — drives which rules apply to which columns.
+            <span class="api">A column whose name matches a concept's synonyms inherits its rule.</span>
+          </div>
+          <div style="flex:0">
+            <button class="alt" onclick="seedDefaults()">Seed defaults</button>
+          </div>
+          <div style="flex:0">
+            <button onclick="openConceptModal()">+ Add concept</button>
+          </div>
+        </div>
+      </div>
+      <div id="dict-picker"></div>
+      <div id="dict-content" class="hidden"></div>
+    </div>
+
+    <!-- PROFILE EDITOR MODAL (create + edit) -->
+    <div class="modal-overlay" id="pe-modal" onclick="if(event.target===this)closeProfileEditor()">
+      <div class="modal" style="width:680px">
+        <div class="modal-head">
+          <strong id="pe-title">New profile</strong>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeProfileEditor()">Close</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="pe-id">
+          <div class="row" style="gap:10px">
+            <div style="flex:1">
+              <label>Name *</label>
+              <input type="text" id="pe-name" placeholder="e.g. customers (master)">
+            </div>
+            <div style="flex:1">
+              <label>Location (folder path)</label>
+              <input type="text" id="pe-location" placeholder="DQ_DWH/HEALTH_OPD">
+            </div>
+          </div>
+          <label>Description</label>
+          <textarea id="pe-description"></textarea>
+
+          <div id="pe-source-section">
+            <label style="margin-top:14px"><strong>Source binding</strong>
+              <span class="api" id="pe-source-locked-note" style="display:none">— immutable after create. Use Clone to retarget.</span>
+            </label>
+            <div class="row" style="gap:10px">
+              <div style="flex:1">
+                <label>Connection</label>
+                <select id="pe-conn"></select>
+              </div>
+              <div style="flex:1">
+                <label>Schema</label>
+                <input type="text" id="pe-schema" placeholder="public">
+              </div>
+              <div style="flex:1">
+                <label>Table</label>
+                <input type="text" id="pe-table" placeholder="users">
+              </div>
+            </div>
+            <div class="row" style="gap:10px;margin-top:8px">
+              <div style="flex:1">
+                <label>Semantic type
+                  <span class="api">— gates which rules the matcher proposes for this table.</span>
+                </label>
+                <select id="pe-semantic-type">
+                  <option value="">— unset (rules apply with conservative defaults) —</option>
+                  <option value="master_data">master_data</option>
+                  <option value="transaction">transaction</option>
+                  <option value="event_log">event_log</option>
+                  <option value="reference">reference</option>
+                  <option value="staging">staging</option>
+                  <option value="snapshot">snapshot</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <label style="margin-top:14px"><strong>Profile settings</strong></label>
+          <div class="row" style="gap:10px">
+            <div style="flex:1">
+              <label>Sampling</label>
+              <select id="pe-sampling" onchange="syncSamplingField()">
+                <option value="all">All rows (full analysis)</option>
+                <option value="first_n">First N rows (fast)</option>
+                <option value="random">Random N rows</option>
+              </select>
+            </div>
+            <div style="flex:1" id="pe-sample-size-wrap">
+              <label>Sample size</label>
+              <input type="number" id="pe-sample-size" placeholder="100000" min="1" step="1">
+            </div>
+          </div>
+          <div class="row" style="gap:14px;margin-top:8px">
+            <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="pe-drill"> Drill-down (sample violators on demand)</label>
+            <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="pe-ai" checked> AI matcher (Haiku) when fuzzy fails</label>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeProfileEditor()">Cancel</button>
+          <button onclick="saveProfile()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROFILE DETAIL MODAL (Definition / Rules / Scans / Metrics / Issues) -->
+    <div class="modal-overlay" id="pd-modal" onclick="if(event.target===this)closeProfileDetail()">
+      <div class="modal" style="width:1100px">
+        <div class="modal-head">
+          <strong id="pd-title">Profile</strong>
+          <span class="api" id="pd-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="pdRunScan()">Scan now</button>
+          <button class="alt tiny" onclick="pdEdit()">Edit</button>
+          <button class="alt tiny" onclick="pdClone()">Clone</button>
+          <button class="alt tiny" onclick="closeProfileDetail()">Close</button>
+        </div>
+        <div class="tabs" style="padding:0 18px;margin-top:0">
+          <div class="tab active" id="pd-tab-definition" onclick="pdSwitch('definition')">Definition</div>
+          <div class="tab" id="pd-tab-rules"   onclick="pdSwitch('rules')">Rules</div>
+          <div class="tab" id="pd-tab-scans"   onclick="pdSwitch('scans')">Scans</div>
+          <div class="tab" id="pd-tab-metrics" onclick="pdSwitch('metrics')">Metrics</div>
+          <div class="tab" id="pd-tab-issues"  onclick="pdSwitch('issues')">Issues</div>
+        </div>
+        <div class="modal-body" style="max-height:65vh;overflow-y:auto">
+          <div id="pd-panel-definition"></div>
+          <div id="pd-panel-rules" class="hidden"></div>
+          <div id="pd-panel-scans" class="hidden"></div>
+          <div id="pd-panel-metrics" class="hidden"></div>
+          <div id="pd-panel-issues" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MANUAL BIND-RULE MODAL -->
+    <div class="modal-overlay" id="bind-modal" onclick="if(event.target===this)closeBindModal()">
+      <div class="modal" style="width:560px">
+        <div class="modal-head">
+          <strong>Add rule manually</strong>
+          <span class="api" id="bind-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeBindModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <p class="api" style="margin:0 0 10px">
+            Bind a concept directly to a column on this profile, bypassing the matcher.
+            The rule lands as <span class="mono">auto_applied</span>; the next scan picks it up.
+          </p>
+          <label>Column</label>
+          <select id="bind-column"></select>
+          <div class="row" style="gap:10px;margin-top:10px">
+            <div style="flex:1">
+              <label>Dimension</label>
+              <select id="bind-dimension" onchange="bindRefreshConcepts()">
+                <option value="">— any —</option>
+                <option value="completeness">completeness</option>
+                <option value="validity">validity</option>
+                <option value="uniqueness">uniqueness</option>
+              </select>
+            </div>
+            <div style="flex:2">
+              <label>Concept</label>
+              <select id="bind-concept"></select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeBindModal()">Cancel</button>
+          <button onclick="saveBindManual()">Add rule</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ISSUES MODAL -->
+    <div class="modal-overlay" id="issues-modal" onclick="if(event.target===this)closeIssues()">
+      <div class="modal" style="width:1000px">
+        <div class="modal-head">
+          <strong id="issues-title">Issues</strong>
+          <span class="api" id="issues-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeIssues()">Close</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+          <table>
+            <thead><tr>
+              <th>Column</th><th style="width:90px">Dim</th>
+              <th>Concept</th><th style="width:110px">Rule</th>
+              <th style="width:80px">Severity</th>
+              <th style="width:80px">Status</th>
+              <th class="num" style="width:100px">Violations</th>
+              <th class="num" style="width:80px">Rate</th>
+              <th>Diagnostic / patterns</th>
+            </tr></thead>
+            <tbody id="issues-tb"><tr><td class="empty" colspan="9">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- RULES MODAL -->
+    <div class="modal-overlay" id="rules-modal" onclick="if(event.target===this)closeRules()">
+      <div class="modal" style="width:880px">
+        <div class="modal-head">
+          <strong id="rules-title">Active rules</strong>
+          <span class="api" id="rules-meta"></span>
+          <button class="alt tiny" style="margin-left:auto" onclick="runPreview()">Preview</button>
+          <button class="tiny" onclick="runApply()">Apply</button>
+          <button class="alt tiny" onclick="closeRules()">Close</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+          <div id="rules-warning" class="api" style="display:none;color:var(--warn);margin-bottom:8px"></div>
+          <table>
+            <thead><tr>
+              <th>Column</th><th style="width:90px">Dim</th>
+              <th>Concept</th><th style="width:110px">Rule</th>
+              <th style="width:80px">Conf</th>
+              <th style="width:130px">Status</th>
+              <th>Why</th>
+              <th style="width:170px"></th>
+            </tr></thead>
+            <tbody id="rules-tb"><tr><td class="empty" colspan="8">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT EDITOR MODAL -->
+    <div class="modal-overlay" id="concept-modal" onclick="if(event.target===this)closeConceptModal()">
+      <div class="modal">
+        <div class="modal-head">
+          <strong id="concept-modal-title">Add concept</strong>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeConceptModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="cm-id">
+          <div class="row" style="gap:10px">
+            <div style="flex:1">
+              <label>Dimension</label>
+              <select id="cm-dimension">
+                <option value="completeness">completeness</option>
+                <option value="validity">validity</option>
+                <option value="uniqueness">uniqueness</option>
+              </select>
+            </div>
+            <div style="flex:1">
+              <label>Concept name</label>
+              <input type="text" id="cm-concept" placeholder="e.g. email">
+            </div>
+          </div>
+          <label>Synonyms (comma-separated column-name patterns)</label>
+          <input type="text" id="cm-synonyms" placeholder="email, e_mail, user_email">
+          <div class="row" style="gap:10px">
+            <div style="flex:1">
+              <label>Rule type</label>
+              <select id="cm-rule-type" onchange="syncParameterField()">
+                <option value="not_null">not_null</option>
+                <option value="max_null_rate">max_null_rate</option>
+                <option value="no_pseudo_nulls">no_pseudo_nulls</option>
+                <option value="unique">unique</option>
+                <option value="format_regex">format_regex</option>
+              </select>
+            </div>
+            <div style="flex:1">
+              <label>Severity</label>
+              <select id="cm-severity">
+                <option value="critical">critical</option>
+                <option value="high">high</option>
+                <option value="medium" selected>medium</option>
+                <option value="low">low</option>
+              </select>
+            </div>
+          </div>
+          <div id="cm-param-wrap">
+            <label id="cm-param-label">Parameter</label>
+            <input type="text" id="cm-parameter" placeholder="—">
+            <div class="api" id="cm-param-hint"></div>
+          </div>
+          <label>Applies to semantic types (leave empty = any)</label>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="master_data"> master_data</label>
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="transaction"> transaction</label>
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="event_log"> event_log</label>
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="reference"> reference</label>
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="staging"> staging</label>
+            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="snapshot"> snapshot</label>
+          </div>
+          <label>Notes (free text — also used as LLM context)</label>
+          <textarea id="cm-notes"></textarea>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:10px"><input type="checkbox" id="cm-enabled" checked> Enabled</label>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeConceptModal()">Cancel</button>
+          <button onclick="saveConcept()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const SEMANTIC_TYPES=['master_data','transaction','event_log','reference','staging','snapshot'];
+let token=localStorage.getItem('dq_token')||'';
+let user=JSON.parse(localStorage.getItem('dq_user')||'null');
+let API=localStorage.getItem('dq_api')||'http://localhost:8000';
+
+function $(id){return document.getElementById(id)}
+function toast(msg,ok=true){const t=$('toast');t.textContent=msg;t.className='toast '+(ok?'ok':'err');t.style.display='block';setTimeout(()=>t.style.display='none',3500)}
+function fmtDt(d){return d?new Date(d).toLocaleString():'—'}
+
+async function api(method, path, body){
+  const opt={method, headers:{'Content-Type':'application/json'}};
+  if(token)opt.headers.Authorization='Bearer '+token;
+  if(body)opt.body=JSON.stringify(body);
+  const r=await fetch(API+path, opt);
+  if(!r.ok){
+    let detail=r.statusText;
+    try{const j=await r.json();detail=j.detail||detail}catch(e){}
+    throw new Error(typeof detail==='string'?detail:JSON.stringify(detail));
+  }
+  const t=await r.text();return t?JSON.parse(t):null;
+}
+
+async function doLogin(){
+  API=$('api-base').value.replace(/\/$/,'');
+  const username=$('l-user').value.trim();
+  const password=$('l-pass').value;
+  if(!username||!password){toast('Email and password required',false);return}
+  try{
+    const r=await fetch(API+'/api/v1/platform/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'Login failed')}
+    const d=await r.json();
+    token=d.access_token;user=d.user;
+    localStorage.setItem('dq_token',token);
+    localStorage.setItem('dq_user',JSON.stringify(user));
+    localStorage.setItem('dq_api',API);
+    enterApp();
+  }catch(e){toast(e.message,false)}
+}
+
+function doLogout(){localStorage.clear();location.reload()}
+
+function enterApp(){
+  $('login-card').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('logout-btn').style.display='';
+  $('who').textContent=(user.email||'')+(user.platform_role?' · '+user.platform_role:'');
+  $('api-label').textContent=API;
+  // Profiles is the new default home. Connections + Sources load on demand
+  // when the user clicks the Sources tab.
+  loadProfiles();
+  loadConnections();
+}
+
+async function loadConnections(){
+  try{
+    const conns=await api('GET','/api/v1/products/data-quality/connections/');
+    const sel=$('conn');
+    if(!conns.length){
+      sel.innerHTML='<option value="">— no connections —</option>';
+      $('tb').innerHTML='<tr><td class="empty" colspan="6">No connections. Add one in the main portal first.</td></tr>';
+      return;
+    }
+    sel.innerHTML=conns.map(c=>`<option value="${c.id}">${c.db_type} · ${c.host}${c.database?' / '+c.database:''}</option>`).join('');
+    loadTables();
+  }catch(e){
+    if(/403|not enabled/i.test(e.message)){
+      $('tb').innerHTML=`<tr><td class="empty" colspan="6">${e.message}<br><br>Run this on the DB to enable data_quality for your tenant:<br><br><code class="mono" style="font-size:11px">INSERT INTO t_tenant_products (tenant_id, product_id, enabled, enabled_by)<br>SELECT t.id, p.id, true, (SELECT id FROM t_platform_admins LIMIT 1)<br>FROM t_tenants t CROSS JOIN t_products p WHERE p.slug='data_quality'<br>ON CONFLICT (tenant_id, product_id) DO UPDATE SET enabled=true, disabled_at=NULL;</code></td></tr>`;
+    }else{
+      toast(e.message,false);
+    }
+  }
+}
+
+let _tableItems=[];  // last-loaded raw items, used by the filter/batch-scan
+let _connMeta={};    // {db_type, default_schema} of the active connection
+
+async function loadTables(){
+  const cid=$('conn').value;
+  if(!cid)return;
+  $('tb').innerHTML='<tr><td class="empty" colspan="4">Loading…</td></tr>';
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/tables/connections/'+cid);
+    _connMeta={db_type:resp.db_type, default_schema:resp.default_schema};
+    _tableItems=resp.items||[];
+    $('meta').innerHTML=`Connection type: <strong>${resp.db_type}</strong> · default schema: <strong class="mono">${resp.default_schema}</strong>`+
+      (resp.source_error?` · <span style="color:var(--err)">source error: ${resp.source_error}</span>`:'');
+    applyTableFilter();
+  }catch(e){
+    _tableItems=[];
+    $('tb').innerHTML=`<tr><td class="empty" colspan="4">${e.message}</td></tr>`;
+  }
+}
+
+function _filteredTables(){
+  const q=($('tbl-filter').value||'').trim().toLowerCase();
+  return _tableItems.filter(it=>{
+    if(!it.live) return false;  // hide stale assignments — type-tagging moved to profile creation
+    if(q && !(`${it.schema_name}.${it.table_name}`.toLowerCase().includes(q)))return false;
+    return true;
+  });
+}
+
+function applyTableFilter(){
+  const cid=$('conn').value;
+  const items=_filteredTables();
+  if(!_tableItems.length){
+    $('tb').innerHTML='<tr><td class="empty" colspan="4">No tables found.</td></tr>';
+    return;
+  }
+  if(!items.length){
+    $('tb').innerHTML='<tr><td class="empty" colspan="4">No tables match the current filter.</td></tr>';
+    return;
+  }
+  $('tb').innerHTML=items.map(it=>{
+    const safeS=String(it.schema_name).replace(/'/g,"\\'");
+    const safeT=String(it.table_name).replace(/'/g,"\\'");
+    const status=`<span class="pill pill-ok">live</span>`;
+    return `<tr>
+      <td class="mono">${it.schema_name}</td>
+      <td class="mono">${it.table_name}</td>
+      <td>${status}</td>
+      <td style="white-space:nowrap">
+        <button class="tiny" onclick="openTablePreview('${cid}','${safeS}','${safeT}')">Preview</button>
+        <button class="tiny" onclick="openProfileForSource('${cid}','${safeS}','${safeT}')">+ Profile</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ---- Table preview (live columns + sample rows) ----
+let _tpCtx=null;
+async function openTablePreview(connectionId, schema, table){
+  _tpCtx={connection_id:connectionId, schema_name:schema, table_name:table};
+  $('tp-title').textContent='Preview — '+schema+'.'+table;
+  $('tp-meta').textContent='live · 10 rows · not persisted';
+  $('tp-cols-tb').innerHTML='<tr><td class="empty" colspan="4">Loading…</td></tr>';
+  $('tp-rows-wrap').innerHTML='<div class="empty" style="padding:24px">Loading…</div>';
+  $('tp-col-count').textContent='';
+  $('tp-row-count').textContent='';
+  $('tp-modal').classList.add('show');
+  try{
+    const url=`/api/v1/products/data-quality/tables/connections/${connectionId}/preview?schema_name=${encodeURIComponent(schema)}&table_name=${encodeURIComponent(table)}&limit=10`;
+    const r=await api('GET',url);
+    const cols=r.columns||[];
+    $('tp-col-count').textContent=cols.length?`(${cols.length})`:'';
+    $('tp-cols-tb').innerHTML=cols.length?cols.map(c=>`<tr>
+      <td class="num">${c.ordinal}</td>
+      <td class="mono">${escapeHtml(c.name)}</td>
+      <td class="mono cell-mute">${escapeHtml(c.data_type||'')}</td>
+      <td class="cell-mute">${c.nullable?'YES':'NO'}</td>
+    </tr>`).join('') : '<tr><td class="empty" colspan="4">No columns.</td></tr>';
+    const rows=r.rows||[]; const rowCols=r.row_columns||[];
+    $('tp-row-count').textContent=rows.length?`(${rows.length} sample row${rows.length!==1?'s':''})`:'';
+    if(!rows.length){
+      $('tp-rows-wrap').innerHTML='<div class="empty" style="padding:24px">No rows returned.'+(r.error?' Error: '+escapeHtml(r.error):'')+'</div>';
+    }else{
+      const head='<thead><tr>'+rowCols.map(c=>`<th>${escapeHtml(c)}</th>`).join('')+'</tr></thead>';
+      const body='<tbody>'+rows.map(row=>'<tr>'+row.map(v=>{
+        const s=v===null||v===undefined?'<span class="cell-mute">NULL</span>':escapeHtml(String(v));
+        return `<td title="${typeof v==='string'?escapeHtml(v):''}">${s}</td>`;
+      }).join('')+'</tr>').join('')+'</tbody>';
+      $('tp-rows-wrap').innerHTML=`<table>${head}${body}</table>`;
+    }
+  }catch(e){
+    $('tp-cols-tb').innerHTML=`<tr><td class="empty" colspan="4">${escapeHtml(e.message)}</td></tr>`;
+    $('tp-rows-wrap').innerHTML=`<div class="empty" style="padding:24px;color:var(--err)">${escapeHtml(e.message)}</div>`;
+  }
+}
+function closeTablePreview(){_tpCtx=null;$('tp-modal').classList.remove('show')}
+function tpCreateProfile(){
+  if(!_tpCtx)return;
+  const ctx=_tpCtx;
+  closeTablePreview();
+  openProfileForSource(ctx.connection_id, ctx.schema_name, ctx.table_name);
+}
+
+function switchTab(name){
+  ['profiles','tables','scans','dictionary'].forEach(n=>{
+    $('tab-'+n).classList.toggle('active', n===name);
+    $('panel-'+n).classList.toggle('hidden', n!==name);
+  });
+  if(name==='profiles') loadProfiles();
+  if(name==='scans') loadScans();
+  if(name==='dictionary') loadConcepts();
+}
+
+let _scanPoll=null;
+async function loadScans(){
+  if(_scanPoll){clearTimeout(_scanPoll);_scanPoll=null}
+  const cid=$('conn').value;
+  if(!cid)return;
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/scans?connection_id='+cid+'&limit=50');
+    if(!resp.items.length){
+      $('scan-tb').innerHTML='<tr><td class="empty" colspan="8">No scans yet. Click <strong>Scan</strong> on a table to start.</td></tr>';
+      return;
+    }
+    $('scan-tb').innerHTML=resp.items.map(s=>{
+      const pill=`<span class="pill pill-${s.status}">${s.status}</span>`;
+      const dur=s.duration_ms!=null?(s.duration_ms<1000?s.duration_ms+' ms':(s.duration_ms/1000).toFixed(1)+' s'):'—';
+      const view=s.status==='success'
+        ?`<button class="tiny" onclick="loadProfile(${s.id})">Profile</button>
+          <button class="tiny" onclick="openIssues(${s.id},'${s.schema_name}.${s.table_name}')">Issues</button>`
+        :(s.status==='failed'?`<button class="tiny" title="${(s.error_message||'').replace(/"/g,'&quot;')}">Error</button>`:'');
+      return `<tr>
+        <td class="mono">${s.id}</td>
+        <td class="mono">${s.schema_name}.${s.table_name}</td>
+        <td>${pill}</td>
+        <td class="num">${s.row_count!=null?Number(s.row_count).toLocaleString():'—'}</td>
+        <td class="num">${s.column_count??'—'}</td>
+        <td class="num">${dur}</td>
+        <td>${fmtDt(s.started_at||s.created_at)}</td>
+        <td>${view}</td>
+      </tr>`;
+    }).join('');
+    // Poll while any scan is still running/pending.
+    if(resp.items.some(s=>s.status==='pending'||s.status==='running')){
+      _scanPoll=setTimeout(loadScans,2500);
+    }
+  }catch(e){
+    $('scan-tb').innerHTML=`<tr><td class="empty" colspan="8">${e.message}</td></tr>`;
+  }
+}
+
+function pct(v){return v==null?'—':(Number(v)*100).toFixed(1)+'%'}
+function fmtNum(v){if(v==null)return '—';if(typeof v==='number')return Number.isInteger(v)?v.toLocaleString():v.toFixed(3);return v}
+function trunc(s,n){s=String(s??'');return s.length>n?s.slice(0,n)+'…':s}
+
+async function loadProfile(scanId){
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/scans/'+scanId+'/profiles');
+    const s=resp.scan;
+    $('profile-card').classList.remove('hidden');
+    $('profile-title').textContent=s.schema_name+'.'+s.table_name;
+    $('profile-meta').textContent=`scan #${s.id} · ${s.row_count?.toLocaleString()??'?'} rows · ${resp.profiles.length} columns`;
+    if(!resp.profiles.length){
+      $('profile-tb').innerHTML='<tr><td class="empty" colspan="10">No profile rows.</td></tr>';
+      return;
+    }
+    $('profile-tb').innerHTML=resp.profiles.map(p=>{
+      const tps=Array.isArray(p.top_patterns)?p.top_patterns.slice(0,3)
+        .map(x=>`${x.pattern} (${x.count})`).join(' · '):'';
+      const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,40)}</span>`:'—';
+      const tooltip=tps?` title="top: ${tps.replace(/"/g,'&quot;')}"`:'';
+      return `<tr${tooltip}>
+        <td class="mono">${p.column_name}</td>
+        <td class="cell-mute">${p.type_category||'—'}</td>
+        <td><span class="pill pill-ok" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
+        <td class="num">${pct(p.null_rate)}</td>
+        <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
+        <td class="num">${fmtNum(p.mean_value)}</td>
+        <td class="num">${fmtNum(p.stddev_value)}</td>
+        <td class="num">${fmtNum(p.avg_length)}</td>
+        <td>${dom}</td>
+        <td class="num">${pct(p.pattern_conformance_rate)}</td>
+      </tr>`;
+    }).join('');
+    // Scroll the detail card into view so the user sees what they clicked.
+    $('profile-card').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){toast(e.message,false)}
+}
+
+function closeProfile(){$('profile-card').classList.add('hidden')}
+
+// ---------- Dictionary ----------
+const DIMENSIONS=['completeness','validity','uniqueness'];
+const SEMANTIC_TYPES_FULL=['master_data','transaction','event_log','reference','staging','snapshot'];
+let _concepts=[];
+
+const DIM_BLURB={
+  completeness:'Make sure required values are present — not_null, max_null_rate, no_pseudo_nulls.',
+  validity:'Make sure values match the expected shape — format_regex, ranges, lookups.',
+  uniqueness:'Make sure key columns don\'t repeat — unique constraint checks.'
+};
+let _dictActiveDim=null;
+
+async function loadConcepts(){
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/concepts');
+    _concepts=resp.items||[];
+    if(_dictActiveDim) renderDictDimension(_dictActiveDim);
+    else renderDictPicker();
+  }catch(e){toast(e.message,false)}
+}
+
+function renderDictPicker(){
+  $('dict-picker').classList.remove('hidden');
+  $('dict-content').classList.add('hidden');
+  if(_concepts.length===0){
+    $('dict-picker').innerHTML='<div class="card"><p class="api" style="margin:0">No concepts yet. Click <strong>Seed defaults</strong> to install the 19 concepts that cover completeness, validity, and uniqueness.</p></div>';
+    return;
+  }
+  const tiles=DIMENSIONS.map(dim=>{
+    const n=_concepts.filter(c=>c.dimension===dim).length;
+    return `<div class="dim-tile" onclick="openDictDimension('${dim}')">
+      <h3>${dim}</h3>
+      <p class="dim-blurb">${DIM_BLURB[dim]||''}</p>
+      <span class="dim-pill">${n} concept${n!==1?'s':''}</span>
+    </div>`;
+  }).join('');
+  $('dict-picker').innerHTML=`<div class="dim-picker">${tiles}</div>`;
+}
+
+function openDictDimension(dim){
+  _dictActiveDim=dim;
+  renderDictDimension(dim);
+}
+
+function backToDictPicker(){
+  _dictActiveDim=null;
+  renderDictPicker();
+}
+
+function renderDictDimension(dim){
+  $('dict-picker').classList.add('hidden');
+  $('dict-content').classList.remove('hidden');
+  const items=_concepts.filter(c=>c.dimension===dim);
+  const rows=items.length?items.map(c=>{
+    const syns=(c.synonyms||[]).slice(0,8).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
+    const more=(c.synonyms||[]).length>8?`<span class="chip">+${(c.synonyms||[]).length-8} more</span>`:'';
+    const at=Array.isArray(c.applies_to_types)&&c.applies_to_types.length
+      ?c.applies_to_types.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')
+      :'<span class="cell-mute">any</span>';
+    const sevPill=`<span class="pill pill-${c.severity}">${c.severity}</span>`;
+    const stat=c.enabled?'':'<span class="pill pill-disabled" style="margin-left:6px">disabled</span>';
+    const param=paramSummary(c.rule_type, c.parameter);
+    return `<tr>
+      <td class="mono">${escapeHtml(c.concept)}${stat}</td>
+      <td>${syns}${more}</td>
+      <td class="mono">${c.rule_type}</td>
+      <td class="cell-mute">${param}</td>
+      <td>${sevPill}</td>
+      <td>${at}</td>
+      <td style="width:120px;white-space:nowrap">
+        <button class="tiny" onclick="openConceptModal(${c.id})">Edit</button>
+        <button class="tiny" onclick="deleteConcept(${c.id},'${c.concept.replace(/'/g,"\\'")}')">Del</button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td class="empty" colspan="7">No concepts in <strong>${dim}</strong> yet. Click <strong>+ Add concept</strong>.</td></tr>`;
+  $('dict-content').innerHTML=`
+    <div class="card" style="padding:10px 14px;margin-bottom:10px">
+      <span class="dim-back" onclick="backToDictPicker()">← All dimensions</span>
+      <span style="margin-left:14px"><strong style="text-transform:uppercase;letter-spacing:.04em">${dim}</strong></span>
+      <span class="api" style="margin-left:10px">${DIM_BLURB[dim]||''}</span>
+      <span class="dim-count" style="margin-left:auto;float:right">${items.length} concept${items.length!==1?'s':''}</span>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr>
+          <th style="width:200px">Concept</th>
+          <th>Synonyms</th>
+          <th style="width:130px">Rule</th>
+          <th style="width:180px">Parameter</th>
+          <th style="width:90px">Severity</th>
+          <th style="width:200px">Applies to</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function paramSummary(ruleType, p){
+  if(!p)return '—';
+  if(ruleType==='format_regex')return p.pattern?`<span class="mono" title="${(p.pattern||'').replace(/"/g,'&quot;')}">${trunc(p.pattern,28)}</span>`:'—';
+  if(ruleType==='max_null_rate')return p.threshold!=null?`threshold ≤ ${(p.threshold*100).toFixed(1)}%`:'—';
+  return '—';
+}
+
+async function seedDefaults(){
+  try{
+    const r=await api('POST','/api/v1/products/data-quality/concepts/seed-defaults');
+    toast(`${r.inserted} new concept(s) seeded (${r.total_after} total)`);
+    loadConcepts();
+  }catch(e){toast(e.message,false)}
+}
+
+async function deleteConcept(id, name){
+  if(!confirm(`Delete concept "${name}"?`))return;
+  try{
+    await api('DELETE','/api/v1/products/data-quality/concepts/'+id);
+    toast('Deleted');
+    loadConcepts();
+  }catch(e){toast(e.message,false)}
+}
+
+function openConceptModal(id){
+  // id null/undefined = create mode; otherwise load for edit.
+  const m=$('concept-modal');
+  $('cm-id').value=id||'';
+  $('concept-modal-title').textContent=id?'Edit concept':'Add concept';
+  if(id){
+    const c=_concepts.find(x=>x.id===id);
+    if(!c){toast('Concept not found',false);return}
+    $('cm-dimension').value=c.dimension;
+    $('cm-dimension').disabled=true;     // dimension is the unique key — locked on edit
+    $('cm-concept').value=c.concept;
+    $('cm-concept').disabled=true;       // concept name is the unique key — locked on edit
+    $('cm-synonyms').value=(c.synonyms||[]).join(', ');
+    $('cm-rule-type').value=c.rule_type;
+    $('cm-severity').value=c.severity;
+    $('cm-parameter').value=c.rule_type==='format_regex'?(c.parameter?.pattern||''):
+                            c.rule_type==='max_null_rate'?(c.parameter?.threshold??''):
+                            '';
+    $('cm-notes').value=c.notes||'';
+    $('cm-enabled').checked=!!c.enabled;
+    document.querySelectorAll('.cm-applies').forEach(cb=>{
+      cb.checked=Array.isArray(c.applies_to_types) && c.applies_to_types.includes(cb.value);
+    });
+  }else{
+    $('cm-dimension').disabled=false;
+    $('cm-concept').disabled=false;
+    $('cm-concept').value='';
+    $('cm-synonyms').value='';
+    $('cm-rule-type').value='not_null';
+    $('cm-severity').value='medium';
+    $('cm-parameter').value='';
+    $('cm-notes').value='';
+    $('cm-enabled').checked=true;
+    document.querySelectorAll('.cm-applies').forEach(cb=>cb.checked=false);
+  }
+  syncParameterField();
+  m.classList.add('show');
+}
+
+function closeConceptModal(){$('concept-modal').classList.remove('show')}
+
+function syncParameterField(){
+  const rt=$('cm-rule-type').value;
+  const wrap=$('cm-param-wrap');
+  const lbl=$('cm-param-label');
+  const inp=$('cm-parameter');
+  const hint=$('cm-param-hint');
+  if(rt==='format_regex'){
+    wrap.style.display='';
+    lbl.textContent='Regex pattern';
+    inp.placeholder='^[A-Z]{2}[0-9]{2}.*$';
+    hint.textContent='Matched values pass; unmatched values are violations.';
+  }else if(rt==='max_null_rate'){
+    wrap.style.display='';
+    lbl.textContent='Max null rate (0–1)';
+    inp.placeholder='0.05';
+    hint.textContent='Maximum allowed null fraction. e.g. 0.05 means up to 5% nulls is acceptable.';
+  }else{
+    wrap.style.display='none';
+    inp.value='';
+  }
+}
+
+// ---------- Profiles ----------
+let _profiles=[];
+let _connections=[];          // cached for the profile editor's connection picker
+let _pdProfile=null;          // currently-open profile detail
+let _pdActiveTab='definition';
+
+async function loadProfiles(){
+  // Fetch connections too — the editor's connection picker needs them.
+  try{
+    [_connections,_profiles]=await Promise.all([
+      api('GET','/api/v1/products/data-quality/connections/'),
+      (async()=>(await api('GET','/api/v1/products/data-quality/profiles')).items||[])(),
+    ]);
+  }catch(e){
+    if(/403|not enabled/i.test(e.message)){
+      $('profiles-tb').innerHTML=`<tr><td class="empty" colspan="8">${e.message}</td></tr>`;
+      return;
+    }
+    toast(e.message,false);return;
+  }
+  if(!_profiles.length){
+    $('profiles-tb').innerHTML=
+      '<tr><td class="empty" colspan="8">No profiles yet. Click <strong>+ New profile</strong> to create one, or go to <strong>Sources</strong> to create a profile from a source table.</td></tr>';
+    return;
+  }
+  $('profiles-tb').innerHTML=_profiles.map(p=>{
+    const conn=_connections.find(c=>c.id===p.connection_id);
+    const src=conn?`${conn.db_type} · ${p.schema_name}.${p.table_name}`:`${p.schema_name}.${p.table_name}`;
+    const sampling=p.sampling_mode==='all'?'all rows':`${p.sampling_mode} · ${p.sample_size||'?'}`;
+    const last=p.last_scan_at?fmtDt(p.last_scan_at):'—';
+    return `<tr>
+      <td class="mono"><a href="#" onclick="event.preventDefault();openProfileDetail(${p.id})">${p.name}</a></td>
+      <td class="cell-mute">${p.location_path||'—'}</td>
+      <td class="cell-mute">${src}</td>
+      <td class="cell-mute">${sampling}</td>
+      <td class="num">${p.scan_count}</td>
+      <td class="num">${p.rule_count}</td>
+      <td class="cell-mute">${last}</td>
+      <td style="white-space:nowrap">
+        <button class="tiny" onclick="openProfileDetail(${p.id})">Open</button>
+        <button class="tiny" onclick="quickScan(${p.id})">Scan</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function quickScan(profileId){
+  try{
+    await api('POST','/api/v1/products/data-quality/scans',{profile_id:profileId});
+    toast('Scan queued');
+    setTimeout(loadProfiles,2000);
+  }catch(e){toast(e.message,false)}
+}
+
+// ---- Editor (create + edit) ----
+function syncSamplingField(){
+  const mode=$('pe-sampling').value;
+  $('pe-sample-size-wrap').style.display=(mode==='all')?'none':'';
+  if(mode!=='all' && !$('pe-sample-size').value) $('pe-sample-size').value=100000;
+}
+
+function openProfileEditor(profileId){
+  const m=$('pe-modal');
+  $('pe-id').value=profileId||'';
+  // Connection picker — populate from cached list.
+  $('pe-conn').innerHTML=_connections.length
+    ?_connections.map(c=>`<option value="${c.id}">${c.db_type} · ${c.host}${c.database?' / '+c.database:''}</option>`).join('')
+    :'<option value="">— no connections —</option>';
+
+  if(profileId){
+    const p=_profiles.find(x=>x.id===profileId);
+    if(!p){toast('Profile not found',false);return}
+    $('pe-title').textContent='Edit profile';
+    $('pe-name').value=p.name;
+    $('pe-location').value=p.location_path||'';
+    $('pe-description').value=p.description||'';
+    $('pe-conn').value=p.connection_id;
+    $('pe-schema').value=p.schema_name;
+    $('pe-table').value=p.table_name;
+    // Source binding is locked after create.
+    ['pe-conn','pe-schema','pe-table','pe-semantic-type'].forEach(id=>$(id).disabled=true);
+    $('pe-source-locked-note').style.display='';
+    $('pe-semantic-type').value='';  // type lookup happens lazily — Edit doesn't show/persist it
+    $('pe-sampling').value=p.sampling_mode||'all';
+    $('pe-sample-size').value=p.sample_size||'';
+    $('pe-drill').checked=!!p.drill_down;
+    $('pe-ai').checked=!!p.ai_enabled;
+  }else{
+    $('pe-title').textContent='New profile';
+    $('pe-name').value='';
+    $('pe-location').value='';
+    $('pe-description').value='';
+    if(_connections.length) $('pe-conn').value=_connections[0].id;
+    $('pe-schema').value='';
+    $('pe-table').value='';
+    ['pe-conn','pe-schema','pe-table','pe-semantic-type'].forEach(id=>$(id).disabled=false);
+    $('pe-source-locked-note').style.display='none';
+    $('pe-semantic-type').value='';
+    $('pe-sampling').value='all';
+    $('pe-sample-size').value='';
+    $('pe-drill').checked=true;
+    $('pe-ai').checked=true;
+  }
+  syncSamplingField();
+  m.classList.add('show');
+}
+
+function closeProfileEditor(){$('pe-modal').classList.remove('show')}
+
+async function openProfileForSource(cid, schema, table){
+  // Pre-load editor with the source row's binding.
+  if(!_connections.length){
+    try{_connections=await api('GET','/api/v1/products/data-quality/connections/')}catch(e){}
+  }
+  openProfileEditor(null);
+  $('pe-conn').value=cid;
+  $('pe-schema').value=schema;
+  $('pe-table').value=table;
+  $('pe-name').value=`${schema}.${table}`;
+  // If the team already tagged this table from a previous session, pre-select it.
+  const existing=_tableItems.find(it=>it.schema_name===schema && it.table_name===table && it.semantic_type);
+  $('pe-semantic-type').value=(existing && existing.semantic_type) || '';
+}
+
+async function saveProfile(){
+  const id=$('pe-id').value;
+  const samplingMode=$('pe-sampling').value;
+  let sampleSize=null;
+  if(samplingMode!=='all'){
+    const v=parseInt($('pe-sample-size').value,10);
+    if(isNaN(v)||v<=0){toast('Sample size must be a positive integer',false);return}
+    sampleSize=v;
+  }
+  const body={
+    name:$('pe-name').value.trim(),
+    description:$('pe-description').value.trim()||null,
+    location_path:$('pe-location').value.trim()||null,
+    sampling_mode:samplingMode,
+    sample_size:sampleSize,
+    drill_down:$('pe-drill').checked,
+    ai_enabled:$('pe-ai').checked,
+  };
+  try{
+    if(id){
+      await api('PUT','/api/v1/products/data-quality/profiles/'+id, body);
+      toast('Profile updated');
+    }else{
+      Object.assign(body,{
+        connection_id:$('pe-conn').value,
+        schema_name:$('pe-schema').value.trim(),
+        table_name:$('pe-table').value.trim(),
+      });
+      if(!body.connection_id||!body.schema_name||!body.table_name){
+        toast('Connection / schema / table are required',false);return;
+      }
+      await api('POST','/api/v1/products/data-quality/profiles', body);
+      // Persist the semantic-type tag alongside profile creation, so the
+      // matcher's applies_to_types gate uses it next time. Failure here
+      // doesn't fail profile creation — the tag can be set later.
+      const stype=$('pe-semantic-type').value;
+      if(stype){
+        try{
+          await api('PUT','/api/v1/products/data-quality/tables/connections/'+body.connection_id+'/assign',
+            {schema_name:body.schema_name, table_name:body.table_name, semantic_type:stype});
+        }catch(e){toast('Profile created — type tag failed: '+e.message, false)}
+      }
+      toast('Profile created');
+    }
+    closeProfileEditor();
+    loadProfiles();
+  }catch(e){toast(e.message,false)}
+}
+
+// ---- Detail (Definition / Rules / Scans / Issues) ----
+async function openProfileDetail(profileId){
+  try{
+    _pdProfile=await api('GET','/api/v1/products/data-quality/profiles/'+profileId);
+  }catch(e){toast(e.message,false);return}
+  $('pd-title').textContent=_pdProfile.name;
+  $('pd-meta').textContent=`${_pdProfile.schema_name}.${_pdProfile.table_name} · sampling=${_pdProfile.sampling_mode}${_pdProfile.sample_size?'/'+_pdProfile.sample_size:''}`;
+  $('pd-modal').classList.add('show');
+  pdSwitch('definition');
+}
+
+function closeProfileDetail(){
+  $('pd-modal').classList.remove('show');
+  _pdProfile=null;
+}
+
+function pdSwitch(name){
+  _pdActiveTab=name;
+  ['definition','rules','scans','metrics','issues'].forEach(n=>{
+    $('pd-tab-'+n).classList.toggle('active', n===name);
+    $('pd-panel-'+n).classList.toggle('hidden', n!==name);
+  });
+  if(!_pdProfile)return;
+  if(name==='definition') pdRenderDefinition();
+  if(name==='rules')      pdRenderRules();
+  if(name==='scans')      pdRenderScans();
+  if(name==='metrics')    pdRenderMetrics();
+  if(name==='issues')     pdRenderIssues();
+}
+
+function pdRenderDefinition(){
+  const p=_pdProfile;
+  $('pd-panel-definition').innerHTML=`
+    <div class="card" style="padding:14px;margin-bottom:0">
+      <div class="row" style="gap:14px">
+        <div style="flex:1">
+          <label>Name</label><div class="mono">${p.name}</div>
+          <label>Location</label><div class="cell-mute">${p.location_path||'—'}</div>
+          <label>Description</label><div class="cell-mute">${p.description||'—'}</div>
+        </div>
+        <div style="flex:1">
+          <label>Connection</label><div class="mono">${p.connection_id}</div>
+          <label>Schema / Table</label><div class="mono">${p.schema_name}.${p.table_name}</div>
+          <label>Sampling</label><div>${p.sampling_mode}${p.sample_size?' · '+p.sample_size.toLocaleString()+' rows':''}</div>
+          <label>Drill-down · AI</label><div>${p.drill_down?'on':'off'} · ${p.ai_enabled?'on':'off'}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function pdRenderRules(){
+  $('pd-panel-rules').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/active-rules?profile_id='+_pdProfile.id);
+    const items=resp.items||[];
+    const rows=items.length
+      ?items.map(r=>{
+        const sev=`<span class="pill pill-${r.c_severity}">${r.c_severity}</span>`;
+        const stat=statusBadge(r.approval_status);
+        const conf=`<span class="pill" style="background:#e0e7ff;color:#3730a3">${r.confidence}</span>`;
+        const why=r.matcher_reasoning?trunc(r.matcher_reasoning,55):'—';
+        return `<tr>
+          <td class="mono">${r.column_name}</td>
+          <td class="cell-mute">${r.c_dimension}</td>
+          <td>${r.c_concept} ${sev}</td>
+          <td class="mono">${r.c_rule_type}</td>
+          <td>${conf}</td>
+          <td>${stat}</td>
+          <td class="cell-mute" title="${(r.matcher_reasoning||'').replace(/"/g,'&quot;')}">${why}</td>
+          <td style="white-space:nowrap">${ruleActions(r)}</td>
+        </tr>`;
+      }).join('')
+      :'<tr><td class="empty" colspan="8">No rules yet. Run the matcher to propose rules.</td></tr>';
+    $('pd-panel-rules').innerHTML=`
+      <div style="padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="tiny" onclick="openBindModal()" title="Hand-bind a concept to a column on this profile">+ Add rule</button>
+        <span class="api">·</span>
+        <button class="alt tiny" onclick="pdMatcherPreview()">Preview matcher</button>
+        <button class="alt tiny" onclick="pdMatcherApply()">Apply matcher</button>
+        <span class="api" style="margin-left:auto">Manual rules survive matcher re-applies (the matcher won't overwrite them).</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Column</th><th style="width:90px">Dim</th>
+          <th>Concept</th><th style="width:110px">Rule</th>
+          <th style="width:80px">Conf</th>
+          <th style="width:130px">Status</th>
+          <th>Why</th>
+          <th style="width:170px"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }catch(e){$('pd-panel-rules').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
+}
+
+// ---- Manual rule binding ----
+async function openBindModal(){
+  if(!_pdProfile)return;
+  // Pre-load concepts list (cheap; cached in _concepts most of the time).
+  if(!_concepts.length){
+    try{
+      const r=await api('GET','/api/v1/products/data-quality/concepts');
+      _concepts=r.items||[];
+    }catch(e){toast(e.message,false);return}
+  }
+  // Pull live columns from the profile's source table so the user picks
+  // from real names rather than typing.
+  $('bind-meta').textContent=`${_pdProfile.schema_name}.${_pdProfile.table_name}`;
+  $('bind-column').innerHTML='<option value="">Loading columns…</option>';
+  $('bind-dimension').value='';
+  bindRefreshConcepts();
+  $('bind-modal').classList.add('show');
+  try{
+    const url=`/api/v1/products/data-quality/tables/connections/${_pdProfile.connection_id}/preview?schema_name=${encodeURIComponent(_pdProfile.schema_name)}&table_name=${encodeURIComponent(_pdProfile.table_name)}&limit=1`;
+    const r=await api('GET',url);
+    const cols=r.columns||[];
+    $('bind-column').innerHTML=cols.length
+      ?cols.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} — ${escapeHtml(c.data_type||'')}</option>`).join('')
+      :'<option value="">— no columns —</option>';
+  }catch(e){
+    $('bind-column').innerHTML=`<option value="">${escapeHtml(e.message)}</option>`;
+  }
+}
+
+function bindRefreshConcepts(){
+  const dim=$('bind-dimension').value;
+  const filtered=dim?_concepts.filter(c=>c.dimension===dim && c.enabled!==false):_concepts.filter(c=>c.enabled!==false);
+  $('bind-concept').innerHTML=filtered.length
+    ?filtered.map(c=>`<option value="${c.id}">${escapeHtml(c.dimension)} · ${escapeHtml(c.concept)} (${c.rule_type})</option>`).join('')
+    :'<option value="">— no enabled concepts in this dimension —</option>';
+}
+
+function closeBindModal(){$('bind-modal').classList.remove('show')}
+
+async function saveBindManual(){
+  const col=$('bind-column').value;
+  const cid=parseInt($('bind-concept').value,10);
+  if(!col){toast('Pick a column',false);return}
+  if(!cid){toast('Pick a concept',false);return}
+  try{
+    await api('POST','/api/v1/products/data-quality/active-rules/manual',{
+      profile_id:_pdProfile.id, column_name:col, concept_id:cid,
+    });
+    toast('Rule bound');
+    closeBindModal();
+    pdRenderRules();
+  }catch(e){toast(e.message,false)}
+}
+
+async function pdMatcherPreview(){
+  try{
+    const resp=await api('POST','/api/v1/products/data-quality/active-rules/preview',{profile_id:_pdProfile.id});
+    const total=resp.columns.reduce((n,c)=>n+c.matches.length,0);
+    toast(`Preview: ${total} match(es) — click Apply to persist`);
+  }catch(e){toast(e.message,false)}
+}
+async function pdMatcherApply(){
+  if(!confirm('Apply the matcher? HIGH-confidence matches activate immediately; others land as proposed.'))return;
+  try{
+    await api('POST','/api/v1/products/data-quality/active-rules/apply',{profile_id:_pdProfile.id});
+    toast('Rules applied');
+    pdRenderRules();
+  }catch(e){toast(e.message,false)}
+}
+
+async function pdRenderScans(){
+  $('pd-panel-scans').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/scans?profile_id='+_pdProfile.id+'&limit=50');
+    const items=resp.items||[];
+    const rows=items.length?items.map(s=>{
+      const dur=s.duration_ms!=null?(s.duration_ms<1000?s.duration_ms+' ms':(s.duration_ms/1000).toFixed(1)+' s'):'—';
+      const kind=s.scan_type==='validation'?'rules-only':(s.scan_type||'profile');
+      const view=s.status==='success'
+        ?(s.scan_type==='validation'
+            ?`<button class="tiny" onclick="openIssues(${s.id},'${_pdProfile.name}')">Issues</button>`
+            :`<button class="tiny" onclick="loadProfile(${s.id})">Profile</button>
+              <button class="tiny" onclick="openIssues(${s.id},'${_pdProfile.name}')">Issues</button>`)
+        :'';
+      return `<tr>
+        <td class="mono">${s.id}</td>
+        <td><span class="pill pill-${s.status}">${s.status}</span></td>
+        <td class="cell-mute">${kind}</td>
+        <td class="num">${s.row_count!=null?Number(s.row_count).toLocaleString():'—'}</td>
+        <td class="num">${s.column_count??'—'}</td>
+        <td class="num">${dur}</td>
+        <td>${fmtDt(s.started_at||s.created_at)}</td>
+        <td>${view}</td>
+      </tr>`;
+    }).join('')
+    :'<tr><td class="empty" colspan="8">No scans yet. Click <strong>Full scan</strong> below to start.</td></tr>';
+    $('pd-panel-scans').innerHTML=`
+      <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="tiny" onclick="pdRunScan()" title="Profile + validate everything (slow on big tables)">Full scan</button>
+        <button class="alt tiny" onclick="pdRunValidateOnly()" title="Re-run all rules without re-profiling — seconds vs minutes">Re-validate only</button>
+        <span class="api">·</span>
+        <select id="pd-revalidate-dim" style="padding:5px 8px">
+          <option value="completeness">completeness</option>
+          <option value="validity">validity</option>
+          <option value="uniqueness">uniqueness</option>
+        </select>
+        <button class="alt tiny" onclick="pdRunValidateDimension()" title="Re-validate only rules in the chosen dimension">Re-validate dimension</button>
+        <span class="api" style="margin-left:auto">Refreshes automatically while a scan is pending or running.</span>
+      </div>
+      <table>
+        <thead><tr><th style="width:60px">#</th><th style="width:110px">Status</th>
+          <th style="width:100px">Type</th>
+          <th class="num" style="width:90px">Rows</th><th class="num" style="width:70px">Cols</th>
+          <th class="num" style="width:90px">Duration</th><th>Started</th>
+          <th style="width:160px"></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    if(items.some(s=>s.status==='pending'||s.status==='running')){
+      setTimeout(()=>{ if(_pdActiveTab==='scans') pdRenderScans(); }, 2500);
+    }
+  }catch(e){$('pd-panel-scans').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
+}
+
+async function pdRunValidateOnly(){
+  if(!_pdProfile)return;
+  try{
+    await api('POST','/api/v1/products/data-quality/scans/validate-only',{profile_id:_pdProfile.id});
+    toast('Validate-only scan queued');
+    setTimeout(()=>{ if(_pdActiveTab==='scans') pdRenderScans(); }, 1200);
+  }catch(e){toast(e.message,false)}
+}
+
+async function pdRunValidateDimension(){
+  if(!_pdProfile)return;
+  const dim=$('pd-revalidate-dim').value;
+  try{
+    await api('POST','/api/v1/products/data-quality/scans/validate-only',{profile_id:_pdProfile.id, dimension:dim});
+    toast(`Re-validating ${dim}`);
+    setTimeout(()=>{ if(_pdActiveTab==='scans') pdRenderScans(); }, 1200);
+  }catch(e){toast(e.message,false)}
+}
+
+async function pdRenderMetrics(){
+  $('pd-panel-metrics').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
+  try{
+    const m=await api('GET','/api/v1/products/data-quality/scores/profile/'+_pdProfile.id+'/metrics');
+    if(!m.scan_id){
+      $('pd-panel-metrics').innerHTML='<div class="api" style="padding:14px">No scored scans yet. Run a scan with active rules to populate metrics.</div>';
+      return;
+    }
+    const dimMeta={completeness:'#10b981',validity:'#3b82f6',uniqueness:'#8b5cf6',overall:'#1d4ed8'};
+    const donutHtml=(d)=>{
+      const pct=d.pass_rate==null?0:Math.max(0,Math.min(100,d.pass_rate*100));
+      const col=dimMeta[d.dimension]||'#1d4ed8';
+      const tier=`<span class="pill pill-${d.tier}">${d.tier.replace('_',' ')}</span>`;
+      const delta=fmtDelta(d.delta);
+      return `<div class="donut-card">
+        <div class="donut" style="--pct:${pct.toFixed(1)};--col:${col}"><span>${pct.toFixed(0)}%</span></div>
+        <div class="donut-meta">
+          <div class="name">${d.dimension}</div>
+          <div class="pct">${(pct).toFixed(1)}%</div>
+          <div class="sub">${tier} · ${d.rule_count} rule(s) · ${delta}</div>
+        </div></div>`;
+    };
+    const donuts=[m.overall, ...(m.dimensions||[])].filter(Boolean).map(donutHtml).join('');
+    const stackHtml=(d)=>{
+      const total=Math.max(1,(d.pass_count||0)+(d.fail_count||0)+(d.error_count||0));
+      // Within the dimension, classify pass_count rules into the dimension's own tier.
+      const tierClass='stack-'+(d.tier||'no_rules');
+      const passW=(d.pass_count||0)/total*100;
+      const failW=(d.fail_count||0)/total*100;
+      const errW=(d.error_count||0)/total*100;
+      return `<div class="stack-row">
+        <div class="lbl">${d.dimension}</div>
+        <div class="stack-bar">
+          <span class="${tierClass}" style="width:${passW.toFixed(2)}%"></span>
+          <span class="stack-not_acceptable" style="width:${failW.toFixed(2)}%"></span>
+          <span class="stack-no_rules" style="width:${errW.toFixed(2)}%"></span>
+        </div>
+        <div class="legend">${d.pass_count||0} pass · ${d.fail_count||0} fail · ${d.error_count||0} err</div>
+      </div>`;
+    };
+    const stacked=(m.dimensions||[]).map(stackHtml).join('');
+    const ro=m.rule_occurrences||[];
+    const ruleRows=ro.length?ro.map(r=>{
+      const sev=`<span class="pill pill-${r.severity}">${r.severity}</span>`;
+      const stat=issueStatusBadge(r.status);
+      const pr=r.pass_rate!=null?(Number(r.pass_rate)*100).toFixed(2)+'%':'—';
+      const total=r.row_count!=null?Number(r.row_count).toLocaleString():'—';
+      const failed=r.violation_count!=null?Number(r.violation_count).toLocaleString():'—';
+      return `<tr>
+        <td>${escapeHtml(r.concept||'')}</td>
+        <td class="cell-mute">${r.dimension}</td>
+        <td class="num">${pr}</td>
+        <td>${stat}</td>
+        <td class="num">${total}</td>
+        <td class="num">${failed}</td>
+        <td class="mono">${escapeHtml(r.column_name||'')}</td>
+        <td class="cell-mute">${sev}</td>
+        <td class="cell-mute">${escapeHtml(trunc(r.diagnostic_text||r.concept_description||'',80))}</td>
+      </tr>`;
+    }).join('') : '<tr><td class="empty" colspan="9">No rules ran for the latest scan.</td></tr>';
+
+    $('pd-panel-metrics').innerHTML=`
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:10px">
+        <span class="api">Latest scan #${m.scan_id} · raw scoring</span>
+        <button class="alt tiny" style="margin-left:auto" onclick="pdRecomputeScores(${m.scan_id})">Recompute</button>
+      </div>
+      <div style="padding:0 14px 14px"><div class="donut-grid">${donuts}</div></div>
+      <div style="padding:6px 14px 12px"><div class="api" style="margin-bottom:6px">Rule distribution per dimension</div>${stacked}</div>
+      <div style="padding:0 14px 4px"><div class="api">Rule occurrences (latest scan)</div></div>
+      <table>
+        <thead><tr>
+          <th>Name</th>
+          <th style="width:100px">Dimension</th>
+          <th class="num" style="width:90px">Pass rate</th>
+          <th style="width:80px">Status</th>
+          <th class="num" style="width:110px">Total rows</th>
+          <th class="num" style="width:110px">Failed rows</th>
+          <th>Column</th>
+          <th style="width:80px">Severity</th>
+          <th>Diagnostic</th>
+        </tr></thead>
+        <tbody>${ruleRows}</tbody>
+      </table>`;
+  }catch(e){$('pd-panel-metrics').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
+}
+
+async function pdRecomputeScores(scanId){
+  try{
+    await api('POST','/api/v1/products/data-quality/scores/scan/'+scanId+'/recompute');
+    toast('Scores recomputed');
+    pdRenderMetrics();
+  }catch(e){toast(e.message,false)}
+}
+
+function fmtDelta(d){
+  if(d==null) return '<span class="delta-flat">— first scan</span>';
+  const pp=(d*100);
+  if(Math.abs(pp)<0.05) return '<span class="delta-flat">= 0.0 pp</span>';
+  const cls=pp>0?'delta-up':'delta-down';
+  const arrow=pp>0?'↑':'↓';
+  return `<span class="${cls}">${arrow} ${Math.abs(pp).toFixed(1)} pp</span>`;
+}
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+async function pdRenderIssues(){
+  $('pd-panel-issues').innerHTML='<div class="api" style="padding:10px">Loading…</div>';
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/issues/profile/'+_pdProfile.id);
+    const items=resp.items||[];
+    if(!items.length){
+      $('pd-panel-issues').innerHTML='<div class="api" style="padding:10px">No issues for the most recent successful scan.</div>';
+      return;
+    }
+    $('pd-panel-issues').innerHTML=`<table>
+      <thead><tr>
+        <th>Column</th><th style="width:90px">Dim</th>
+        <th>Concept</th><th style="width:110px">Rule</th>
+        <th style="width:80px">Severity</th>
+        <th style="width:80px">Status</th>
+        <th class="num" style="width:100px">Violations</th>
+        <th class="num" style="width:80px">Rate</th>
+        <th>Diagnostic</th>
+      </tr></thead>
+      <tbody>${items.map(it=>{
+        const sev=`<span class="pill pill-${it.severity}">${it.severity}</span>`;
+        const stat=issueStatusBadge(it.status);
+        const vc=it.violation_count!=null?Number(it.violation_count).toLocaleString():'—';
+        const rate=it.violation_rate!=null?(Number(it.violation_rate)*100).toFixed(2)+'%':'—';
+        return `<tr>
+          <td class="mono">${it.column_name}</td>
+          <td class="cell-mute">${it.dimension}</td>
+          <td>${it.c_concept}</td>
+          <td class="mono">${it.rule_type}</td>
+          <td>${sev}</td><td>${stat}</td>
+          <td class="num">${vc}</td><td class="num">${rate}</td>
+          <td class="cell-mute">${trunc(it.diagnostic_text||'',80)}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  }catch(e){$('pd-panel-issues').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
+}
+
+async function pdRunScan(){
+  if(!_pdProfile)return;
+  try{
+    await api('POST','/api/v1/products/data-quality/scans',{profile_id:_pdProfile.id});
+    toast('Scan queued');
+    setTimeout(()=>{ if(_pdActiveTab==='scans') pdRenderScans(); }, 1500);
+  }catch(e){toast(e.message,false)}
+}
+function pdEdit(){if(_pdProfile){closeProfileDetail();openProfileEditor(_pdProfile.id)}}
+async function pdClone(){
+  const newName=prompt('Clone profile as:', _pdProfile.name+' (copy)');
+  if(!newName)return;
+  try{
+    await api('POST','/api/v1/products/data-quality/profiles/'+_pdProfile.id+'/clone',{new_name:newName});
+    toast('Profile cloned');
+    closeProfileDetail();
+    loadProfiles();
+  }catch(e){toast(e.message,false)}
+}
+
+// ---------- Issues ----------
+async function openIssues(scanId, label){
+  $('issues-title').textContent='Issues — '+(label||('scan #'+scanId));
+  $('issues-meta').textContent='';
+  $('issues-tb').innerHTML='<tr><td class="empty" colspan="9">Loading…</td></tr>';
+  $('issues-modal').classList.add('show');
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/issues/scan/'+scanId);
+    const s=resp.summary||{};
+    const by=s.by_status||{};
+    $('issues-meta').textContent=`${s.total||0} total · ${by.fail||0} fail · ${by.pass||0} pass · ${by.error||0} error`;
+    if(!resp.items.length){
+      $('issues-tb').innerHTML='<tr><td class="empty" colspan="9">No issues recorded for this scan. Tag the table and apply rules first.</td></tr>';
+      return;
+    }
+    $('issues-tb').innerHTML=resp.items.map(it=>{
+      const sev=`<span class="pill pill-${it.severity}">${it.severity}</span>`;
+      const stat=issueStatusBadge(it.status);
+      const vc=it.violation_count!=null?Number(it.violation_count).toLocaleString():'—';
+      const rate=it.violation_rate!=null?(Number(it.violation_rate)*100).toFixed(2)+'%':'—';
+      // violation_patterns may come back as JSON string from asyncpg.
+      let pats=it.violation_patterns;
+      if(typeof pats==='string'){try{pats=JSON.parse(pats)}catch(e){pats=[]}}
+      const patStr=Array.isArray(pats)&&pats.length
+        ?pats.slice(0,3).map(p=>`<span class="chip">${trunc(p.pattern,18)} · ${p.count}</span>`).join('')
+        :'';
+      const diag=trunc(it.diagnostic_text||'',80);
+      return `<tr>
+        <td class="mono">${it.column_name}</td>
+        <td class="cell-mute">${it.dimension}</td>
+        <td>${it.c_concept}</td>
+        <td class="mono">${it.rule_type}</td>
+        <td>${sev}</td>
+        <td>${stat}</td>
+        <td class="num">${vc}</td>
+        <td class="num">${rate}</td>
+        <td class="cell-mute" title="${(it.diagnostic_text||'').replace(/"/g,'&quot;')}">${diag} ${patStr}</td>
+      </tr>`;
+    }).join('');
+  }catch(e){toast(e.message,false)}
+}
+
+function closeIssues(){$('issues-modal').classList.remove('show')}
+
+function issueStatusBadge(s){
+  if(s==='pass')  return '<span class="pill pill-success">pass</span>';
+  if(s==='fail')  return '<span class="pill pill-failed">fail</span>';
+  if(s==='error') return '<span class="pill pill-disabled">error</span>';
+  return s;
+}
+
+// ---------- Rules ----------
+let _rulesCtx=null;  // {connection_id, schema_name, table_name}
+
+async function openRules(cid, schema, table){
+  _rulesCtx={connection_id:cid, schema_name:schema, table_name:table};
+  $('rules-title').textContent='Rules — '+schema+'.'+table;
+  $('rules-meta').textContent='';
+  $('rules-warning').style.display='none';
+  $('rules-tb').innerHTML='<tr><td class="empty" colspan="8">Loading…</td></tr>';
+  $('rules-modal').classList.add('show');
+  // First load: list whatever is already persisted; if empty, run a preview.
+  const existing=await fetchRules();
+  if(!existing.length) await runPreview();
+}
+
+function closeRules(){_rulesCtx=null;$('rules-modal').classList.remove('show')}
+
+async function fetchRules(){
+  if(!_rulesCtx)return [];
+  const q=new URLSearchParams(_rulesCtx).toString();
+  const resp=await api('GET','/api/v1/products/data-quality/active-rules?'+q);
+  renderActiveRules(resp.items||[]);
+  return resp.items||[];
+}
+
+function renderActiveRules(items){
+  if(!items.length){
+    $('rules-tb').innerHTML='<tr><td class="empty" colspan="8">No rules yet. Click <strong>Preview</strong> to see what the matcher proposes.</td></tr>';
+    return;
+  }
+  $('rules-meta').textContent=`${items.length} rule${items.length!==1?'s':''}`;
+  $('rules-tb').innerHTML=items.map(r=>{
+    const sev=`<span class="pill pill-${r.c_severity}">${r.c_severity}</span>`;
+    const conf=`<span class="pill" style="background:#e0e7ff;color:#3730a3">${r.confidence}</span>`;
+    const stat=statusBadge(r.approval_status);
+    const why=r.matcher_reasoning?trunc(r.matcher_reasoning,60):'—';
+    const actions=ruleActions(r);
+    return `<tr>
+      <td class="mono">${r.column_name}</td>
+      <td class="cell-mute">${r.c_dimension}</td>
+      <td>${r.c_concept} ${sev}</td>
+      <td class="mono">${r.c_rule_type}</td>
+      <td>${conf}</td>
+      <td>${stat}</td>
+      <td class="cell-mute" title="${(r.matcher_reasoning||'').replace(/"/g,'&quot;')}">${why}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function statusBadge(s){
+  if(s==='auto_applied')return '<span class="pill pill-success">auto-applied</span>';
+  if(s==='approved')   return '<span class="pill pill-success">approved</span>';
+  if(s==='proposed')   return '<span class="pill pill-medium" style="background:#fef3c7;color:#92400e">proposed</span>';
+  if(s==='blocked')    return '<span class="pill pill-disabled">blocked</span>';
+  return s;
+}
+
+function ruleActions(r){
+  if(r.approval_status==='proposed'){
+    return `<button class="tiny" onclick="approveRule(${r.id})">Approve</button>
+            <button class="tiny" onclick="blockRule(${r.id})">Block</button>`;
+  }
+  if(r.approval_status==='blocked'){
+    return `<button class="tiny" onclick="unblockRule(${r.id})">Unblock</button>`;
+  }
+  // auto_applied / approved: still allow blocking.
+  return `<button class="tiny" onclick="blockRule(${r.id})">Block</button>`;
+}
+
+async function runPreview(){
+  if(!_rulesCtx)return;
+  $('rules-tb').innerHTML='<tr><td class="empty" colspan="8">Running matcher…</td></tr>';
+  try{
+    const resp=await api('POST','/api/v1/products/data-quality/active-rules/preview', _rulesCtx);
+    renderPreview(resp);
+  }catch(e){toast(e.message,false)}
+}
+
+function renderPreview(resp){
+  const rows=[];
+  let proposedCount=0, autoCount=0;
+  for(const col of resp.columns){
+    for(const m of col.matches){
+      const status=m.confidence==='high'?'auto_applied':'proposed';
+      if(status==='proposed') proposedCount++; else autoCount++;
+      rows.push(`<tr style="opacity:.85">
+        <td class="mono">${col.column_name}</td>
+        <td class="cell-mute">${m.dimension}</td>
+        <td>${m.concept}</td>
+        <td class="mono">—</td>
+        <td><span class="pill" style="background:#e0e7ff;color:#3730a3">${m.confidence}</span></td>
+        <td>${statusBadge(status)} <span class="api">(preview)</span></td>
+        <td class="cell-mute" title="${(m.matcher_reasoning||'').replace(/"/g,'&quot;')}">${trunc(m.matcher_reasoning||'',60)}</td>
+        <td class="cell-mute">via ${m.matched_by}</td>
+      </tr>`);
+    }
+  }
+  $('rules-meta').textContent=`Preview: ${autoCount} auto + ${proposedCount} proposed${resp.llm_used?' (LLM used)':''}${resp.llm_available?'':' · LLM not configured'}`;
+  if(resp.warning){
+    $('rules-warning').style.display='';
+    $('rules-warning').textContent=resp.warning;
+  }else{
+    $('rules-warning').style.display='none';
+  }
+  $('rules-tb').innerHTML=rows.length
+    ?rows.join('')
+    :'<tr><td class="empty" colspan="8">Matcher found no matches for this table.</td></tr>';
+}
+
+async function runApply(){
+  if(!_rulesCtx)return;
+  if(!confirm('Apply the matcher results? HIGH-confidence matches will activate immediately; others land as proposed for your review.'))return;
+  try{
+    await api('POST','/api/v1/products/data-quality/active-rules/apply', _rulesCtx);
+    toast('Rules applied');
+    await fetchRules();
+  }catch(e){toast(e.message,false)}
+}
+
+async function approveRule(id){
+  try{await api('POST','/api/v1/products/data-quality/active-rules/'+id+'/approve');toast('Approved');fetchRules()}catch(e){toast(e.message,false)}
+}
+async function unblockRule(id){
+  try{await api('POST','/api/v1/products/data-quality/active-rules/'+id+'/unblock');toast('Unblocked');fetchRules()}catch(e){toast(e.message,false)}
+}
+async function blockRule(id){
+  const reason=prompt('Reason (optional):','')||'';
+  try{await api('POST','/api/v1/products/data-quality/active-rules/'+id+'/block',{reason});toast('Blocked');fetchRules()}catch(e){toast(e.message,false)}
+}
+
+async function saveConcept(){
+  const id=$('cm-id').value;
+  const ruleType=$('cm-rule-type').value;
+  const synonyms=$('cm-synonyms').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const applies=Array.from(document.querySelectorAll('.cm-applies:checked')).map(cb=>cb.value);
+  let parameter={};
+  if(ruleType==='format_regex'){
+    const pat=$('cm-parameter').value.trim();
+    if(!pat){toast('Regex pattern is required',false);return}
+    parameter={pattern:pat};
+  }else if(ruleType==='max_null_rate'){
+    const thr=parseFloat($('cm-parameter').value);
+    if(isNaN(thr)||thr<0||thr>1){toast('Threshold must be between 0 and 1',false);return}
+    parameter={threshold:thr};
+  }
+  const body={
+    synonyms, rule_type:ruleType, parameter,
+    severity:$('cm-severity').value,
+    applies_to_types:applies.length?applies:null,
+    notes:$('cm-notes').value||null,
+    enabled:$('cm-enabled').checked,
+  };
+  try{
+    if(id){
+      await api('PUT','/api/v1/products/data-quality/concepts/'+id, body);
+      toast('Concept updated');
+    }else{
+      const dimension=$('cm-dimension').value;
+      const concept=$('cm-concept').value.trim();
+      if(!concept){toast('Concept name is required',false);return}
+      await api('POST','/api/v1/products/data-quality/concepts',
+        {dimension, concept, ...body});
+      toast('Concept created');
+    }
+    closeConceptModal();
+    loadConcepts();
+  }catch(e){toast(e.message,false)}
+}
+
+async function assignType(cid,schema,table,t){
+  try{
+    if(!t){
+      await api('DELETE','/api/v1/products/data-quality/tables/connections/'+cid+'/assign',{schema_name:schema,table_name:table});
+      toast('Type cleared');
+    }else{
+      await api('PUT','/api/v1/products/data-quality/tables/connections/'+cid+'/assign',{schema_name:schema,table_name:table,semantic_type:t});
+      toast('Tagged '+table+' as '+t);
+    }
+    loadTables();
+  }catch(e){toast(e.message,false)}
+}
+
+// Resume session if a token is in localStorage
+if(token && user){
+  $('api-base').value=API;
+  enterApp();
+}else{
+  $('api-base').value=API;
+}
+</script>
+</body>
+</html>

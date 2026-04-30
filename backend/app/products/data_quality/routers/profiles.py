@@ -1,0 +1,114 @@
+"""Profile Asset endpoints (Phase 1.5)."""
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+
+from app.core.security import get_current_user
+from app.products.data_quality.services.profile_service import (
+    ProfileService, get_profile_service,
+)
+from app.structures.auth_user import AuthUser
+
+router = APIRouter(prefix="/profiles", tags=["dq-profiles"])
+
+
+class CreateProfileBody(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    location_path: str | None = Field(default=None, max_length=500)
+    connection_id: UUID
+    schema_name: str = Field(min_length=1, max_length=255)
+    table_name: str = Field(min_length=1, max_length=255)
+    sampling_mode: str = "all"
+    sample_size: int | None = None
+    drill_down: bool = True
+    ai_enabled: bool = True
+
+
+class UpdateProfileBody(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = None
+    location_path: str | None = Field(default=None, max_length=500)
+    sampling_mode: str | None = None
+    sample_size: int | None = None
+    drill_down: bool | None = None
+    ai_enabled: bool | None = None
+
+
+class CloneProfileBody(BaseModel):
+    new_name: str = Field(min_length=1, max_length=255)
+
+
+@router.get("")
+async def list_profiles(
+    location_path: str | None = Query(default=None),
+    connection_id: UUID | None = Query(default=None),
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    rows = await service.list_profiles(
+        auth_user, location_path=location_path, connection_id=connection_id,
+    )
+    return {"items": rows}
+
+
+@router.post("")
+async def create_profile(
+    body: CreateProfileBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    row = await service.create_profile(
+        name=body.name, description=body.description,
+        location_path=body.location_path,
+        connection_id=body.connection_id, schema_name=body.schema_name,
+        table_name=body.table_name, sampling_mode=body.sampling_mode,
+        sample_size=body.sample_size, drill_down=body.drill_down,
+        ai_enabled=body.ai_enabled, auth_user=auth_user,
+    )
+    return {"detail": "Profile created", "profile": row}
+
+
+@router.get("/{profile_id}")
+async def get_profile(
+    profile_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    return await service.get_profile(profile_id, auth_user)
+
+
+@router.put("/{profile_id}")
+async def update_profile(
+    profile_id: int, body: UpdateProfileBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    row = await service.update_profile(
+        profile_id, name=body.name, description=body.description,
+        location_path=body.location_path, sampling_mode=body.sampling_mode,
+        sample_size=body.sample_size, drill_down=body.drill_down,
+        ai_enabled=body.ai_enabled, auth_user=auth_user,
+    )
+    return {"detail": "Profile updated", "profile": row}
+
+
+@router.delete("/{profile_id}")
+async def delete_profile(
+    profile_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    await service.delete_profile(profile_id, auth_user)
+    return {"detail": "Profile deleted (cascading scans, rules, and issues)"}
+
+
+@router.post("/{profile_id}/clone")
+async def clone_profile(
+    profile_id: int, body: CloneProfileBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    row = await service.clone_profile(profile_id, body.new_name, auth_user)
+    return {"detail": "Profile cloned", "profile": row}

@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     WORKER_SLA_CHECK_INTERVAL_MINUTES: int = 30
     WORKER_NOTIFICATION_INTERVAL_MINUTES: int = 5
 
+    # IDQP — LLM-augmented concept matcher (Step 3b).
+    # When ANTHROPIC_API_KEY is empty the matcher degrades to fuzzy-only
+    # mode; columns that the fuzzy matcher couldn't classify simply return
+    # no proposed rules instead of failing.
+    ANTHROPIC_API_KEY: str = ""
+    DQ_LLM_MODEL: str = "claude-haiku-4-5-20251001"
+    DQ_LLM_MAX_OUTPUT_TOKENS: int = 1024
+
     # External pickup portal
     PICKUP_TOKEN_TTL_HOURS: int = 72
     PICKUP_TOKEN_MAX_DOWNLOADS: int = 10

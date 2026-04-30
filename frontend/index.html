@@ -174,6 +174,8 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
       <div class="section" id="nav-data-section">Data</div>
       <button data-tab="files" id="nav-files-btn" onclick="go('files')"><span class="ic">▤</span> Files</button>
       <button data-tab="connections" id="nav-conn-btn" onclick="go('connections')"><span class="ic">⊞</span> Connections</button>
+      <div class="section" id="nav-dq-section">Data Quality</div>
+      <button data-tab="dq-tables" id="nav-dq-tables-btn" onclick="go('dq-tables')"><span class="ic">▦</span> Tables</button>
       <div class="section" id="nav-grp-section">Organization</div>
       <button data-tab="users" id="nav-users-btn" onclick="go('users')"><span class="ic">☺</span> Users</button>
       <button data-tab="groups" id="nav-grp-btn" onclick="go('groups')"><span class="ic">⊡</span> Groups</button>
@@ -389,6 +391,23 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
         <div class="tw"><table>
           <thead><tr><th>Type</th><th>Host</th><th>Database</th><th>Status</th><th>Created</th><th></th></tr></thead>
           <tbody id="conn-tb"></tbody>
+        </table></div>
+      </div>
+
+      <!-- DATA QUALITY · TABLES (semantic typing — BRD §4.2 / FR-TYPE) -->
+      <div id="p-dq-tables" class="panel">
+        <div class="fb mb">
+          <h3 style="font-size:13.5px;font-weight:700">Source Tables — Semantic Typing</h3>
+          <div>
+            <select id="dq-conn-select" onchange="loadDqTables()" style="font-size:12px;padding:6px"></select>
+          </div>
+        </div>
+        <div id="dq-tables-info" style="font-size:11px;color:var(--slate-400);margin-bottom:8px"></div>
+        <div class="tw"><table>
+          <thead><tr>
+            <th>Schema</th><th>Table</th><th>Semantic type</th><th>Status</th><th>Note</th><th>Updated</th>
+          </tr></thead>
+          <tbody id="dq-tb"></tbody>
         </table></div>
       </div>
 
@@ -612,7 +631,7 @@ hr{border:none;border-top:1px solid var(--slate-100);margin:14px 0}
 </div>
 
 <script>
-const API='http://localhost:8000', PF=`${API}/api/v1/platform`, DS=`${API}/api/v1/products/data-sharing`;
+const API='http://localhost:8000', PF=`${API}/api/v1/platform`, DS=`${API}/api/v1/products/data-sharing`, DQ=`${API}/api/v1/products/data-quality`;
 let token=localStorage.getItem('ds_token'), refreshToken=localStorage.getItem('ds_refresh'), user=null;
 
 // Util
@@ -655,6 +674,7 @@ async function enterApp(){
   let enabledSlugs=new Set();
   try{const prods=await api('GET',`${PF}/products/me`);enabledSlugs=new Set(prods.map(p=>p.slug));}catch(e){console.warn('products/me failed',e)}
   const hasDS=enabledSlugs.has('data_sharing');
+  const hasDQ=enabledSlugs.has('data_quality');
 
   const showWf=isAdmin()&&hasDS;
   const showGrp=(isAdmin()||user.product_role==='data_owner')&&hasDS;
@@ -669,6 +689,9 @@ async function enterApp(){
   set('nav-data-section',hasDS);
   set('nav-files-btn',hasDS);
   set('nav-conn-btn',hasDS);
+  // Data-quality-gated entries
+  set('nav-dq-section',hasDQ);
+  set('nav-dq-tables-btn',hasDQ);
   set('nav-wf-section',showWf);set('nav-wf-btn',showWf);
   set('nav-grp-section',showGrp||showUsers);
   set('nav-grp-btn',showGrp);
@@ -688,10 +711,10 @@ function go(tab){
   document.querySelectorAll('.sidebar-nav button').forEach(b=>b.classList.remove('active'));
   const p=document.getElementById('p-'+tab);if(p)p.classList.add('active');
   const b=document.querySelector(`[data-tab="${tab}"]`);if(b)b.classList.add('active');
-  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail','onboard-company':'Onboard Company',users:'Users',profile:'My Profile'};
+  const titles={portal:'Product Portal',requests:'Share Requests','create-req':'New Request','req-detail':'Request Detail',workflows:'Workflow Templates',files:'Files',connections:'Connections',notifications:'Notifications',audit:'Audit Trail',groups:'Department Groups',recipients:'External Recipients','recipient-detail':'Recipient Detail','onboard-company':'Onboard Company',users:'Users',profile:'My Profile','dq-tables':'Data Quality — Tables'};
   document.getElementById('pg-title').textContent=titles[tab]||tab;
   document.getElementById('pg-meta').textContent='';
-  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients,'onboard-company':loadOnboardCompany,users:loadUsers,profile:loadProfile};
+  const load={portal:loadPortal,requests:loadRequests,'create-req':loadCreateReqForm,workflows:loadWorkflows,files:loadFileRequests,connections:loadConnections,notifications:loadNotifications,audit:loadAudit,groups:loadGroups,recipients:loadRecipients,'onboard-company':loadOnboardCompany,users:loadUsers,profile:loadProfile,'dq-tables':loadDqEntry};
   if(load[tab])load[tab]().catch(e=>console.error(e));
 }
 
@@ -1368,6 +1391,82 @@ async function loadConnections(){const d=await api('GET',`${DS}/connections/`);d
 async function createConn(){try{await api('POST',`${DS}/connections/`,{db_type:document.getElementById('c-type').value,host:document.getElementById('c-host').value,port:parseInt(document.getElementById('c-port').value),database:document.getElementById('c-db').value||null,username:document.getElementById('c-user').value,password:document.getElementById('c-pass').value,description:document.getElementById('c-desc').value||null});toast('Created');toggleEl('conn-form');loadConnections()}catch(e){toast(e.message,false)}}
 async function testConn(id){try{const r=await api('POST',`${DS}/connections/${id}/test`);toast(r.success?'Connection OK':r.error,r.success)}catch(e){toast(e.message,false)}}
 async function delConn(id){await api('DELETE',`${DS}/connections/${id}`);toast('Deleted');loadConnections()}
+
+// ---------- Data Quality · Tables (BRD §4.2 / FR-TYPE) ----------
+const DQ_SEMANTIC_TYPES=['master_data','transaction','event_log','reference','staging','snapshot'];
+
+async function loadDqEntry(){
+  // Populate the connection picker from data_sharing's existing connection list,
+  // then load tables for the first connection.
+  const sel=document.getElementById('dq-conn-select');
+  let conns=[];
+  try{conns=await api('GET',`${DS}/connections/`)}catch(e){
+    sel.innerHTML='<option value="">— no connections (create one in Connections) —</option>';
+    document.getElementById('dq-tb').innerHTML='<tr><td colspan="6" class="empty">Add a connection in the Connections tab first.</td></tr>';
+    document.getElementById('dq-tables-info').textContent='';
+    return;
+  }
+  if(!conns.length){
+    sel.innerHTML='<option value="">— no connections —</option>';
+    document.getElementById('dq-tb').innerHTML='<tr><td colspan="6" class="empty">Add a connection in the Connections tab first.</td></tr>';
+    document.getElementById('dq-tables-info').textContent='';
+    return;
+  }
+  const prev=sel.value;
+  sel.innerHTML=conns.map(c=>`<option value="${c.id}">${c.db_type} · ${c.host}${c.database?' / '+c.database:''}</option>`).join('');
+  if(prev&&conns.some(c=>c.id===prev))sel.value=prev;
+  await loadDqTables();
+}
+
+async function loadDqTables(){
+  const sel=document.getElementById('dq-conn-select');
+  const cid=sel.value;
+  const tb=document.getElementById('dq-tb');
+  const info=document.getElementById('dq-tables-info');
+  if(!cid){tb.innerHTML='';info.textContent='';return}
+  tb.innerHTML='<tr><td colspan="6" class="empty">Loading…</td></tr>';
+  let resp;
+  try{resp=await api('GET',`${DQ}/tables/connections/${cid}`)}
+  catch(e){tb.innerHTML=`<tr><td colspan="6" class="empty">Failed: ${e.message}</td></tr>`;info.textContent='';return}
+  info.innerHTML=`Connection type: <strong>${resp.db_type}</strong> · default schema: <strong class="mono">${resp.default_schema}</strong>`+
+    (resp.source_error?` · <span style="color:#c00">source error: ${resp.source_error}</span>`:'');
+  if(!resp.items.length){tb.innerHTML='<tr><td colspan="6" class="empty">No tables found.</td></tr>';return}
+  tb.innerHTML=resp.items.map(it=>{
+    const opts=DQ_SEMANTIC_TYPES.map(t=>`<option value="${t}"${it.semantic_type===t?' selected':''}>${t}</option>`).join('');
+    const status=it.live
+      ?(it.semantic_type
+          ?`<span class="badge badge-approved">typed</span>`
+          :`<span class="badge badge-draft" title="No semantic type assigned — rules apply with conservative defaults (FR-TYPE-02)">low context confidence</span>`)
+      :`<span class="badge badge-rejected" title="Stored type but table no longer present in source">stale</span>`;
+    const safeSchema=String(it.schema_name).replace(/'/g,"\\'");
+    const safeTable=String(it.table_name).replace(/'/g,"\\'");
+    return `<tr>
+      <td class="mono" style="font-size:11px">${it.schema_name}</td>
+      <td class="mono" style="font-size:11px">${it.table_name}</td>
+      <td>
+        <select onchange="dqAssignType('${cid}','${safeSchema}','${safeTable}',this.value)" style="font-size:11px;padding:4px">
+          <option value="">— unset —</option>${opts}
+        </select>
+      </td>
+      <td>${status}</td>
+      <td style="font-size:11px">${it.note||'—'}</td>
+      <td style="font-size:11px">${fmtDt(it.assigned_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function dqAssignType(cid,schema,table,semanticType){
+  try{
+    if(!semanticType){
+      await api('DELETE',`${DQ}/tables/connections/${cid}/assign`,{schema_name:schema,table_name:table});
+      toast('Type cleared');
+    }else{
+      await api('PUT',`${DQ}/tables/connections/${cid}/assign`,{schema_name:schema,table_name:table,semantic_type:semanticType});
+      toast(`Tagged ${table} as ${semanticType}`);
+    }
+    loadDqTables();
+  }catch(e){toast(e.message,false)}
+}
 
 // Notifications
 async function loadNotifications(){const d=await api('GET',`${DS}/notifications/?unread_only=${document.getElementById('n-unread').checked}`);document.getElementById('n-tb').innerHTML=d.map(n=>`<tr>

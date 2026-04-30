@@ -20,6 +20,20 @@ from app.products.data_sharing.routers import (
     external_recipients, pickup,
 )
 
+# Product: Data Quality (IDQP)
+from app.products.data_quality.dependencies import require_data_quality
+from app.products.data_quality.routers import (
+    health as dq_health,
+    tables as dq_tables,
+    connections as dq_connections,
+    scans as dq_scans,
+    concepts as dq_concepts,
+    active_rules as dq_active_rules,
+    issues as dq_issues,
+    profiles as dq_profiles,
+    scores as dq_scores,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -77,9 +91,16 @@ for r in [share_requests, approvals, files, notifications,
 # Public pickup portal — /api/v1/pickup/... (NO auth middleware, NO product gate)
 app.include_router(pickup.router, prefix="/api/v1")
 
-# Future products register here — zero changes to Platform Core needed
-# from app.products.data_quality.routers import profiling, quality_rules
-# app.include_router(profiling.router, prefix="/api/v1/products/data-quality")
+# Product: Data Quality — /api/v1/products/data-quality/...
+# Same pattern as Data Sharing: every route is gated by the tenant having
+# the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
+for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
+          dq_active_rules, dq_issues, dq_profiles, dq_scores]:
+    app.include_router(
+        r.router,
+        prefix="/api/v1/products/data-quality",
+        dependencies=[Depends(require_data_quality)],
+    )
 
 
 @app.get("/health")
@@ -95,6 +116,7 @@ _ACCEPT_INVITE_HTML_CANDIDATES = [
     "frontend/accept-invitation.html",
     "../frontend/accept-invitation.html",
 ]
+_DQ_HTML_CANDIDATES = ["/frontend/dq.html", "frontend/dq.html", "../frontend/dq.html"]
 
 
 def _resolve_static(candidates: list[str]) -> str | None:
@@ -117,4 +139,14 @@ async def accept_invitation_page():
     path = _resolve_static(_ACCEPT_INVITE_HTML_CANDIDATES)
     if not path:
         return JSONResponse(status_code=404, content={"detail": "accept-invitation.html not found"})
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/dq")
+async def dq_page():
+    """Standalone Data Quality UI (single HTML file). Lets you sign in and
+    exercise the IDQP endpoints without relying on the main portal frontend."""
+    path = _resolve_static(_DQ_HTML_CANDIDATES)
+    if not path:
+        return JSONResponse(status_code=404, content={"detail": "dq.html not found"})
     return FileResponse(path, media_type="text/html")
