@@ -62,6 +62,47 @@ class WorkflowRepository(PostgresqlAsyncRepository):
     async def delete_template_steps(self, template_id: UUID) -> None:
         await self._execute("DELETE FROM t_template_steps WHERE template_id = $1", (template_id,))
 
+    async def delete_template(self, template_id: UUID) -> None:
+        """Hard-delete a workflow template. Cascades through template steps
+        first, then drops the template row itself. Caller must have already
+        verified there are no in-flight requests still bound to it (or
+        nulled their workflow_template_id)."""
+        await self._execute("DELETE FROM t_template_steps WHERE template_id = $1", (template_id,))
+        await self._execute("DELETE FROM t_workflow_templates WHERE id = $1", (template_id,))
+
+    async def detach_template_from_requests(self, template_id: UUID) -> int:
+        """Null out workflow_template_id on every request that points at
+        this template. Returns the number of rows affected so the caller
+        can surface a count in audit / UI."""
+        rows = await self._fetch_all(
+            "UPDATE t_share_requests SET workflow_template_id = NULL WHERE workflow_template_id = $1 RETURNING id",
+            (template_id,),
+        )
+        return len(rows)
+
+    async def find_requests_using_template(self, template_id: UUID) -> list[dict]:
+        return await self._fetch_all(
+            "SELECT id, status FROM t_share_requests WHERE workflow_template_id = $1",
+            (template_id,),
+        )
+
+    async def find_stuck_requests(self, tenant_id: int) -> list[dict]:
+        """Submitted-or-later requests that have no workflow steps recorded.
+        These are the requests the backfill endpoint targets — typically
+        ones that were submitted before any active workflow template
+        existed for their (sharing_type, data_classification)."""
+        return await self._fetch_all(
+            """
+            SELECT r.* FROM t_share_requests r
+            WHERE r.tenant_id = $1
+              AND r.status NOT IN ('draft', 'cancelled', 'rejected', 'completed')
+              AND NOT EXISTS (
+                SELECT 1 FROM t_workflow_steps s WHERE s.request_id = r.id
+              )
+            """,
+            (tenant_id,),
+        )
+
     async def deactivate_others(self, tenant_id: int, sharing_type: str | None,
                                 data_classification: str | None, exclude_id: UUID) -> None:
         if sharing_type is None:
