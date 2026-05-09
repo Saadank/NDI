@@ -286,12 +286,13 @@ data_quality/
 
 ### Step 6 — Excel upload pipeline + LLM SQL generation (biggest single step)
 
-- Three Excel templates per BRD Tables 11–13: business glossary, business rules, DQ column rules.
-- `openpyxl` parser + row-level error report.
-- LLM-assisted column matching when Excel rows don't specify columns.
-- LLM SQL generation when business rules are stated in natural language.
-- Mapping review UI: HIGH bulk-approve, MEDIUM/LOW per-row.
-- Versioning + rollback.
+**Detailed plan: [`docs/IDQP_STEP6_PLAN.md`](IDQP_STEP6_PLAN.md)** — file layout, migration 023 schema, 5 LLM prompt purposes, validators, API surface, UI plan, and 9 sub-steps (6.0 → 6.8).
+
+Summary of what changes vs the original outline:
+- **Three entry points**, not one: Excel uploads (BRD Tables 11–13) **plus** an interactive `POST /concepts/draft-from-nl` that lets users author a concept by typing natural language in the Dictionary tab.
+- **`data_quality/ai/` subpackage** quarantines all LLM-touching code. The deterministic rule engine never imports from `ai/`; only the proposal service crosses the boundary, at approval time.
+- **Easy path / hard path** in Table 12: rows that name `table` + `column` skip column-matching and only call `sql_generation`. Rows without a column run `column_match` first, then `sql_generation` per matched column.
+- **Multilingual matching** (e.g. business term "Arabic name" → `A_name` / `name_ar` / `الاسم`) handled by `column_match` returning ranked candidates with confidence; reviewer picks.
 - **Requires** ANTHROPIC_API_KEY provisioned.
 
 ### Step 7 — Dashboard / Insights
