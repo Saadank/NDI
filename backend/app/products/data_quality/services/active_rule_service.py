@@ -33,7 +33,8 @@ from app.products.data_quality.repositories.profile_repository import ProfileRep
 from app.products.data_quality.repositories.table_type_repository import (
     TableTypeRepository,
 )
-from app.products.data_quality.services import fuzzy_matcher, llm_matcher
+from app.products.data_quality.ai.matchers import concept_matcher as llm_matcher
+from app.products.data_quality.services import fuzzy_matcher
 from app.products.data_sharing.repositories.connection_repository import (
     ConnectionRepository,
 )
