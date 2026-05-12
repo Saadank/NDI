@@ -38,6 +38,7 @@ from app.products.data_quality.routers import (
 # the boundary in main.py mirror what's in the source tree.
 from app.products.data_quality.ai.routers import (
     concepts_ai as dq_concepts_ai,
+    imports as dq_imports,
 )
 
 
@@ -102,7 +103,7 @@ app.include_router(pickup.router, prefix="/api/v1")
 # the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
 for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
           dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions,
-          dq_concepts_ai]:
+          dq_concepts_ai, dq_imports]:
     app.include_router(
         r.router,
         prefix="/api/v1/products/data-quality",
