@@ -188,6 +188,27 @@ def parse_excel(
     return result
 
 
+def write_column_rules_template(out: BytesIO) -> BytesIO:
+    """Build a downloadable .xlsx template for kind=column_rules
+    (Table 13). Three example rows: easy path (parameter provided),
+    LLM hard path (blank parameter on format_regex), and a "no
+    parameter needed" rule_type."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ColumnRules"
+    ws.append(["table", "column", "rule_type", "parameter", "severity", "dimension"])
+    ws.append(["customers", "email", "format_regex",
+               r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$",
+               "high", "validity"])
+    ws.append(["customers", "national_id", "format_regex", "",  # LLM will fill this
+               "critical", "validity"])
+    ws.append(["customers", "email", "not_null", "", "high", "completeness"])
+    wb.save(out)
+    out.seek(0)
+    return out
+
+
 def write_glossary_template(out: BytesIO) -> BytesIO:
     """Build a downloadable .xlsx template for kind=glossary with the
     Table-11 headers + one example row. Used by GET /imports/template."""

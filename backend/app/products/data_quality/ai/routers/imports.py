@@ -12,8 +12,11 @@ from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 
 from app.core.security import get_current_user
+from app.products.data_quality.ai.services.column_rule_ingest import (
+    ColumnRuleIngestService, get_column_rule_ingest_service,
+)
 from app.products.data_quality.ai.services.excel_parser import (
-    write_glossary_template,
+    write_column_rules_template, write_glossary_template,
 )
 from app.products.data_quality.ai.services.glossary_ingest import (
     GlossaryIngestService, get_glossary_ingest_service,
@@ -31,14 +34,16 @@ async def upload_import(
     version_label: str | None = Form(default=None),
     auth_user: AuthUser = Depends(get_current_user),
     glossary_svc: GlossaryIngestService = Depends(get_glossary_ingest_service),
+    column_rule_svc: ColumnRuleIngestService = Depends(get_column_rule_ingest_service),
 ):
     """Upload an Excel file. ``kind`` selects which ingest pipeline runs:
 
     - ``glossary``      — Table 11. No LLM. Persists straight to
                           t_dq_glossary_terms.
-    - ``column_rules``  — Table 13. Step 6.5+. LLM may run for
-                          format_regex rows.
-    - ``business_rules`` — Table 12. Step 6.6+. Always calls LLM.
+    - ``column_rules``  — Table 13. LLM only for format_regex rows
+                          with a blank parameter; everything else is
+                          easy-path HIGH-confidence proposals.
+    - ``business_rules`` — Table 12. Step 6.6 pending.
     """
     if kind not in ("glossary", "column_rules", "business_rules"):
         raise ValidationException(
@@ -53,9 +58,14 @@ async def upload_import(
             version_label=version_label, auth_user=auth_user,
         )
 
-    # 6.5 / 6.6 land later — fail clearly until then so the UI knows.
+    if kind == "column_rules":
+        return await column_rule_svc.ingest(
+            file_bytes=contents, filename=filename,
+            version_label=version_label, auth_user=auth_user,
+        )
+
     raise ValidationException(
-        f"kind={kind!r} is not yet implemented (Step 6.5/6.6 pending)"
+        f"kind={kind!r} is not yet implemented (Step 6.6 pending)"
     )
 
 
@@ -80,18 +90,29 @@ async def list_imports(
 async def download_glossary_template(
     _auth: AuthUser = Depends(get_current_user),
 ):
-    """Download the Table-11 .xlsx template (headers + 2 example rows).
-
-    Auth still applies via the router-level ``require_data_quality``
-    gate; the dependency above just makes ``Authorization`` mandatory
-    at the route level too so an unauth'd GET returns 401 rather than
-    silently 200-ing past the gate."""
+    """Download the Table-11 .xlsx template (headers + 2 example rows)."""
     buf = write_glossary_template(BytesIO())
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": 'attachment; filename="glossary_template.xlsx"',
+        },
+    )
+
+
+@router.get("/template/column_rules")
+async def download_column_rules_template(
+    _auth: AuthUser = Depends(get_current_user),
+):
+    """Download the Table-13 .xlsx template (headers + 3 example rows
+    — one easy-path, one LLM hard-path, one no-parameter rule)."""
+    buf = write_column_rules_template(BytesIO())
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="column_rules_template.xlsx"',
         },
     )
 

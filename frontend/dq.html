@@ -379,7 +379,7 @@
             <button class="alt" onclick="openDraftModal()" title="Describe a rule in natural language; an LLM drafts the concept for you to edit">Draft with AI</button>
           </div>
           <div style="flex:0">
-            <button class="alt" onclick="openGlossaryUploadModal()" title="Upload an Excel glossary (BRD Table 11) to feed business terms into the matcher">Upload glossary</button>
+            <button class="alt" onclick="openExcelUploadModal()" title="Upload an Excel file: business glossary (Table 11) or column rules (Table 13)">Upload Excel</button>
           </div>
           <div style="flex:0">
             <button onclick="openConceptModal()">+ Add concept</button>
@@ -390,32 +390,32 @@
       <div id="dict-content" class="hidden"></div>
     </div>
 
-    <!-- GLOSSARY UPLOAD MODAL (Step 6.4) -->
-    <div class="modal-overlay" id="glossary-modal" onclick="if(event.target===this)closeGlossaryUploadModal()">
-      <div class="modal" style="width:620px">
+    <!-- UPLOAD EXCEL MODAL (Steps 6.4 / 6.5 — one form, kind dropdown) -->
+    <div class="modal-overlay" id="excel-modal" onclick="if(event.target===this)closeExcelUploadModal()">
+      <div class="modal" style="width:660px">
         <div class="modal-head">
-          <strong>Upload business glossary</strong>
-          <button class="alt tiny" style="margin-left:auto" onclick="closeGlossaryUploadModal()">Close</button>
+          <strong>Upload Excel</strong>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeExcelUploadModal()">Close</button>
         </div>
         <div class="modal-body">
-          <p class="api" style="margin-top:0">
-            Excel file (.xlsx) with columns <span class="mono">term</span>,
-            <span class="mono">definition</span>, <span class="mono">synonyms</span>,
-            <span class="mono">language</span>. Synonyms separated by <span class="mono">;</span> or <span class="mono">,</span>.
-            Glossary terms feed the LLM column-matcher with tenant-specific business terminology.
-          </p>
-          <div style="margin:8px 0">
-            <a href="#" onclick="downloadGlossaryTemplate(event)" class="api" style="color:var(--blue);text-decoration:underline">Download template (.xlsx)</a>
+          <label>Kind *</label>
+          <select id="excel-kind" onchange="syncExcelKindHint()">
+            <option value="glossary">Business glossary (Table 11) — no LLM</option>
+            <option value="column_rules">Column rules (Table 13) — LLM only on blank regex</option>
+          </select>
+          <p class="api" id="excel-kind-hint" style="margin:8px 0 0"></p>
+          <div style="margin:6px 0 12px">
+            <a href="#" id="excel-template-link" onclick="downloadExcelTemplate(event)" class="api" style="color:var(--blue);text-decoration:underline">Download template (.xlsx)</a>
           </div>
           <label>File *</label>
-          <input type="file" id="glossary-file" accept=".xlsx" style="padding:6px">
+          <input type="file" id="excel-file" accept=".xlsx" style="padding:6px">
           <label style="margin-top:10px">Version label (optional)</label>
-          <input type="text" id="glossary-version" placeholder="e.g. Q2-2026-glossary-v1">
-          <div id="glossary-result" style="margin-top:12px"></div>
+          <input type="text" id="excel-version" placeholder="e.g. Q2-2026-v1">
+          <div id="excel-result" style="margin-top:12px"></div>
         </div>
         <div class="modal-foot">
-          <button class="alt" onclick="closeGlossaryUploadModal()">Cancel</button>
-          <button id="glossary-btn" onclick="uploadGlossary()">Upload</button>
+          <button class="alt" onclick="closeExcelUploadModal()">Cancel</button>
+          <button id="excel-btn" onclick="uploadExcel()">Upload</button>
         </div>
       </div>
     </div>
@@ -1473,45 +1473,62 @@ function useDraft(){
   toast('Draft loaded — review and Save when ready');
 }
 
-// ---------- Glossary upload (Step 6.4) ----------
-function openGlossaryUploadModal(){
-  $('glossary-file').value='';
-  $('glossary-version').value='';
-  $('glossary-result').innerHTML='';
-  $('glossary-btn').disabled=false;
-  $('glossary-btn').textContent='Upload';
-  $('glossary-modal').classList.add('show');
-}
-function closeGlossaryUploadModal(){$('glossary-modal').classList.remove('show')}
+// ---------- Excel upload (Steps 6.4 / 6.5 — unified modal) ----------
+const _excelKindHints = {
+  glossary: 'Columns: term*, definition, synonyms (; or , separated), language (en|ar|mixed|auto). No LLM — straight persist.',
+  column_rules: 'Columns: table*, column*, rule_type*, parameter, severity*, dimension*. LLM (sql_generation) runs only when parameter is blank for rule_type=format_regex.',
+};
 
-async function downloadGlossaryTemplate(ev){
+function openExcelUploadModal(){
+  $('excel-kind').value='glossary';
+  $('excel-file').value='';
+  $('excel-version').value='';
+  $('excel-result').innerHTML='';
+  $('excel-btn').disabled=false;
+  $('excel-btn').textContent='Upload';
+  syncExcelKindHint();
+  $('excel-modal').classList.add('show');
+}
+function closeExcelUploadModal(){$('excel-modal').classList.remove('show')}
+
+function syncExcelKindHint(){
+  const kind=$('excel-kind').value;
+  $('excel-kind-hint').textContent=_excelKindHints[kind]||'';
+  $('excel-template-link').setAttribute('data-kind',kind);
+}
+
+async function downloadExcelTemplate(ev){
   if(ev) ev.preventDefault();
-  // Use a fetch with the auth header so the router-level product gate is satisfied.
+  const kind=$('excel-kind').value;
   try{
-    const resp=await fetch('/api/v1/products/data-quality/imports/template/glossary',{
+    const resp=await fetch(`/api/v1/products/data-quality/imports/template/${kind}`,{
       headers:{'Authorization':'Bearer '+token},
     });
     if(!resp.ok){toast('Template download failed: HTTP '+resp.status,false);return}
     const blob=await resp.blob();
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
-    a.href=url; a.download='glossary_template.xlsx';
+    a.href=url; a.download=`${kind}_template.xlsx`;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{URL.revokeObjectURL(url); a.remove()}, 100);
   }catch(e){toast(e.message,false)}
 }
 
-async function uploadGlossary(){
-  const f=$('glossary-file').files[0];
+async function uploadExcel(){
+  const f=$('excel-file').files[0];
   if(!f){toast('Pick an .xlsx file first',false);return}
-  const btn=$('glossary-btn');
+  const kind=$('excel-kind').value;
+  const btn=$('excel-btn');
   btn.disabled=true; btn.textContent='Uploading…';
-  $('glossary-result').innerHTML='<div class="api" style="padding:8px">Parsing the spreadsheet…</div>';
+  const loadingMsg=kind==='column_rules'
+    ? 'Parsing rows; LLM calls may take 10–30s each for blank regex rows…'
+    : 'Parsing the spreadsheet…';
+  $('excel-result').innerHTML=`<div class="api" style="padding:8px">${loadingMsg}</div>`;
   try{
     const fd=new FormData();
-    fd.append('kind','glossary');
+    fd.append('kind',kind);
     fd.append('file',f);
-    const ver=$('glossary-version').value.trim();
+    const ver=$('excel-version').value.trim();
     if(ver) fd.append('version_label',ver);
     const resp=await fetch('/api/v1/products/data-quality/imports',{
       method:'POST',
@@ -1520,7 +1537,7 @@ async function uploadGlossary(){
     });
     const data=await resp.json();
     if(!resp.ok){
-      $('glossary-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(data.detail||('HTTP '+resp.status))}</div>`;
+      $('excel-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(data.detail||('HTTP '+resp.status))}</div>`;
       btn.disabled=false; btn.textContent='Retry';
       return;
     }
@@ -1531,22 +1548,26 @@ async function uploadGlossary(){
         <summary class="api" style="cursor:pointer">${errs.length} row error(s) — click to expand</summary>
         <ul class="tv-list" style="margin-top:6px">${errs.slice(0,30).map(e=>`<li><span class="c">row ${e.row??'—'}</span><span class="v">${escapeHtml(e.error)}</span></li>`).join('')}</ul>
       </details>`:'';
-    const statusPill=`pill-${imp.status==='applied'?'ok':(imp.status==='error'?'stale':'warn')}`;
-    $('glossary-result').innerHTML=`
+    const statusPill=`pill-${(imp.status==='applied'||imp.status==='awaiting_review')?'ok':(imp.status==='error'?'stale':'warn')}`;
+    const summary=data.summary;
+    const summaryHtml=summary?`
+      <div class="api" style="margin-top:6px">
+        ${summary.easy} easy-path · ${summary.llm} LLM-drafted · ${summary.rejected} rejected by validator${summary.row_errors?` · ${summary.row_errors} row error(s)`:''}
+      </div>`:'';
+    $('excel-result').innerHTML=`
       <div class="card" style="background:#f8fafc;padding:12px;margin:0">
         <div style="display:flex;gap:10px;align-items:baseline">
           <strong>import #${imp.id}</strong>
           <span class="pill ${statusPill}">${escapeHtml(imp.status||'?')}</span>
-          <span class="api">${imp.row_count??0} term(s) persisted${imp.error_count?` · ${imp.error_count} error(s)`:''}</span>
+          <span class="api">${imp.row_count??0} row(s) processed${imp.error_count?` · ${imp.error_count} parse error(s)`:''}</span>
         </div>
         <p class="api" style="margin:6px 0 0">${escapeHtml(data.detail||'')}</p>
+        ${summaryHtml}
         ${errsHtml}
       </div>`;
     btn.disabled=false; btn.textContent='Upload';
-    // If glossary terms landed, refresh nothing else for now — Step 6.7 will
-    // surface them in an Imports tab. For now the user sees the result inline.
   }catch(e){
-    $('glossary-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(e.message)}</div>`;
+    $('excel-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(e.message)}</div>`;
     btn.disabled=false; btn.textContent='Retry';
   }
 }
