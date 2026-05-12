@@ -376,12 +376,45 @@
             <button class="alt" onclick="seedDefaults()">Seed defaults</button>
           </div>
           <div style="flex:0">
+            <button class="alt" onclick="openDraftModal()" title="Describe a rule in natural language; an LLM drafts the concept for you to edit">Draft with AI</button>
+          </div>
+          <div style="flex:0">
             <button onclick="openConceptModal()">+ Add concept</button>
           </div>
         </div>
       </div>
       <div id="dict-picker"></div>
       <div id="dict-content" class="hidden"></div>
+    </div>
+
+    <!-- DRAFT-WITH-AI MODAL (Approach 2 — Step 6.3) -->
+    <div class="modal-overlay" id="draft-modal" onclick="if(event.target===this)closeDraftModal()">
+      <div class="modal" style="width:620px">
+        <div class="modal-head">
+          <strong>Draft concept with AI</strong>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeDraftModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <label>Describe the rule in natural language *</label>
+          <textarea id="draft-nl" style="min-height:80px" placeholder="e.g. Email column must always be present and look like a valid email"></textarea>
+          <label style="margin-top:10px">Dimension hint (optional)</label>
+          <select id="draft-dim">
+            <option value="">— let the LLM decide —</option>
+            <option value="completeness">completeness</option>
+            <option value="validity">validity</option>
+            <option value="uniqueness">uniqueness</option>
+          </select>
+          <p class="api" style="margin-top:8px">
+            Local LLM (Llama 3) takes ~30–60s on the first call after warm-up.
+            Output is a draft — review and edit before saving.
+          </p>
+          <div id="draft-result" style="margin-top:14px"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeDraftModal()">Cancel</button>
+          <button id="draft-btn" onclick="runDraft()">Draft</button>
+        </div>
+      </div>
     </div>
 
     <!-- PROFILE EDITOR MODAL (create + edit) -->
@@ -1321,6 +1354,91 @@ function openConceptModal(id){
 }
 
 function closeConceptModal(){$('concept-modal').classList.remove('show')}
+
+// ---------- Draft-with-AI (Approach 2 — Step 6.3) ----------
+function openDraftModal(){
+  $('draft-nl').value='';
+  $('draft-dim').value='';
+  $('draft-result').innerHTML='';
+  $('draft-btn').disabled=false;
+  $('draft-btn').textContent='Draft';
+  $('draft-modal').classList.add('show');
+}
+function closeDraftModal(){$('draft-modal').classList.remove('show')}
+
+async function runDraft(){
+  const nl=$('draft-nl').value.trim();
+  if(!nl){toast('Please describe the rule first',false);return}
+  const dim=$('draft-dim').value||null;
+  const btn=$('draft-btn');
+  btn.disabled=true;
+  btn.textContent='Drafting…';
+  $('draft-result').innerHTML='<div class="api" style="padding:8px">Calling local LLM — this can take 30–60s on the first call…</div>';
+  try{
+    const body={nl_text:nl};
+    if(dim) body.dimension_hint=dim;
+    const resp=await api('POST','/api/v1/products/data-quality/concepts/draft-from-nl',body);
+    if(resp.status!=='ok'){
+      $('draft-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">
+        <strong>${escapeHtml(resp.status)}</strong> — ${escapeHtml(resp.error||'')}</div>`;
+      btn.disabled=false; btn.textContent='Retry';
+      return;
+    }
+    const d=resp.draft;
+    const synList=(d.synonyms||[]).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
+    const appliesList=(d.applies_to_types||[]).length
+      ? (d.applies_to_types||[]).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('')
+      : '<span class="api">(any table type)</span>';
+    $('draft-result').innerHTML=`
+      <div class="card" style="background:#f8fafc;padding:12px;margin:0">
+        <div style="display:flex;gap:10px;align-items:baseline;margin-bottom:6px">
+          <strong class="mono">${escapeHtml(d.name)}</strong>
+          <span class="pill pill-${d.confidence==='HIGH'?'ok':(d.confidence==='MEDIUM'?'warn':'low')}">${escapeHtml(d.confidence)}</span>
+          <span class="api">${resp.latency_ms||'?'} ms · ${resp.input_tokens||'?'}/${resp.output_tokens||'?'} tokens</span>
+        </div>
+        <div class="tile-row"><span class="k">Dimension</span><span class="v">${escapeHtml(d.dimension)}</span></div>
+        <div class="tile-row"><span class="k">Rule type</span><span class="v">${escapeHtml(d.rule_type)}</span></div>
+        <div class="tile-row"><span class="k">Parameter</span><span class="v mono">${d.parameter?escapeHtml(d.parameter):'<span class="api">—</span>'}</span></div>
+        <div class="tile-row"><span class="k">Severity</span><span class="v">${escapeHtml(d.severity)}</span></div>
+        <div class="tile-row"><span class="k">Synonyms</span><span class="v">${synList||'<span class="api">(none)</span>'}</span></div>
+        <div class="tile-row"><span class="k">Applies to</span><span class="v">${appliesList}</span></div>
+        <p class="api" style="margin-top:8px;font-style:italic">${escapeHtml(d.reasoning||'')}</p>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button onclick="useDraft()">Use this draft</button>
+          <button class="alt" onclick="runDraft()">Re-draft</button>
+        </div>
+      </div>`;
+    // Stash the draft so 'Use this draft' can pick it up without re-parsing.
+    window._lastDraft=d;
+    btn.disabled=false; btn.textContent='Draft';
+  }catch(e){
+    $('draft-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(e.message)}</div>`;
+    btn.disabled=false; btn.textContent='Retry';
+  }
+}
+
+function useDraft(){
+  const d=window._lastDraft;
+  if(!d){toast('No draft to use',false);return}
+  closeDraftModal();
+  // Open the existing concept modal in create-mode and prefill from the draft.
+  openConceptModal();
+  $('cm-dimension').value=d.dimension;
+  $('cm-concept').value=d.name;
+  $('cm-rule-type').value=d.rule_type;
+  $('cm-severity').value=d.severity||'medium';
+  $('cm-synonyms').value=(d.synonyms||[]).join(', ');
+  if(d.parameter){
+    $('cm-parameter').value=d.parameter;
+  }
+  if(Array.isArray(d.applies_to_types)){
+    document.querySelectorAll('.cm-applies').forEach(cb=>{
+      cb.checked=d.applies_to_types.includes(cb.value);
+    });
+  }
+  syncParameterField();
+  toast('Draft loaded — review and Save when ready');
+}
 
 function syncParameterField(){
   const rt=$('cm-rule-type').value;

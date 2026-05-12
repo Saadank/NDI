@@ -34,6 +34,11 @@ from app.products.data_quality.routers import (
     scores as dq_scores,
     exceptions as dq_exceptions,
 )
+# LLM-touching DQ routes — same product gate, separate import to keep
+# the boundary in main.py mirror what's in the source tree.
+from app.products.data_quality.ai.routers import (
+    concepts_ai as dq_concepts_ai,
+)
 
 
 @asynccontextmanager
@@ -96,7 +101,8 @@ app.include_router(pickup.router, prefix="/api/v1")
 # Same pattern as Data Sharing: every route is gated by the tenant having
 # the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
 for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
-          dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions]:
+          dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions,
+          dq_concepts_ai]:
     app.include_router(
         r.router,
         prefix="/api/v1/products/data-quality",
