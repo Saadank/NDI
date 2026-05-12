@@ -159,6 +159,24 @@ def _stddev_func(db_type: str) -> str:
     return "STDDEV"
 
 
+def _percentile_expr(db_type: str, qcol: str, p: float) -> str | None:
+    """Per-dialect SQL fragment that yields the p-th percentile of qcol
+    (p in [0,1]). Returns None when the dialect lacks a clean built-in;
+    caller should skip percentile collection in that case rather than
+    fall back to client-side sort (which would re-introduce the
+    raw-row-leak risk migration 013 was about).
+
+    - PostgreSQL/Oracle/MSSQL → percentile_cont(p) WITHIN GROUP (ORDER BY col)
+    - ClickHouse              → quantile(p)(col)
+    - MySQL/MariaDB           → no native function; return None
+    """
+    if db_type in ("postgresql", "postgres", "oracle", "mssql"):
+        return f"percentile_cont({p}) WITHIN GROUP (ORDER BY {qcol})"
+    if db_type == "clickhouse":
+        return f"quantile({p})({qcol})"
+    return None
+
+
 def _length_func(db_type: str) -> str:
     # All target dialects accept LENGTH; MSSQL prefers LEN but accepts LENGTH
     # only via wrappers. Use LEN for MSSQL.
@@ -718,23 +736,56 @@ class ProfilerService:
     async def _compute_numeric_extras(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,
     ) -> None:
+        """Numeric distribution stats. Two SQL roundtrips:
+
+        1. Mean / stddev / min / max — one aggregate query, all dialects.
+        2. Median + p25/p75/p95 — only if the dialect supports a percentile
+           function. Skipped silently otherwise; UI shows "—" for those tiles.
+
+        min_value / max_value are persisted (see migration 023 header for the
+        privacy trade-off this represents)."""
+        # ---- mean, stddev, min, max ------------------------------------
         sql = (
-            f"SELECT AVG({qcol}) AS av, {_stddev_func(db_type)}({qcol}) AS sd "
+            f"SELECT AVG({qcol}) AS av, {_stddev_func(db_type)}({qcol}) AS sd, "
+            f"MIN({qcol}) AS mn, MAX({qcol}) AS mx "
             f"FROM {qtable}"
         )
         result = await gateway.execute_query(sql)
         if not result.success or not result.data or not result.data["rows"]:
             logger.debug("numeric extras failed for %s: %s", qcol, result.error)
             return
-        av, sd = (result.data["rows"][0] + [None, None])[:2]
-        try:
-            profile["mean_value"] = float(av) if av is not None else None
-        except (TypeError, ValueError):
-            profile["mean_value"] = None
-        try:
-            profile["stddev_value"] = float(sd) if sd is not None else None
-        except (TypeError, ValueError):
-            profile["stddev_value"] = None
+        av, sd, mn, mx = (result.data["rows"][0] + [None, None, None, None])[:4]
+        for key, val in (("mean_value", av), ("stddev_value", sd),
+                         ("min_value", mn), ("max_value", mx)):
+            try:
+                profile[key] = float(val) if val is not None else None
+            except (TypeError, ValueError):
+                profile[key] = None
+
+        # ---- percentiles (median, p25, p75, p95) -----------------------
+        # Built per-dialect; MySQL/MariaDB get None across the board.
+        parts = []
+        keys: list[str] = []
+        for label, p in (("median_value", 0.5), ("p25_value", 0.25),
+                         ("p75_value", 0.75), ("p95_value", 0.95)):
+            expr = _percentile_expr(db_type, qcol, p)
+            if expr is None:
+                continue
+            parts.append(f"{expr} AS {label}")
+            keys.append(label)
+        if not parts:
+            return
+        sql_p = f"SELECT {', '.join(parts)} FROM {qtable}"
+        result_p = await gateway.execute_query(sql_p)
+        if not result_p.success or not result_p.data or not result_p.data["rows"]:
+            logger.debug("percentiles failed for %s: %s", qcol, result_p.error)
+            return
+        row = (result_p.data["rows"][0] + [None] * len(keys))[:len(keys)]
+        for key, val in zip(keys, row):
+            try:
+                profile[key] = float(val) if val is not None else None
+            except (TypeError, ValueError):
+                profile[key] = None
 
     async def _compute_string_extras(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,

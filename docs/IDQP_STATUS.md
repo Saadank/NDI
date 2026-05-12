@@ -112,12 +112,25 @@ docker exec -i datasharing-1st-postgres-1 \
 | **5.e** | UI: new **Exceptions** sub-tab on profile detail. Suppress button on failing rules in the Metrics tab opens a modal (reason / explanation / ceiling / days). Donuts show governed score; raw line appears only when raw ≠ governed. Suppressed rule rows get a violet badge. |
 | **5.f** | Read-time expiry: rows with `status='active' AND expires_at > now()` are the only ones honored by scoring or list-active. Rows past expiry get a "past expiry" pill in the UI. The Step 8 sweeper will eventually flip them to `status='expired'` for cleanliness. |
 
-### Step 4.5 — Dense column dashboard (all complete — 2026-05-01)
+### Step 4.5 — Dense column dashboard (superseded by Step 5.5 — see below)
 
 | Step | What landed |
 |---|---|
 | **4.5.a** | Profiler now captures `character_maximum_length` (Postgres/MySQL/MSSQL) / `data_length` (Oracle) per column and stashes it on `raw_metrics.declared_length`. No migration — JSONB. |
-| **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag when `declared >= 20 && max*4 <= declared`, and per-column rule-status dots (green/red/grey) keyed off the latest issue per active rule. |
+| **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag, and per-column rule-status dots. **Replaced 2026-05-09:** the Classic / Dense toggle was removed and the views replaced with **Table / Tiles** (see Step 5.5). The `raw_metrics.declared_length` capture from 4.5.a stays — it just isn't surfaced in the new views. |
+
+### Step 5.5 — Scan-results tile redesign (all complete — 2026-05-09)
+
+Per stakeholder review, the per-column profile view was rebuilt around the
+8 metrics shown in the design mock: max value, min value, mean / median /
+percentiles, pattern, null, min / max length, stddev, most-frequent values.
+
+| Step | What landed |
+|---|---|
+| **5.5.a** | Migration 023: adds `min_value`, `max_value`, `p25_value`, `p75_value`, `p95_value` to `t_dq_column_profiles`. **Partially reverses 013** — header documents the privacy trade-off (min/max is a single-row leak; persisting them was the explicit ask). Top values stay live-only. |
+| **5.5.b** | `ProfilerService._compute_numeric_extras` now collects min/max + median + p25/p75/p95. Percentiles use `percentile_cont` (Postgres / Oracle / MSSQL) or `quantile()` (ClickHouse); MySQL/MariaDB get null tiles since neither dialect has a clean built-in. |
+| **5.5.c** | New endpoint `GET /profiles/{id}/columns/{col}/sample-stats?top_limit=N`. Live-fetches the top-N most-frequent non-null values via the existing connector. **Nothing persisted.** Backs the "Top values" tile / cell. Cached client-side per `(profile_id, column_name)` so toggling Table↔Tiles doesn't re-fetch. |
+| **5.5.d** | Frontend: Classic view and Dense view both removed. New **Table** view = trimmed columns matching the picture (#, Column, Null, Length, Min·Max, Mean, Median, StdDev, Pattern, Top values button). New **Tiles** view = one card per column with a 3-col CSS-grid of 8 tiles arranged like the mock (Max / Min / [Mean·Median·percentiles tall tile] · Pattern / Null / [continued] · StdDev / Top values / Length). Top-values tile/cell is on-demand via a `Show` button. |
 
 ### First-run UX rework (all complete — 2026-04-29)
 
@@ -163,7 +176,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 ## Key architectural decisions (do NOT re-litigate without checking)
 
 1. **Schema isolation in `dq.*`** — every DQ table lives in its own Postgres schema. Cross-schema FKs to `public.t_tenants` / `public.t_users` / `public.t_connections`.
-2. **Metadata-only storage** — never store raw row values from the source. Pattern signatures replace raw `top_values` / `sample_values`. Live-peek endpoint deferred.
+2. **Metadata-only storage (with one explicit exception)** — pattern signatures replace raw `top_values` / `sample_values`. Migration 023 re-introduced `min_value` and `max_value` as a deliberate trade-off (see that migration's header) — they're single-row leaks, but persisting them lets the redesigned scan-results tiles render without a per-column live query. **Top values are still never persisted** — the live-peek endpoint `/profiles/{id}/columns/{col}/sample-stats` covers them.
 3. **Three dimensions only (Phase 1)** — completeness, validity, uniqueness. Consistency / timeliness / accuracy come back when their rule libraries are designed.
 4. **Dictionary-driven, not column-binding** — instead of binding one rule to N columns one-by-one (Informatica's pattern), the matcher reads each column's name and proposes concepts whose synonyms match. PK `not_null` is *not* a rule — the database already enforces it.
 5. **Two-tier matcher (permanent, not temporary)** — fuzzy first (free, deterministic, fast) → LLM Haiku 4.5 only when fuzzy fails (semantic, handles abbreviations / non-English). Per-call dictionary cached via Anthropic prompt caching.
@@ -204,6 +217,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 | 020 | `dq_score_history.sql` | `t_dq_score_history` — per-(scan, dimension) pass-rate, tier, raw/governed/weighted scores (Step 4) |
 | 021 | `dq_score_thresholds.sql` | `t_dq_score_thresholds` — per-tenant tier bands + severity-weighting toggle (Step 4) |
 | 022 | `dq_exceptions.sql` | `t_dq_exceptions` + history trigger — governed exceptions with reason, ceiling, expiry (Step 5) |
+| 023 | `dq_column_profile_extended_stats.sql` | adds `min_value`, `max_value`, `p25_value`, `p75_value`, `p95_value` to `t_dq_column_profiles`. **Partially reverses 013** — min/max are now persisted (header documents the privacy trade-off). Top values remain live-only. Backs the redesigned scan-results Tiles view. |
 
 ### Backend (`backend/app/products/data_quality/`)
 

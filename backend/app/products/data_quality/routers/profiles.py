@@ -112,3 +112,19 @@ async def clone_profile(
 ):
     row = await service.clone_profile(profile_id, body.new_name, auth_user)
     return {"detail": "Profile cloned", "profile": row}
+
+
+@router.get("/{profile_id}/columns/{column_name}/sample-stats")
+async def column_sample_stats(
+    profile_id: int,
+    column_name: str,
+    top_limit: int = Query(default=10, ge=1, le=50),
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    """Live-peek the most-frequent values for one column on the profile's
+    bound source table. **Nothing is persisted.** Backs the
+    "Most-frequent values" tile in the redesigned Scans → Tiles view."""
+    return await service.column_sample_stats(
+        profile_id, column_name, top_limit=top_limit, auth_user=auth_user,
+    )

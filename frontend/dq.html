@@ -122,6 +122,38 @@
   .view-toggle{display:inline-flex;background:#f1f5f9;border-radius:6px;padding:2px;font-size:11px}
   .view-toggle button{border:0;background:transparent;padding:4px 10px;border-radius:4px;cursor:pointer;color:var(--mute);font-weight:600}
   .view-toggle button.active{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  /* ---- Tile-grid scan-results view ---- */
+  .col-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px}
+  .col-card-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+  .col-card-head .col-name{font-family:ui-monospace,monospace;font-size:13px;font-weight:600;color:var(--ink)}
+  .col-card-head .col-ord{font-size:11px;color:var(--mute)}
+  .col-card-head .col-type{font-size:10.5px;font-weight:600;background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:999px}
+  .col-card-head .col-decl{font-size:11px;color:var(--mute);font-family:ui-monospace,monospace}
+  .tile-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+    grid-template-areas:
+      "max min central"
+      "pat nul central"
+      "std top len";}
+  .tile-max{grid-area:max} .tile-min{grid-area:min} .tile-central{grid-area:central}
+  .tile-pat{grid-area:pat} .tile-nul{grid-area:nul}
+  .tile-std{grid-area:std} .tile-top{grid-area:top} .tile-len{grid-area:len}
+  .tile{background:#f8fafc;border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;justify-content:center;min-height:54px}
+  .tile-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin-bottom:4px;font-weight:600}
+  .tile-value{font-size:16px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;word-break:break-word}
+  .tile-value.muted{color:var(--mute);font-weight:500;font-size:13px}
+  .tile-row{display:flex;justify-content:space-between;font-size:12px;font-variant-numeric:tabular-nums;padding:1px 0}
+  .tile-row .k{color:var(--mute);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;font-weight:600}
+  .tile-row .v{color:var(--ink);font-weight:600}
+  .tile-mono{font-family:ui-monospace,monospace;font-size:13px}
+  .tv-list{margin:4px 0 0;padding:0;list-style:none;font-size:11.5px;font-variant-numeric:tabular-nums}
+  .tv-list li{display:flex;justify-content:space-between;gap:8px;padding:1px 0;border-bottom:1px dashed var(--line)}
+  .tv-list li:last-child{border-bottom:0}
+  .tv-list .v{font-family:ui-monospace,monospace;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
+  .tv-list .c{color:var(--mute);flex-shrink:0}
+  @media (max-width: 760px){
+    .tile-grid{grid-template-columns:1fr 1fr;
+      grid-template-areas:"max min" "central central" "pat nul" "std top" "len len";}
+  }
   /* ---- Step 5: governed exceptions ---- */
   .pill-suppressed{background:#ede9fe;color:#5b21b6}
   .pill-revoked{background:#e2e8f0;color:#475569}
@@ -319,23 +351,14 @@
         </div>
         <div style="overflow-x:auto">
           <table>
-            <thead><tr>
-              <th>Column</th><th style="width:80px">Type</th>
-              <th style="width:110px">Inferred</th>
-              <th class="num" style="width:70px">Null %</th>
-              <th class="num" style="width:80px">Distinct</th>
-              <th class="num" style="width:80px">Mean</th>
-              <th class="num" style="width:80px">StdDev</th>
-              <th class="num" style="width:70px">Avg len</th>
-              <th>Pattern</th>
-              <th class="num" style="width:70px">Match %</th>
-            </tr></thead>
+            <thead><!-- populated dynamically by renderProfileTable / renderProfileTiles --></thead>
             <tbody id="profile-tb"></tbody>
           </table>
           <p class="api" style="padding:10px 16px;margin:0">
-            DQ holds metadata only — no raw row values. Patterns use a tokenized
+            Persisted: aggregates + min/max value + min/max length. Patterns use a tokenized
             signature (<span class="mono">A</span> = upper, <span class="mono">a</span> = lower,
             <span class="mono">9</span> = digit) plus known-format labels (EMAIL, UUID, ISO_DATE…).
+            <strong>Top values are fetched live</strong> from the source on demand and never stored.
           </p>
         </div>
       </div>
@@ -915,25 +938,24 @@ function pct(v){return v==null?'—':(Number(v)*100).toFixed(1)+'%'}
 function fmtNum(v){if(v==null)return '—';if(typeof v==='number')return Number.isInteger(v)?v.toLocaleString():v.toFixed(3);return v}
 function trunc(s,n){s=String(s??'');return s.length>n?s.slice(0,n)+'…':s}
 
-let _profileViewMode='classic';  // 'classic' | 'dense'
+// Scan-results view: 'table' | 'tiles'. Both render the same 8 stats from
+// the picture (max value, min value, mean/median/percentiles, pattern, null,
+// min/max length, stddev, most-frequent values). Top values are always
+// fetched live (never persisted — see migration 023 header / sample-stats
+// endpoint). Min/max are persisted since migration 023.
+let _profileViewMode='table';
 let _profileLastLoad=null;
+// Cache of live-peek top-values per (profile_id, column_name) for the
+// duration of a scan view, so toggling Table↔Tiles doesn't re-fetch.
+const _topValuesCache={};
 
 async function loadProfile(scanId){
   try{
     const resp=await api('GET','/api/v1/products/data-quality/scans/'+scanId+'/profiles');
-    // Try to pull active rules + latest issues for this scan to power the
-    // dense view's per-column rule indicators. Best-effort — failure here
-    // just means the dense view shows blank rule columns.
-    let activeRules=[]; let issues=[];
-    try{
-      if(resp.scan && resp.scan.profile_id){
-        const ar=await api('GET','/api/v1/products/data-quality/active-rules?profile_id='+resp.scan.profile_id);
-        activeRules=ar.items||[];
-      }
-      const ii=await api('GET','/api/v1/products/data-quality/issues/scan/'+scanId);
-      issues=ii.items||[];
-    }catch(e){/* non-fatal */}
-    _profileLastLoad={scan:resp.scan, profiles:resp.profiles||[], activeRules, issues};
+    _profileLastLoad={scan:resp.scan, profiles:resp.profiles||[]};
+    // Reset live-peek cache when a new scan opens so we don't carry stale
+    // top-values from a previous profile.
+    for(const k in _topValuesCache) delete _topValuesCache[k];
     renderProfileView();
   }catch(e){toast(e.message,false)}
 }
@@ -945,136 +967,194 @@ function setProfileViewMode(mode){
 
 function renderProfileView(){
   if(!_profileLastLoad)return;
-  const {scan, profiles, activeRules, issues}=_profileLastLoad;
+  const {scan, profiles}=_profileLastLoad;
   $('profile-card').classList.remove('hidden');
   $('profile-title').textContent=scan.schema_name+'.'+scan.table_name;
   const metaBase=`scan #${scan.id} · ${scan.row_count?.toLocaleString()??'?'} rows · ${profiles.length} columns`;
   $('profile-meta').innerHTML=`${metaBase}
     <span class="view-toggle" style="margin-left:14px">
-      <button class="${_profileViewMode==='classic'?'active':''}" onclick="setProfileViewMode('classic')">Classic</button>
-      <button class="${_profileViewMode==='dense'?'active':''}" onclick="setProfileViewMode('dense')">Dense</button>
+      <button class="${_profileViewMode==='table'?'active':''}" onclick="setProfileViewMode('table')">Table</button>
+      <button class="${_profileViewMode==='tiles'?'active':''}" onclick="setProfileViewMode('tiles')">Tiles</button>
     </span>`;
   if(!profiles.length){
-    document.getElementById('profile-tb').innerHTML='<tr><td class="empty" colspan="10">No profile rows.</td></tr>';
+    $('profile-tb').innerHTML='<tr><td class="empty" colspan="10">No profile rows.</td></tr>';
     return;
   }
-  if(_profileViewMode==='classic') renderProfileClassic(profiles);
-  else                              renderProfileDense(profiles, activeRules, issues);
+  if(_profileViewMode==='table') renderProfileTable(scan, profiles);
+  else                            renderProfileTiles(scan, profiles);
   $('profile-card').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
-function renderProfileClassic(profiles){
-  // Restore the original column order in case the dense view rewrote the head.
+// Format the central stats tile (mean/median/p25/p75/p95) — multi-row.
+function _centralStatsRows(p){
+  const rows=[
+    ['Mean',  fmtNum(p.mean_value)],
+    ['Median',fmtNum(p.median_value)],
+    ['p25',   fmtNum(p.p25_value)],
+    ['p75',   fmtNum(p.p75_value)],
+    ['p95',   fmtNum(p.p95_value)],
+  ];
+  return rows.map(([k,v])=>`<div class="tile-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function _lengthTileRows(p){
+  return `<div class="tile-row"><span class="k">Min len</span><span class="v">${p.min_length!=null?p.min_length:'—'}</span></div>
+          <div class="tile-row"><span class="k">Max len</span><span class="v">${p.max_length!=null?p.max_length:'—'}</span></div>`;
+}
+
+// ---------- Table view ----------
+function renderProfileTable(scan, profiles){
   const tableEl=document.querySelector('#profile-card table');
   tableEl.querySelector('thead').innerHTML=`<tr>
-    <th>Column</th><th style="width:80px">Type</th>
-    <th style="width:110px">Inferred</th>
-    <th class="num" style="width:70px">Null %</th>
-    <th class="num" style="width:80px">Distinct</th>
-    <th class="num" style="width:80px">Mean</th>
+    <th style="width:50px" class="num">#</th>
+    <th>Column</th>
+    <th class="num" style="width:90px" title="Null count and rate">Null</th>
+    <th class="num" style="width:110px" title="Min / Max length (string columns)">Length</th>
+    <th class="num" style="width:130px" title="Min / Max value (numeric columns)">Min · Max</th>
+    <th class="num" style="width:90px">Mean</th>
+    <th class="num" style="width:90px">Median</th>
     <th class="num" style="width:80px">StdDev</th>
-    <th class="num" style="width:70px">Avg len</th>
     <th>Pattern</th>
-    <th class="num" style="width:70px">Match %</th>
+    <th style="width:130px">Top values</th>
   </tr>`;
-  $('profile-tb').innerHTML=profiles.map(p=>{
-    const tps=Array.isArray(p.top_patterns)?p.top_patterns.slice(0,3)
-      .map(x=>`${x.pattern} (${x.count})`).join(' · '):'';
-    const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,40)}</span>`:'—';
-    const tooltip=tps?` title="top: ${tps.replace(/"/g,'&quot;')}"`:'';
-    return `<tr${tooltip}>
+  $('profile-tb').innerHTML=profiles.map((p,idx)=>{
+    const nullN=p.null_count!=null?Number(p.null_count).toLocaleString():'—';
+    const nullR=p.null_rate!=null?pct(p.null_rate):'—';
+    const lenCell=(p.min_length!=null||p.max_length!=null)
+      ? `${p.min_length??'—'} / ${p.max_length??'—'}` : '—';
+    const minMax=(p.min_value!=null||p.max_value!=null)
+      ? `${fmtNum(p.min_value)} / ${fmtNum(p.max_value)}` : '—';
+    const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,30)}</span>`:'—';
+    const tvBtnId=`tv-btn-row-${idx}`;
+    const tvSlotId=`tv-slot-row-${idx}`;
+    const encCol=encodeURIComponent(p.column_name).replace(/'/g,'%27');
+    return `<tr>
+      <td class="num cell-mute">${p.ordinal_position??'—'}</td>
       <td class="mono">${escapeHtml(p.column_name)}</td>
-      <td class="cell-mute">${p.type_category||'—'}</td>
-      <td><span class="pill pill-ok" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
-      <td class="num">${pct(p.null_rate)}</td>
-      <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
+      <td class="num">${nullN}<br><span class="api">${nullR}</span></td>
+      <td class="num">${lenCell}</td>
+      <td class="num">${minMax}</td>
       <td class="num">${fmtNum(p.mean_value)}</td>
+      <td class="num">${fmtNum(p.median_value)}</td>
       <td class="num">${fmtNum(p.stddev_value)}</td>
-      <td class="num">${fmtNum(p.avg_length)}</td>
       <td>${dom}</td>
-      <td class="num">${pct(p.pattern_conformance_rate)}</td>
+      <td>
+        <button id="${tvBtnId}" class="tiny" onclick="loadTopValues('${encCol}','${tvSlotId}','${tvBtnId}')">Show</button>
+        <div id="${tvSlotId}" class="api"></div>
+      </td>
     </tr>`;
   }).join('');
 }
 
-function renderProfileDense(profiles, activeRules, issues){
-  // Build per-column rule and issue indices for fast lookup.
-  const rulesByCol={};
-  for(const r of (activeRules||[])){
-    (rulesByCol[r.column_name]=rulesByCol[r.column_name]||[]).push(r);
-  }
-  const issuesByCol={};
-  for(const i of (issues||[])){
-    (issuesByCol[i.column_name]=issuesByCol[i.column_name]||[]).push(i);
-  }
+// ---------- Tiles view ----------
+function renderProfileTiles(scan, profiles){
+  // Tiles view doesn't use the table element — we stack one card per column
+  // inside #profile-tb. To make the existing <table>/<tbody> structure host
+  // arbitrary block content, we emit a single full-width row whose cell
+  // holds the cards.
   const tableEl=document.querySelector('#profile-card table');
-  tableEl.querySelector('thead').innerHTML=`<tr>
-    <th style="width:60px" class="num">#</th>
-    <th>Column</th>
-    <th style="width:140px">Declared / inferred</th>
-    <th style="width:160px" title="Null / Distinct / Repeated mix across the column's rows">Value distribution</th>
-    <th class="num" style="width:80px">Rows</th>
-    <th class="num" style="width:90px">Null %</th>
-    <th class="num" style="width:80px">Distinct</th>
-    <th class="num" style="width:90px">Length / declared</th>
-    <th>Dominant pattern</th>
-    <th style="width:130px">Rules · status</th>
-  </tr>`;
-  $('profile-tb').innerHTML=profiles.map(p=>{
-    const total=Math.max(1, Number(p.row_count)||1);
-    const nullN=Number(p.null_count)||0;
-    const distN=Number(p.distinct_count)||0;
-    const nonNull=Math.max(0, total-nullN);
-    // Repeated rows = non-null rows that share a value with another row.
-    // Approximation: repeated_count = max(0, nonNull - distinctCount). Distinct
-    // bar therefore shows the share of the column that is "unique non-null".
-    const repeated=Math.max(0, nonNull-distN);
-    const distinctVisible=Math.max(0, nonNull-repeated);
-    const wNull=nullN/total*100;
-    const wDist=distinctVisible/total*100;
-    const wRep=repeated/total*100;
-    const distBar=`<div class="dense-bar"
-        title="null ${nullN.toLocaleString()} · distinct ${distN.toLocaleString()} · repeated ${repeated.toLocaleString()}">
-      <span class="dense-null" style="width:${wNull.toFixed(2)}%"></span>
-      <span class="dense-distinct" style="width:${wDist.toFixed(2)}%"></span>
-      <span class="dense-non-distinct" style="width:${wRep.toFixed(2)}%"></span>
+  tableEl.querySelector('thead').innerHTML='';
+  const cards=profiles.map((p,idx)=>{
+    const tvSlotId=`tv-slot-tile-${idx}`;
+    const tvBtnId=`tv-btn-tile-${idx}`;
+    const encCol=encodeURIComponent(p.column_name).replace(/'/g,'%27');
+    const declared=p.declared_data_type?`<span class="col-decl">${escapeHtml(p.declared_data_type)}</span>`:'';
+    const inferred=p.inferred_column_type?`<span class="col-type">${escapeHtml(p.inferred_column_type)}</span>`:'';
+    return `<div class="col-card">
+      <div class="col-card-head">
+        <span class="col-ord">#${p.ordinal_position??'—'}</span>
+        <span class="col-name">${escapeHtml(p.column_name)}</span>
+        ${declared}
+        ${inferred}
+      </div>
+      <div class="tile-grid">
+        <div class="tile tile-max">
+          <div class="tile-label">Max value</div>
+          <div class="tile-value ${p.max_value==null?'muted':''}">${p.max_value!=null?fmtNum(p.max_value):'—'}</div>
+        </div>
+        <div class="tile tile-min">
+          <div class="tile-label">Min value</div>
+          <div class="tile-value ${p.min_value==null?'muted':''}">${p.min_value!=null?fmtNum(p.min_value):'—'}</div>
+        </div>
+        <div class="tile tile-central">
+          <div class="tile-label">Mean · Median · Percentiles</div>
+          ${_centralStatsRows(p)}
+        </div>
+        <div class="tile tile-pat">
+          <div class="tile-label">Pattern</div>
+          <div class="tile-value tile-mono ${p.dominant_pattern?'':'muted'}">${p.dominant_pattern?escapeHtml(trunc(p.dominant_pattern,28)):'—'}</div>
+        </div>
+        <div class="tile tile-nul">
+          <div class="tile-label">Null</div>
+          <div class="tile-value">${p.null_count!=null?Number(p.null_count).toLocaleString():'—'}</div>
+          <div class="api">${p.null_rate!=null?pct(p.null_rate):''}</div>
+        </div>
+        <div class="tile tile-std">
+          <div class="tile-label">StdDev</div>
+          <div class="tile-value ${p.stddev_value==null?'muted':''}">${p.stddev_value!=null?fmtNum(p.stddev_value):'—'}</div>
+        </div>
+        <div class="tile tile-top">
+          <div class="tile-label">Top values</div>
+          <button id="${tvBtnId}" class="tiny" style="align-self:flex-start;margin-top:2px"
+            onclick="loadTopValues('${encCol}','${tvSlotId}','${tvBtnId}')">Show</button>
+          <div id="${tvSlotId}"></div>
+        </div>
+        <div class="tile tile-len">
+          <div class="tile-label">Length</div>
+          ${_lengthTileRows(p)}
+        </div>
+      </div>
     </div>`;
-    // Type-gap flag: declared_length stashed on raw_metrics by the profiler.
-    const declared=(p.raw_metrics&&p.raw_metrics.declared_length)||null;
-    const maxLen=Number(p.max_length)||null;
-    let gapFlag='';
-    if(declared && maxLen!=null && declared>=20 && maxLen*4<=declared){
-      gapFlag=`<span class="typegap-flag" title="Declared ${declared} chars but max observed is ${maxLen}">over-allocated</span>`;
-    }
-    const lenCell=(maxLen!=null||declared)
-      ? `${maxLen!=null?maxLen:'—'}${declared?` / ${declared}`:''}${gapFlag}`
-      : '—';
-    // Per-column rule indicators.
-    const rules=rulesByCol[p.column_name]||[];
-    const colIssues=issuesByCol[p.column_name]||[];
-    const issueByRuleId={};
-    for(const i of colIssues) issueByRuleId[i.active_rule_id]=i;
-    const ruleDots=rules.length?rules.map(r=>{
-      const i=issueByRuleId[r.id];
-      const cls=!i?'ri-error':(i.status==='pass'?'ri-pass':(i.status==='fail'?'ri-fail':'ri-error'));
-      const tip=`${r.c_concept} (${r.c_rule_type})${i?' — '+i.status:' — not yet validated'}`;
-      return `<span class="dense-rule-icon ${cls}" title="${escapeHtml(tip)}"></span>`;
-    }).join('') : '<span class="cell-mute">—</span>';
-    const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,30)}</span>`:'—';
-    return `<tr>
-      <td class="num cell-mute">${p.ordinal_position??'—'}</td>
-      <td class="mono">${escapeHtml(p.column_name)}</td>
-      <td><span class="cell-mute mono">${escapeHtml(p.declared_data_type||'—')}</span><br>
-        <span class="pill" style="background:#e0e7ff;color:#3730a3">${p.inferred_column_type||'—'}</span></td>
-      <td>${distBar}</td>
-      <td class="num">${total.toLocaleString()}</td>
-      <td class="num">${pct(p.null_rate)}</td>
-      <td class="num">${p.distinct_count!=null?Number(p.distinct_count).toLocaleString():'—'}</td>
-      <td class="num">${lenCell}</td>
-      <td>${dom}</td>
-      <td>${ruleDots} <span class="api">${rules.length||''}</span></td>
-    </tr>`;
   }).join('');
+  $('profile-tb').innerHTML=`<tr><td colspan="20" style="padding:0;border:0">${cards}</td></tr>`;
+}
+
+// Live-peek the most-frequent values for one column. Cached per
+// (profile_id, column_name) so toggling Table↔Tiles doesn't re-fetch.
+// columnNameEnc arrives URL-encoded so it round-trips safely through the
+// HTML-attribute → JS-string → URL-path layers.
+async function loadTopValues(columnNameEnc, slotId, btnId){
+  if(!_profileLastLoad||!_profileLastLoad.scan)return;
+  const profileId=_profileLastLoad.scan.profile_id;
+  if(!profileId){
+    document.getElementById(slotId).innerHTML='<span class="api">no profile id</span>';
+    return;
+  }
+  const columnName=decodeURIComponent(columnNameEnc);
+  const cacheKey=`${profileId}::${columnName}`;
+  const slot=document.getElementById(slotId);
+  const btn=document.getElementById(btnId);
+  if(_topValuesCache[cacheKey]){
+    _renderTopValues(slot, _topValuesCache[cacheKey]);
+    if(btn) btn.style.display='none';
+    return;
+  }
+  if(btn){btn.disabled=true; btn.textContent='…';}
+  try{
+    const url=`/api/v1/products/data-quality/profiles/${profileId}/columns/${encodeURIComponent(columnName)}/sample-stats?top_limit=10`;
+    const resp=await api('GET', url);
+    _topValuesCache[cacheKey]=resp;
+    _renderTopValues(slot, resp);
+    if(btn) btn.style.display='none';
+  }catch(e){
+    slot.innerHTML=`<span class="api" style="color:var(--err)">${escapeHtml(e.message)}</span>`;
+    if(btn){btn.disabled=false; btn.textContent='Retry';}
+  }
+}
+
+function _renderTopValues(slot, resp){
+  if(resp.error){
+    slot.innerHTML=`<span class="api" style="color:var(--err)">${escapeHtml(resp.error)}</span>`;
+    return;
+  }
+  const items=resp.top_values||[];
+  if(!items.length){
+    slot.innerHTML='<span class="api">no values</span>';
+    return;
+  }
+  slot.innerHTML=`<ul class="tv-list">${items.map(it=>`
+    <li><span class="v" title="${escapeHtml(it.value)}">${escapeHtml(it.value||'∅')}</span><span class="c">${Number(it.count).toLocaleString()}</span></li>
+  `).join('')}</ul>`;
 }
 
 function closeProfile(){$('profile-card').classList.add('hidden')}

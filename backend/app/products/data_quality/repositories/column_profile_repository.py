@@ -12,9 +12,10 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
         """Insert a single column-profile row. `profile` is the dict produced
         by ProfilerService._profile_column().
 
-        Stores metadata only — no raw row values from the source. The
-        dropped fields (min/max value, top values, sample values) are
-        replaced by pattern signatures (dominant_pattern, top_patterns)."""
+        Stores metadata + numeric distribution stats. Since migration 023,
+        min_value and max_value ARE persisted (deliberate reversal of 013 —
+        see that migration's header). Top values remain live-only and are
+        not written here."""
         await self._execute(
             """INSERT INTO dq.t_dq_column_profiles
                   (scan_id, tenant_id, connection_id, schema_name, table_name,
@@ -23,6 +24,8 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                    pseudo_null_count, pseudo_null_rate,
                    distinct_count, distinct_rate,
                    mean_value, stddev_value, median_value,
+                   min_value, max_value,
+                   p25_value, p75_value, p95_value,
                    min_length, max_length, avg_length,
                    dominant_pattern, pattern_conformance_rate, top_patterns,
                    inferred_column_type, raw_metrics)
@@ -32,9 +35,11 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                        $14, $15,
                        $16, $17,
                        $18, $19, $20,
-                       $21, $22, $23,
-                       $24, $25, $26::jsonb,
-                       $27, $28::jsonb)
+                       $21, $22,
+                       $23, $24, $25,
+                       $26, $27, $28,
+                       $29, $30, $31::jsonb,
+                       $32, $33::jsonb)
                ON CONFLICT (scan_id, column_name) DO UPDATE SET
                    ordinal_position         = EXCLUDED.ordinal_position,
                    declared_data_type       = EXCLUDED.declared_data_type,
@@ -50,6 +55,11 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                    mean_value               = EXCLUDED.mean_value,
                    stddev_value             = EXCLUDED.stddev_value,
                    median_value             = EXCLUDED.median_value,
+                   min_value                = EXCLUDED.min_value,
+                   max_value                = EXCLUDED.max_value,
+                   p25_value                = EXCLUDED.p25_value,
+                   p75_value                = EXCLUDED.p75_value,
+                   p95_value                = EXCLUDED.p95_value,
                    min_length               = EXCLUDED.min_length,
                    max_length               = EXCLUDED.max_length,
                    avg_length               = EXCLUDED.avg_length,
@@ -68,6 +78,9 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                 profile.get("distinct_count"), profile.get("distinct_rate"),
                 profile.get("mean_value"), profile.get("stddev_value"),
                 profile.get("median_value"),
+                profile.get("min_value"), profile.get("max_value"),
+                profile.get("p25_value"), profile.get("p75_value"),
+                profile.get("p95_value"),
                 profile.get("min_length"), profile.get("max_length"),
                 profile.get("avg_length"),
                 profile.get("dominant_pattern"),
