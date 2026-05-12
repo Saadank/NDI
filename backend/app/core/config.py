@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # data_quality/ai/client.py keeps the swap surface small.
     DQ_LLM_PROVIDER: str = "ollama"          # ollama | (future: openai/anthropic)
     DQ_LLM_BASE_URL: str = "http://host.docker.internal:11434"
-    DQ_LLM_MODEL: str = "llama3:latest"
+    DQ_LLM_MODEL: str = "qwen2.5-coder:7b"
     DQ_LLM_MAX_OUTPUT_TOKENS: int = 1024
     DQ_LLM_TIMEOUT_S: int = 90               # cold-start can take ~30s on first call
 

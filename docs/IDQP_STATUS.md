@@ -184,7 +184,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 7. **Per-scan immutable issues** — `UNIQUE(scan_id, active_rule_id)`. History = the table itself; trends are computed via window functions over time, not separate tables.
 8. **Profile Assets are the unit of work** (Phase 1.5) — a named entity that owns scans, rules, and history. Source binding (connection / schema / table) is immutable post-create — clone if you want a variant.
 9. **Profiler may sample, validator never does** — descriptive stats can be approximated; violation counts must be honest.
-10. **Anthropic Haiku 4.5 for matcher** — `claude-haiku-4-5-20251001`. Configurable via `DQ_LLM_MODEL` env var. No key in `.env.dev` → matcher gracefully falls back to fuzzy-only.
+10. **Local Ollama for LLM features** (was Anthropic Haiku 4.5 through Step 5). Default model `qwen2.5-coder:7b` — purpose-built for code/SQL/JSON, ~16s warm calls on RTX 2080. Configurable via `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL`. When the provider is unreachable, matcher falls back to fuzzy-only and AI endpoints return `llm_unavailable`.
 
 ## What we explicitly REJECTED from Informatica
 
@@ -218,6 +218,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 | 021 | `dq_score_thresholds.sql` | `t_dq_score_thresholds` — per-tenant tier bands + severity-weighting toggle (Step 4) |
 | 022 | `dq_exceptions.sql` | `t_dq_exceptions` + history trigger — governed exceptions with reason, ceiling, expiry (Step 5) |
 | 023 | `dq_column_profile_extended_stats.sql` | adds `min_value`, `max_value`, `p25_value`, `p75_value`, `p95_value` to `t_dq_column_profiles`. **Partially reverses 013** — min/max are now persisted (header documents the privacy trade-off). Top values remain live-only. Backs the redesigned scan-results Tiles view. |
+| 024 | `dq_imports_proposals_llm_calls.sql` | Step 6 data model — `t_dq_imports` (Excel upload state machine), `t_dq_glossary_terms` (BRD Table 11), `t_dq_llm_calls` (audit), `t_dq_proposals` (human-review queue). |
 
 ### Backend (`backend/app/products/data_quality/`)
 
