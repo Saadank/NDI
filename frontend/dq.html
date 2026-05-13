@@ -228,6 +228,7 @@
       <div class="tab" id="tab-tables" onclick="switchTab('tables')">Sources</div>
       <div class="tab" id="tab-scans" onclick="switchTab('scans')">All scans</div>
       <div class="tab" id="tab-dictionary" onclick="switchTab('dictionary')">Dictionary</div>
+      <div class="tab" id="tab-imports" onclick="switchTab('imports')">Imports</div>
     </div>
 
     <!-- PROFILES TAB -->
@@ -388,6 +389,22 @@
       </div>
       <div id="dict-picker"></div>
       <div id="dict-content" class="hidden"></div>
+    </div>
+
+    <!-- IMPORTS TAB (Step 6.7) -->
+    <div id="panel-imports" class="hidden">
+      <div class="card" style="padding:12px 14px;margin-bottom:14px">
+        <div class="row">
+          <div style="flex:1">
+            <strong>Excel imports</strong> — uploads from Dictionary → Upload Excel.
+            <span class="api">Click an import to review its proposal queue. Bulk-approve HIGH-confidence rows or approve/reject individually.</span>
+          </div>
+          <div style="flex:0">
+            <button class="alt" onclick="loadImports()">Refresh</button>
+          </div>
+        </div>
+      </div>
+      <div id="imports-list"></div>
     </div>
 
     <!-- UPLOAD EXCEL MODAL (Steps 6.4 / 6.5 — one form, kind dropdown) -->
@@ -954,13 +971,14 @@ function tpCreateProfile(){
 }
 
 function switchTab(name){
-  ['profiles','tables','scans','dictionary'].forEach(n=>{
+  ['profiles','tables','scans','dictionary','imports'].forEach(n=>{
     $('tab-'+n).classList.toggle('active', n===name);
     $('panel-'+n).classList.toggle('hidden', n!==name);
   });
   if(name==='profiles') loadProfiles();
   if(name==='scans') loadScans();
   if(name==='dictionary') loadConcepts();
+  if(name==='imports') loadImports();
 }
 
 let _scanPoll=null;
@@ -1572,6 +1590,157 @@ async function uploadExcel(){
     $('excel-result').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${escapeHtml(e.message)}</div>`;
     btn.disabled=false; btn.textContent='Retry';
   }
+}
+
+// ---------- Imports tab (Step 6.7) ----------
+const _expandedImports = new Set();
+
+async function loadImports(){
+  try{
+    const resp=await api('GET','/api/v1/products/data-quality/imports');
+    const items=resp.items||[];
+    if(!items.length){
+      $('imports-list').innerHTML='<div class="card empty">No imports yet. Go to <strong>Dictionary → Upload Excel</strong> to add one.</div>';
+      return;
+    }
+    $('imports-list').innerHTML=items.map(imp=>{
+      const statusPill=`pill-${(imp.status==='applied'||imp.status==='awaiting_review')?'ok':(imp.status==='error'?'stale':'warn')}`;
+      const created=imp.created_at?new Date(imp.created_at).toLocaleString():'';
+      const expanded=_expandedImports.has(imp.id);
+      const expandHtml=expanded?`<div id="imp-detail-${imp.id}" style="margin-top:12px"></div>`:'';
+      return `<div class="card" style="padding:14px;margin-bottom:10px">
+        <div style="display:flex;gap:10px;align-items:baseline">
+          <strong>#${imp.id}</strong>
+          <span class="pill ${statusPill}">${escapeHtml(imp.status||'?')}</span>
+          <span class="api mono">${escapeHtml(imp.kind)}</span>
+          <span style="flex:1">${escapeHtml(imp.filename||'')}</span>
+          <span class="api">${imp.row_count??0} row(s)${imp.error_count?` · ${imp.error_count} parse error(s)`:''}</span>
+          <span class="api">${escapeHtml(created)}</span>
+          ${imp.kind==='glossary'
+            ? '<span class="api" style="font-style:italic">(glossary — no proposals)</span>'
+            : `<button class="tiny" onclick="toggleImportDetail(${imp.id})">${expanded?'Hide':'Review'}</button>`}
+        </div>
+        ${imp.version_label?`<div class="api" style="margin-top:4px">version: ${escapeHtml(imp.version_label)}</div>`:''}
+        ${expandHtml}
+      </div>`;
+    }).join('');
+    // Re-render expanded details for any still-expanded imports.
+    for(const id of _expandedImports){
+      renderImportDetail(id);
+    }
+  }catch(e){toast(e.message,false)}
+}
+
+async function toggleImportDetail(importId){
+  if(_expandedImports.has(importId)){
+    _expandedImports.delete(importId);
+  }else{
+    _expandedImports.add(importId);
+  }
+  loadImports();
+}
+
+async function renderImportDetail(importId){
+  const slot=document.getElementById(`imp-detail-${importId}`);
+  if(!slot) return;
+  slot.innerHTML='<div class="api" style="padding:8px">Loading proposals…</div>';
+  try{
+    const resp=await api('GET',`/api/v1/products/data-quality/proposals?import_id=${importId}`);
+    const props=resp.items||[];
+    if(!props.length){
+      slot.innerHTML='<div class="api">No proposals on this import.</div>';
+      return;
+    }
+    const byStatus={};
+    for(const p of props){(byStatus[p.status]=byStatus[p.status]||[]).push(p)}
+    const pendingHigh=(byStatus['pending']||[]).filter(p=>p.confidence==='HIGH').length;
+    const bulkBtn=pendingHigh?`<button onclick="bulkApproveHigh(${importId})">Bulk-approve ${pendingHigh} HIGH</button>`:'';
+    const sections=Object.entries(byStatus).map(([st,rows])=>`
+      <div style="margin-top:10px">
+        <strong class="api" style="text-transform:uppercase;letter-spacing:.05em">${escapeHtml(st)} (${rows.length})</strong>
+        <table style="margin-top:6px">
+          <thead><tr>
+            <th style="width:50px">row</th>
+            <th>name</th>
+            <th>rule_type</th>
+            <th>parameter</th>
+            <th>conf</th>
+            <th>target</th>
+            <th>error / reason</th>
+            <th style="width:160px">actions</th>
+          </tr></thead>
+          <tbody>${rows.map(p=>renderProposalRow(p)).join('')}</tbody>
+        </table>
+      </div>`).join('');
+    slot.innerHTML=`
+      <div style="display:flex;gap:8px;margin-bottom:8px">${bulkBtn}</div>
+      ${sections}`;
+  }catch(e){slot.innerHTML=`<div class="api" style="color:var(--err)">${escapeHtml(e.message)}</div>`}
+}
+
+function _parseJsonField(v){
+  // JSONB columns come back from asyncpg as strings; normalise client-side.
+  if(v==null) return null;
+  if(typeof v==='object') return v;
+  if(typeof v==='string'){
+    try{return JSON.parse(v)}catch(e){return null}
+  }
+  return null;
+}
+
+function renderProposalRow(p){
+  const payload=_parseJsonField(p.payload)||{};
+  const target=(payload._target_table||payload._target_column)
+    ? `${escapeHtml(payload._target_table||'?')}.${escapeHtml(payload._target_column||'?')}`
+    : '<span class="api">—</span>';
+  const param=payload.parameter?`<span class="mono">${escapeHtml(trunc(payload.parameter,40))}</span>`:'<span class="api">—</span>';
+  const confPill=p.confidence?`<span class="pill pill-${p.confidence==='HIGH'?'ok':(p.confidence==='MEDIUM'?'warn':'low')}">${p.confidence}</span>`:'';
+  const reason=p.error_reason?`<span class="api" style="color:var(--err)">${escapeHtml(trunc(p.error_reason,80))}</span>`
+              :(p.reasoning?`<span class="api" style="font-style:italic">${escapeHtml(trunc(p.reasoning,80))}</span>`:'');
+  const isPending=p.status==='pending';
+  const isApproved=p.status==='approved';
+  const actions=isPending
+    ? `<button class="tiny" onclick="approveProposal(${p.id})">Approve</button>
+       <button class="tiny" onclick="rejectProposal(${p.id})">Reject</button>`
+    : (isApproved?`<span class="api">applied #${p.applied_target_id??'?'} (${escapeHtml(p.applied_target_kind||'?')})</span>`
+                 :`<span class="api">${escapeHtml(p.status)}</span>`);
+  return `<tr>
+    <td class="num cell-mute">${p.source_row??'—'}</td>
+    <td class="mono">${escapeHtml(payload.name||'?')}</td>
+    <td class="cell-mute">${escapeHtml(payload.rule_type||'—')}</td>
+    <td>${param}</td>
+    <td>${confPill}</td>
+    <td class="mono">${target}</td>
+    <td>${reason}</td>
+    <td>${actions}</td>
+  </tr>`;
+}
+
+async function approveProposal(id){
+  try{
+    await api('POST',`/api/v1/products/data-quality/proposals/${id}/approve`,{});
+    toast('Proposal approved — concept and rule created');
+    loadImports();
+  }catch(e){toast(e.message,false)}
+}
+
+async function rejectProposal(id){
+  const reason=prompt('Reject reason (optional)') || null;
+  try{
+    await api('POST',`/api/v1/products/data-quality/proposals/${id}/reject`,{reason});
+    toast('Proposal rejected');
+    loadImports();
+  }catch(e){toast(e.message,false)}
+}
+
+async function bulkApproveHigh(importId){
+  if(!confirm('Approve all HIGH-confidence pending proposals in this import?')) return;
+  try{
+    const resp=await api('POST','/api/v1/products/data-quality/proposals/bulk-approve',
+      {import_id:importId, confidence:'HIGH'});
+    toast(`Approved ${resp.approved} / ${resp.matched_count}${resp.skipped?` · ${resp.skipped} skipped`:''}`);
+    loadImports();
+  }catch(e){toast(e.message,false)}
 }
 
 function syncParameterField(){
