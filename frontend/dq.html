@@ -402,6 +402,7 @@
           <select id="excel-kind" onchange="syncExcelKindHint()">
             <option value="glossary">Business glossary (Table 11) — no LLM</option>
             <option value="column_rules">Column rules (Table 13) — LLM only on blank regex</option>
+            <option value="business_rules">Business rules (Table 12) — 1–2 LLM calls per row</option>
           </select>
           <p class="api" id="excel-kind-hint" style="margin:8px 0 0"></p>
           <div style="margin:6px 0 12px">
@@ -1477,6 +1478,7 @@ function useDraft(){
 const _excelKindHints = {
   glossary: 'Columns: term*, definition, synonyms (; or , separated), language (en|ar|mixed|auto). No LLM — straight persist.',
   column_rules: 'Columns: table*, column*, rule_type*, parameter, severity*, dimension*. LLM (sql_generation) runs only when parameter is blank for rule_type=format_regex.',
+  business_rules: 'Columns: rule_name*, description, logic_nl*, severity*, dimension*, table, column. Easy path (1 LLM call) when table+column supplied; hard path (column_match + sql_generation = 2 calls) when column blank. Rows with both blank land as unsupported_logic for manual routing.',
 };
 
 function openExcelUploadModal(){

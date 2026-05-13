@@ -188,6 +188,42 @@ def parse_excel(
     return result
 
 
+def write_business_rules_template(out: BytesIO) -> BytesIO:
+    """Build the kind=business_rules .xlsx template (Table 12).
+    Three rows: easy path, hard path (column blank), and a row with
+    no table — which the ingest treats as unsupported_logic but
+    appears in the proposal queue so the reviewer can route manually."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BusinessRules"
+    ws.append([
+        "rule_name", "description", "logic_nl",
+        "severity", "dimension", "table", "column",
+    ])
+    ws.append([
+        "Customer email format",
+        "Customer email addresses must be valid.",
+        "Customer email values must match a standard email regex.",
+        "high", "validity", "customers", "email",
+    ])
+    ws.append([
+        "National ID present",
+        "Every master-data record must carry a National ID.",
+        "National ID is required and must not be null.",
+        "critical", "completeness", "customers", "",  # LLM picks column
+    ])
+    ws.append([
+        "Cross-table dedup",
+        "Customer IDs unique across the source system.",
+        "Customer identifiers must be unique within the customer master table.",
+        "critical", "uniqueness", "", "",  # unsupported — flagged to reviewer
+    ])
+    wb.save(out)
+    out.seek(0)
+    return out
+
+
 def write_column_rules_template(out: BytesIO) -> BytesIO:
     """Build a downloadable .xlsx template for kind=column_rules
     (Table 13). Three example rows: easy path (parameter provided),
