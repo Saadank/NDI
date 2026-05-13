@@ -107,6 +107,27 @@ class _ProfileByTableLookup(PostgresqlAsyncRepository):
         )
 
 
+class _IssueCounter(PostgresqlAsyncRepository):
+    """Issue-count check for rollback safety. The FK
+    t_dq_issues.active_rule_id is ON DELETE CASCADE, so deleting a rule
+    that has issue children would silently destroy validator output —
+    rollback must refuse those rules and surface a clear error."""
+
+    async def issues_for_rules(
+        self, tenant_id: int, rule_ids: list[int],
+    ) -> dict[int, int]:
+        if not rule_ids:
+            return {}
+        rows = await self._fetch_all(
+            """SELECT active_rule_id, COUNT(*) AS n
+                 FROM dq.t_dq_issues
+                WHERE tenant_id = $1 AND active_rule_id = ANY($2::int[])
+             GROUP BY active_rule_id""",
+            (tenant_id, rule_ids),
+        )
+        return {r["active_rule_id"]: int(r["n"]) for r in rows}
+
+
 class ProposalService:
 
     def __init__(self) -> None:
@@ -116,6 +137,7 @@ class ProposalService:
         self.active_rules = ActiveRuleRepository()
         self.profiles = ProfileRepository()
         self.profile_lookup = _ProfileByTableLookup()
+        self.issue_counter = _IssueCounter()
 
     # ------------------------------------------------------------------
     # Reads
@@ -289,6 +311,113 @@ class ProposalService:
             final_value=payload, reviewer_id=auth_user.user_id,
             applied_target_id=applied_id, applied_target_kind=applied_kind,
         )
+
+    async def rollback_import(
+        self, import_id: int, auth_user: AuthUser,
+    ) -> dict:
+        """Walk every approved proposal in this import in reverse
+        insertion order and undo it. **Strict, all-or-nothing**:
+
+        1. Preflight — count t_dq_issues rows referencing each applied
+           active_rule. ANY non-zero count refuses the whole rollback
+           and returns ``{ok: False, blockers: [...]}`` so the caller
+           can surface them to the reviewer.
+
+        2. On success — delete each active_rule (CASCADE-free thanks
+           to step 1), mark each proposal as rolled_back (clears
+           applied_target_id / applied_target_kind), and flip the
+           import row's status to rolled_back with rolled_back_at = now.
+
+        Concepts are **not** deleted on rollback. We can't tell from
+        the proposal alone whether the applier inserted vs reused the
+        concept, and dictionary entries are cheap to leave behind. The
+        existing Dictionary tab lets the user clean them up manually.
+
+        Idempotent: rolling back an already-rolled-back import is a
+        no-op that returns the current import row.
+        """
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        imp = await self.imports.find_by_id(import_id, auth_user.tenant_id)
+        if not imp:
+            raise ResourceNotFoundException("Import not found")
+        if imp["status"] == "rolled_back":
+            return {"ok": True, "import": imp, "detail": "Already rolled back",
+                    "reverted": 0, "blockers": []}
+        if imp["status"] not in ("applied", "awaiting_review"):
+            raise ValidationException(
+                f"Cannot rollback an import in status {imp['status']!r}"
+            )
+
+        approved = await self.proposals.list_for_import(
+            import_id, auth_user.tenant_id, status="approved",
+        )
+        # Walk in reverse insertion order — last-in-first-out.
+        approved.sort(key=lambda r: r["id"], reverse=True)
+
+        rule_targets = [
+            r for r in approved
+            if r["applied_target_kind"] == "active_rule"
+            and r["applied_target_id"]
+        ]
+        rule_ids = [r["applied_target_id"] for r in rule_targets]
+
+        # Preflight: collect blockers BEFORE we touch any state.
+        issue_counts = await self.issue_counter.issues_for_rules(
+            auth_user.tenant_id, rule_ids,
+        )
+        blockers: list[dict] = []
+        for r in rule_targets:
+            n = issue_counts.get(r["applied_target_id"], 0)
+            if n > 0:
+                blockers.append({
+                    "proposal_id": r["id"],
+                    "source_row": r["source_row"],
+                    "active_rule_id": r["applied_target_id"],
+                    "issue_count": n,
+                    "detail": (
+                        f"Active rule has {n} validator issue(s). "
+                        f"Delete the scans that produced them first, "
+                        f"then retry rollback."
+                    ),
+                })
+        if blockers:
+            return {
+                "ok": False, "import": imp, "blockers": blockers,
+                "detail": (
+                    f"Rollback refused: {len(blockers)} active rule(s) have "
+                    f"validator output. See blockers[] for details."
+                ),
+                "reverted": 0,
+            }
+
+        # Apply: delete rules, mark proposals, flip the import row.
+        reverted_rules = 0
+        for r in rule_targets:
+            await self.active_rules.delete_by_id(
+                r["applied_target_id"], auth_user.tenant_id,
+            )
+            reverted_rules += 1
+
+        for r in approved:
+            await self.proposals.mark_reviewed(
+                r["id"], auth_user.tenant_id, status="rolled_back",
+                final_value=None, reviewer_id=auth_user.user_id,
+            )
+
+        from datetime import datetime, timezone
+        imp_final = await self.imports.update_status(
+            import_id, auth_user.tenant_id, status="rolled_back",
+            rolled_back_at=datetime.now(timezone.utc),
+        )
+        return {
+            "ok": True, "import": imp_final, "blockers": [],
+            "reverted": reverted_rules,
+            "proposals_marked": len(approved),
+            "detail": (
+                f"Rolled back {reverted_rules} active rule(s) and marked "
+                f"{len(approved)} proposal(s) as rolled_back."
+            ),
+        }
 
     async def bulk_approve_high(
         self, import_id: int, auth_user: AuthUser,

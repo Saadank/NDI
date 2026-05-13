@@ -119,6 +119,24 @@ docker exec -i datasharing-1st-postgres-1 \
 | **4.5.a** | Profiler now captures `character_maximum_length` (Postgres/MySQL/MSSQL) / `data_length` (Oracle) per column and stashes it on `raw_metrics.declared_length`. No migration — JSONB. |
 | **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag, and per-column rule-status dots. **Replaced 2026-05-09:** the Classic / Dense toggle was removed and the views replaced with **Table / Tiles** (see Step 5.5). The `raw_metrics.declared_length` capture from 4.5.a stays — it just isn't surfaced in the new views. |
 
+### Step 6 — Excel + LLM SQL generation (all complete — 2026-05-13)
+
+The biggest single step in Phase 1. Eight sub-commits landed end-to-end:
+
+| Step | What landed |
+|---|---|
+| **6.0** | Refactor: created `data_quality/ai/` subpackage, moved `llm_matcher.py` → `ai/matchers/concept_matcher.py`, swapped the LLM provider from Anthropic to local Ollama. New `LlmClient` abstraction (single `call()` entrypoint, provider-neutral `LlmCallResult` shape). `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL` / `DQ_LLM_TIMEOUT_S` env vars; default `host.docker.internal:11434`. |
+| **6.1** | Migration 024: `t_dq_imports` (state machine), `t_dq_glossary_terms`, `t_dq_proposals`, `t_dq_llm_calls` (audit). Four `ai/repositories/` modules. Anthropic-specific `cache_*_tokens` columns kept nullable for future provider swap. |
+| **6.2** | Validators (`response_schema.py` per-purpose pydantic; `rule_type_whitelist.py`; `sql_safety.py` with sqlglot deep check + cheap deny-list). PII anonymizer pass-through stub with one-shot warning. `sqlglot` + `openpyxl` added to pyproject + uv.lock. |
+| **6.3** | Approach 2 E2E: `concept_draft` prompt, `concept_draft_service`, `POST /concepts/draft-from-nl`. Dictionary tab gets **Draft with AI** button + result-preview modal that pre-fills the create-concept form. Audited via `t_dq_llm_calls`. |
+| **6.4** | Excel glossary ingest (BRD Table 11). Generic `excel_parser` with per-row error collection. `GlossaryIngestService` two-phase pipeline. `POST /imports` + `GET /imports` + `GET /imports/template/glossary` + `GET /imports/{id}`. Unified "Upload Excel" modal in Dictionary tab. No LLM calls. |
+| **6.5** | Excel column-rules ingest (BRD Table 13). Adds `sql_generation` LLM purpose for blank-parameter `format_regex` rows. Each row → `new_concept` proposal with HIGH confidence (easy path) or LLM-drafted confidence (hard path). Validator failures land as `rejected_by_validator`. |
+| **6.6** | Excel business-rules ingest (BRD Table 12). Adds `column_match` LLM purpose for blank-column rows. Two-LLM-call chain per hard-path row (column_match → top candidate → sql_generation). Ranked candidates stored on `proposals.candidates` for reviewer override. Tenant glossary fed as context to `column_match`. Cross-table rules / no-profile tables → `unsupported_logic`. |
+| **6.7** | Proposal review UI + applier. `ProposalService` is the single boundary-crossing service in `ai/` (imports `ConceptRepository`, `ActiveRuleRepository`, `ProfileRepository`). Approve/reject/bulk-approve endpoints. Approve creates/upserts the concept and, when the target table resolves to a profile, also creates an `active_rule` binding with `matched_by='manual'`, `approval_status='auto_applied'`. New top-level **Imports tab** with per-import drill-in. Bulk-approve hard-locked to HIGH for safety. |
+| **6.8** | Rollback. `POST /imports/{id}/rollback` walks approved proposals in reverse insertion order. Strict, all-or-nothing: preflight counts `t_dq_issues` rows referencing each applied `active_rule` (CASCADE-free DELETE protection); any non-zero count refuses the whole rollback with `ok=false` + precise `blockers` list. Successful rollback deletes active_rules, marks proposals `rolled_back`, flips the import row to `rolled_back`. Concepts kept (cleanup via Dictionary tab). Idempotent on re-rollback. |
+
+**LLM model**: `qwen2.5-coder:7b` (swapped from `llama3:latest` mid-Step-6 — ~2× faster, materially better regex). Cold-start ~30 s; warm calls 5-22 s on RTX 2080.
+
 ### Step 5.5 — Scan-results tile redesign (all complete — 2026-05-09)
 
 Per stakeholder review, the per-column profile view was rebuilt around the

@@ -25,6 +25,9 @@ from app.products.data_quality.ai.services.excel_parser import (
 from app.products.data_quality.ai.services.glossary_ingest import (
     GlossaryIngestService, get_glossary_ingest_service,
 )
+from app.products.data_quality.ai.services.proposal_service import (
+    ProposalService, get_proposal_service,
+)
 from app.structures.auth_user import AuthUser
 from app.utils.exceptions import ValidationException
 
@@ -149,3 +152,19 @@ async def get_import(
 ):
     """Single import: status, row/error counts, errors list, terms_count."""
     return await glossary_svc.get_import(import_id, auth_user)
+
+
+@router.post("/{import_id}/rollback")
+async def rollback_import(
+    import_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    proposal_svc: ProposalService = Depends(get_proposal_service),
+):
+    """Walk every approved proposal in this import in reverse and undo
+    it. **Strict, all-or-nothing** — refuses with HTTP 200 + ok=False
+    when any applied active_rule already has validator issues, so the
+    caller can show a precise list of blockers to the reviewer.
+
+    On success: returns ``{ok: true, reverted, proposals_marked, import}``
+    with the import row flipped to ``status='rolled_back'``."""
+    return await proposal_svc.rollback_import(import_id, auth_user)
