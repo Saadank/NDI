@@ -62,6 +62,17 @@ class ScanRepository(PostgresqlAsyncRepository):
             (scan_id, tenant_id),
         )
 
+    async def delete_by_id(self, scan_id: int, tenant_id: int) -> str:
+        """Hard-delete a scan. CASCADES to t_dq_column_profiles,
+        t_dq_issues, and t_dq_score_history via FK ON DELETE CASCADE —
+        all of the scan's derived data goes with it. Caller's UI MUST
+        surface this in a confirm dialog before sending."""
+        return await self._execute(
+            """DELETE FROM dq.t_dq_scans
+                WHERE id = $1 AND tenant_id = $2""",
+            (scan_id, tenant_id),
+        )
+
     async def list_for_tenant(
         self, tenant_id: int, *, profile_id: int | None = None,
         connection_id: UUID | None = None,

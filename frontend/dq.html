@@ -1009,6 +1009,11 @@ async function loadScans(){
         ?`<button class="tiny" onclick="loadProfile(${s.id})">Profile</button>
           <button class="tiny" onclick="openIssues(${s.id},'${s.schema_name}.${s.table_name}')">Issues</button>`
         :(s.status==='failed'?`<button class="tiny" title="${(s.error_message||'').replace(/"/g,'&quot;')}">Error</button>`:'');
+      // Delete is available on terminal-status scans only (success/failed);
+      // backend also refuses pending/running so this is belt-and-suspenders.
+      const del=(s.status==='success'||s.status==='failed')
+        ?`<button class="tiny danger" onclick="deleteScan(${s.id},'all-scans')" title="Delete scan and ALL of its column profiles, issues, score history">Delete</button>`
+        :'';
       return `<tr>
         <td class="mono">${s.id}</td>
         <td class="mono">${s.schema_name}.${s.table_name}</td>
@@ -1017,7 +1022,7 @@ async function loadScans(){
         <td class="num">${s.column_count??'—'}</td>
         <td class="num">${dur}</td>
         <td>${fmtDt(s.started_at||s.created_at)}</td>
-        <td>${view}</td>
+        <td>${view} ${del}</td>
       </tr>`;
     }).join('');
     // Poll while any scan is still running/pending.
@@ -2251,6 +2256,9 @@ async function pdRenderScans(){
             :`<button class="tiny" onclick="loadProfile(${s.id})">Profile</button>
               <button class="tiny" onclick="openIssues(${s.id},'${_pdProfile.name}')">Issues</button>`)
         :'';
+      const del=(s.status==='success'||s.status==='failed')
+        ?`<button class="tiny danger" onclick="deleteScan(${s.id},'pd-scans')" title="Delete scan and ALL of its column profiles, issues, score history">Delete</button>`
+        :'';
       return `<tr>
         <td class="mono">${s.id}</td>
         <td><span class="pill pill-${s.status}">${s.status}</span></td>
@@ -2259,7 +2267,7 @@ async function pdRenderScans(){
         <td class="num">${s.column_count??'—'}</td>
         <td class="num">${dur}</td>
         <td>${fmtDt(s.started_at||s.created_at)}</td>
-        <td>${view}</td>
+        <td>${view} ${del}</td>
       </tr>`;
     }).join('')
     :'<tr><td class="empty" colspan="8">No scans yet. Click <strong>Full scan</strong> below to start.</td></tr>';
@@ -2798,6 +2806,22 @@ async function deleteRule(id){
     await api('DELETE','/api/v1/products/data-quality/active-rules/'+id);
     toast('Rule deleted');
     fetchRules();
+  }catch(e){toast(e.message,false)}
+}
+
+async function deleteScan(scanId, source){
+  // source: 'all-scans' (refresh loadScans) or 'pd-scans' (refresh
+  // the per-profile Scans sub-tab in the open profile detail modal).
+  const msg=
+    `Delete scan #${scanId}?\n\n`+
+    `This CASCADES — destroys every column profile, every t_dq_issues row, and every score-history entry produced by this scan.\n\n`+
+    `The rules and the source data are NOT touched. Cannot be undone.`;
+  if(!confirm(msg)) return;
+  try{
+    await api('DELETE','/api/v1/products/data-quality/scans/'+scanId);
+    toast(`Scan #${scanId} deleted`);
+    if(source==='all-scans') loadScans();
+    else if(source==='pd-scans') pdRenderScans();
   }catch(e){toast(e.message,false)}
 }
 

@@ -38,7 +38,7 @@ from app.products.data_sharing.repositories.connection_repository import (
     ConnectionRepository,
 )
 from app.structures.auth_user import AuthUser
-from app.utils.exceptions import ResourceNotFoundException
+from app.utils.exceptions import ResourceNotFoundException, ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -456,6 +456,31 @@ class ProfilerService:
         if not scan:
             raise ResourceNotFoundException("Scan not found")
         return scan
+
+    async def delete_scan(self, scan_id: int, auth_user: AuthUser) -> dict:
+        """Hard-delete a scan and all of its derived data. CASCADES via
+        FK ON DELETE CASCADE to ``t_dq_column_profiles`` (per-column
+        descriptive stats), ``t_dq_issues`` (validator output), and
+        ``t_dq_score_history`` (per-dimension scoring rows).
+
+        Refuses with a clear error when the scan is still running so a
+        background-task race can't leave half-written child rows
+        orphaned. Otherwise no preflight — the user explicitly asked
+        for the scan's history to be gone."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        scan = await self.scan_repo.find_by_id(scan_id, auth_user.tenant_id)
+        if not scan:
+            raise ResourceNotFoundException("Scan not found")
+        if scan["status"] in ("pending", "running"):
+            raise ValidationException(
+                f"Cannot delete a scan in status {scan['status']!r}. "
+                f"Wait for it to finish or fail, then retry."
+            )
+        await self.scan_repo.delete_by_id(scan_id, auth_user.tenant_id)
+        return {
+            "detail": "Scan deleted (cascade: column_profiles + issues + score_history)",
+            "scan_id": scan_id,
+        }
 
     async def list_scans(
         self, auth_user: AuthUser, *, profile_id: int | None = None,
