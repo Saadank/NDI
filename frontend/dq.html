@@ -122,6 +122,16 @@
   .view-toggle{display:inline-flex;background:#f1f5f9;border-radius:6px;padding:2px;font-size:11px}
   .view-toggle button{border:0;background:transparent;padding:4px 10px;border-radius:4px;cursor:pointer;color:var(--mute);font-weight:600}
   .view-toggle button.active{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  /* ---- Folder tree in Profiles tab ---- */
+  .folder-row{cursor:pointer;background:#f1f5f9}
+  .folder-row:hover{background:#e2e8f0}
+  .folder-row td{padding:7px 10px;font-weight:600;color:var(--ink);border-bottom:1px solid #cbd5e1}
+  .folder-chevron{display:inline-block;width:12px;text-align:center;color:var(--mute);transition:transform .15s ease;margin-right:6px;font-size:10px}
+  .folder-chevron.expanded{transform:rotate(90deg)}
+  .folder-count{font-weight:500;color:var(--mute);font-size:11px;margin-left:8px}
+  .folder-icon{margin-right:4px}
+  button.tiny.danger{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+  button.tiny.danger:hover{background:#fecaca}
   /* ---- Tile-grid scan-results view ---- */
   .col-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px}
   .col-card-head{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
@@ -1805,6 +1815,96 @@ let _connections=[];          // cached for the profile editor's connection pick
 let _pdProfile=null;          // currently-open profile detail
 let _pdActiveTab='definition';
 
+// Folder open/closed state. Default = open (only paths in this set are
+// collapsed). Persists across loadProfiles() so refresh / scan-trigger
+// doesn't snap everything back open.
+const _collapsedFolders = new Set();
+
+function _buildFolderTree(profiles){
+  // Build a nested {children:{name:node}, profiles:[]} tree from each
+  // profile's location_path. Slash-separated; null/empty goes to root.
+  const root={children:{}, profiles:[], path:''};
+  for(const p of profiles){
+    const raw=(p.location_path||'').trim();
+    if(!raw){root.profiles.push(p);continue}
+    const segments=raw.split('/').map(s=>s.trim()).filter(Boolean);
+    if(!segments.length){root.profiles.push(p);continue}
+    let node=root;
+    let path='';
+    for(const seg of segments){
+      path = path ? path+'/'+seg : seg;
+      if(!node.children[seg]) node.children[seg]={children:{}, profiles:[], path};
+      node=node.children[seg];
+    }
+    node.profiles.push(p);
+  }
+  return root;
+}
+
+function _countProfilesInTree(node){
+  let n=node.profiles.length;
+  for(const k of Object.keys(node.children)) n+=_countProfilesInTree(node.children[k]);
+  return n;
+}
+
+function _renderProfileRow(p, depth){
+  const conn=_connections.find(c=>c.id===p.connection_id);
+  const src=conn?`${conn.db_type} · ${p.schema_name}.${p.table_name}`:`${p.schema_name}.${p.table_name}`;
+  const sampling=p.sampling_mode==='all'?'all rows':`${p.sampling_mode} · ${p.sample_size||'?'}`;
+  const last=p.last_scan_at?fmtDt(p.last_scan_at):'—';
+  const indent=depth>0?`padding-left:${depth*18+10}px`:'';
+  return `<tr>
+    <td class="mono" style="${indent}"><a href="#" onclick="event.preventDefault();openProfileDetail(${p.id})">${escapeHtml(p.name)}</a></td>
+    <td class="cell-mute">${escapeHtml(p.location_path||'—')}</td>
+    <td class="cell-mute">${escapeHtml(src)}</td>
+    <td class="cell-mute">${escapeHtml(sampling)}</td>
+    <td class="num">${p.scan_count}</td>
+    <td class="num">${p.rule_count}</td>
+    <td class="cell-mute">${escapeHtml(last)}</td>
+    <td style="white-space:nowrap">
+      <button class="tiny" onclick="openProfileDetail(${p.id})">Open</button>
+      <button class="tiny" onclick="quickScan(${p.id})">Scan</button>
+      <button class="tiny danger" onclick="deleteProfile(${p.id})" title="Delete profile and ALL of its scans, rules, issues, exceptions, and scores">Delete</button>
+    </td>
+  </tr>`;
+}
+
+function _renderFolderRow(node, name, depth){
+  const expanded=!_collapsedFolders.has(node.path);
+  const n=_countProfilesInTree(node);
+  const indent=`padding-left:${depth*18+10}px`;
+  return `<tr class="folder-row" onclick="toggleFolder('${encodeURIComponent(node.path)}')">
+    <td colspan="8" style="${indent}">
+      <span class="folder-chevron ${expanded?'expanded':''}">▶</span>
+      <span class="folder-icon">📁</span><strong>${escapeHtml(name)}</strong>
+      <span class="folder-count">${n} profile${n===1?'':'s'}</span>
+    </td>
+  </tr>`;
+}
+
+function _renderTreeRows(node, depth){
+  const out=[];
+  // Profiles at this level first, then child folders (alphabetical).
+  for(const p of node.profiles) out.push(_renderProfileRow(p, depth));
+  const names=Object.keys(node.children).sort();
+  for(const name of names){
+    const child=node.children[name];
+    out.push(_renderFolderRow(child, name, depth));
+    if(!_collapsedFolders.has(child.path)){
+      out.push(..._renderTreeRows(child, depth+1));
+    }
+  }
+  return out;
+}
+
+function toggleFolder(encodedPath){
+  const path=decodeURIComponent(encodedPath);
+  if(_collapsedFolders.has(path)) _collapsedFolders.delete(path);
+  else _collapsedFolders.add(path);
+  // Re-render without re-fetching — _profiles is still fresh.
+  $('profiles-tb').innerHTML=_renderTreeRows(_buildFolderTree(_profiles),0).join('');
+}
+
 async function loadProfiles(){
   // Fetch connections too — the editor's connection picker needs them.
   try{
@@ -1821,28 +1921,27 @@ async function loadProfiles(){
   }
   if(!_profiles.length){
     $('profiles-tb').innerHTML=
-      '<tr><td class="empty" colspan="8">No profiles yet. Click <strong>+ New profile</strong> to create one, or go to <strong>Sources</strong> to create a profile from a source table.</td></tr>';
+      '<tr><td class="empty" colspan="8">No profiles yet. Click <strong>+ New profile</strong> to create one, or go to <strong>Sources</strong> to create a profile from a source table. Use <span class="mono">/</span> in the Location field to nest into folders (e.g. <span class="mono">HEALTH/OPD</span>).</td></tr>';
     return;
   }
-  $('profiles-tb').innerHTML=_profiles.map(p=>{
-    const conn=_connections.find(c=>c.id===p.connection_id);
-    const src=conn?`${conn.db_type} · ${p.schema_name}.${p.table_name}`:`${p.schema_name}.${p.table_name}`;
-    const sampling=p.sampling_mode==='all'?'all rows':`${p.sampling_mode} · ${p.sample_size||'?'}`;
-    const last=p.last_scan_at?fmtDt(p.last_scan_at):'—';
-    return `<tr>
-      <td class="mono"><a href="#" onclick="event.preventDefault();openProfileDetail(${p.id})">${p.name}</a></td>
-      <td class="cell-mute">${p.location_path||'—'}</td>
-      <td class="cell-mute">${src}</td>
-      <td class="cell-mute">${sampling}</td>
-      <td class="num">${p.scan_count}</td>
-      <td class="num">${p.rule_count}</td>
-      <td class="cell-mute">${last}</td>
-      <td style="white-space:nowrap">
-        <button class="tiny" onclick="openProfileDetail(${p.id})">Open</button>
-        <button class="tiny" onclick="quickScan(${p.id})">Scan</button>
-      </td>
-    </tr>`;
-  }).join('');
+  const tree=_buildFolderTree(_profiles);
+  $('profiles-tb').innerHTML=_renderTreeRows(tree,0).join('');
+}
+
+async function deleteProfile(profileId){
+  const p=_profiles.find(x=>x.id===profileId);
+  if(!p){toast('Profile not found',false);return}
+  const msg=
+    `Delete profile "${p.name}"?\n\n`+
+    `This destroys ${p.scan_count} scan(s), ${p.rule_count} rule(s), and ALL related issues, exceptions, and score history.\n`+
+    `Source connection / schema / table are NOT affected.\n\n`+
+    `This cannot be undone.`;
+  if(!confirm(msg)) return;
+  try{
+    await api('DELETE',`/api/v1/products/data-quality/profiles/${profileId}`);
+    toast(`Profile "${p.name}" deleted`);
+    loadProfiles();
+  }catch(e){toast(e.message,false)}
 }
 
 async function quickScan(profileId){
