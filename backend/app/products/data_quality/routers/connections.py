@@ -17,6 +17,27 @@ from app.gateways.db_connector_gateway import DbConnectorGateway
 from app.products.data_quality.permissions import can_use_dq, require
 from app.products.data_sharing.repositories.connection_repository import ConnectionRepository
 from app.structures.auth_user import AuthUser
+from app.structures.postgresql_async_repository import PostgresqlAsyncRepository
+from app.utils.exceptions import ResourceNotFoundException, ValidationException
+
+
+class _ConnectionProfileCounter(PostgresqlAsyncRepository):
+    """Inline helper: count DQ profiles still pointing at a connection.
+
+    A soft-delete on the connection would orphan these profiles (their
+    connection_id ends up at a row with deleted_at != null), so the
+    delete route refuses while any reference remains."""
+
+    async def profiles_for_connection(
+        self, connection_id, tenant_id: int,
+    ) -> list[dict]:
+        return await self._fetch_all(
+            """SELECT id, name, location_path, schema_name, table_name
+                 FROM dq.t_dq_profiles
+                WHERE connection_id = $1 AND tenant_id = $2
+             ORDER BY id""",
+            (connection_id, tenant_id),
+        )
 
 router = APIRouter(prefix="/connections", tags=["dq-connections"])
 
@@ -86,6 +107,50 @@ async def create_dq_connection(
             "status": row.get("status"),
             "created_at": row.get("created_at"),
         },
+    }
+
+
+@router.delete("/{connection_id}")
+async def delete_dq_connection(
+    connection_id: UUID,
+    auth_user: AuthUser = Depends(get_current_user),
+):
+    """Soft-delete (sets ``deleted_at``). Refuses with a precise list of
+    blocking DQ profiles when any still reference the connection, so the
+    user can clean them up first without trial-and-error.
+
+    Why soft-delete: a hard DELETE on ``t_connections`` would CASCADE
+    into ``t_dq_profiles``, ``t_dq_scans``, ``t_dq_active_rules``,
+    ``t_dq_issues``, ``t_dq_column_profiles``, and ``t_dq_table_types``.
+    Far too destructive for an everyday "remove this connection" action.
+    Soft-delete + profile-refuse is the policy.
+    """
+    require(can_use_dq(auth_user), "Data Quality is not available for this account")
+    repo = ConnectionRepository()
+    conn = await repo.find_by_id(connection_id, auth_user.tenant_id)
+    if not conn:
+        raise ResourceNotFoundException("Connection not found")
+
+    counter = _ConnectionProfileCounter()
+    blockers = await counter.profiles_for_connection(
+        connection_id, auth_user.tenant_id,
+    )
+    if blockers:
+        # Surface the exact profiles so the user can navigate to and
+        # delete each one. 400 keeps it client-side recoverable.
+        raise ValidationException(
+            "Connection has DQ profiles attached. Delete those first, then retry. "
+            "Blocking profiles: "
+            + ", ".join(
+                f"#{p['id']} {p['name']} ({p['schema_name']}.{p['table_name']})"
+                for p in blockers
+            )
+        )
+
+    await repo.soft_delete(connection_id)
+    return {
+        "detail": "Connection deleted (soft — row preserved with deleted_at set)",
+        "connection_id": str(connection_id),
     }
 
 

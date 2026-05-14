@@ -232,6 +232,9 @@
         <div style="flex:0">
           <button onclick="openConnectionModal()" title="Register a new source-DB connection for profiling and scanning">+ New connection</button>
         </div>
+        <div style="flex:0">
+          <button class="tiny danger" onclick="deleteCurrentConnection()" title="Soft-delete the currently-selected connection. Refuses if DQ profiles still reference it.">Delete</button>
+        </div>
       </div>
       <div id="meta" class="api" style="margin-top:8px"></div>
     </div>
@@ -1013,6 +1016,33 @@ async function saveConnection(){
   }catch(e){
     $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--err)">${escapeHtml(e.message)}</div>`;
     btn.disabled=false; btn.textContent='Retry';
+  }
+}
+
+async function deleteCurrentConnection(){
+  // Acts on the currently-selected connection in the Sources picker.
+  // Refuse comes back from the server as a 400 with the blocking
+  // profiles listed in the message — we surface it verbatim.
+  const sel=$('conn');
+  const cid=sel.value;
+  if(!cid){toast('Pick a connection first',false);return}
+  const label=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:cid;
+  const msg=
+    `Delete connection "${label}"?\n\n`+
+    `This is a SOFT delete — the row is preserved with a deleted_at timestamp `+
+    `and immediately disappears from the picker. Refuses if any DQ profile `+
+    `still references it; the error will list which profiles to remove first.\n\n`+
+    `Past scan / issue / score history tied to this connection stays in place.`;
+  if(!confirm(msg)) return;
+  try{
+    await api('DELETE',`/api/v1/products/data-quality/connections/${cid}`);
+    toast(`Connection deleted`);
+    await loadConnections();
+  }catch(e){
+    // Server-side refuse — the message is a sentence + comma-separated
+    // profile list. Long, but actionable. Use a wider alert so the user
+    // can see all blockers.
+    alert(e.message);
   }
 }
 
