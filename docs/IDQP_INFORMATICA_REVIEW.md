@@ -1,7 +1,8 @@
 # IDQP — Informatica Review Prep
 
 **Audience:** Informatica reviewer (CDQ / CLAIRE familiar).
-**Status as of:** 2026-05-12 — Phase 1 + 1.5, Steps 4 / 4.5 / 5 / 5.5 / 6.0–6.3 complete.
+**Status as of:** 2026-05-14 — Phase 1 + 1.5, Steps 4 / 4.5 / 5 / 5.5 / 6 (all 9 sub-steps) complete.
+**Model:** `qwen2.5-coder:7b` on local Ollama (RTX 2080).
 
 This doc is structured for a **30–45 min** session:
 demo (15) → parity matrix (10) → differentiators (5–10) → open gaps + roadmap (5).
@@ -93,11 +94,11 @@ Walk through `http://localhost:8000/dq` after `superadmin` login. Each section �
 | Raw vs governed score split | ❌ | ✅ | Step 5 |
 | Dense per-column tile dashboard | ✅ | ✅ | Step 5.5 — mirrors their "Results" mock |
 | NL → concept draft (Approach 2) | ❌ | ✅ | Step 6.3 — local Ollama (llama3:8b / qwen2.5-coder) |
-| Excel uploads (glossary / business rules / column rules) | ✅ | 🚧 | Step 6.4–6.6 — next |
-| LLM column matcher (term → column) | ❌ | 🚧 | Step 6.6 — multilingual |
-| LLM SQL/regex generation | ❌ | 🚧 | Step 6.5/6.6 |
-| Proposal review queue UI | ❌ | 🚧 | Step 6.7 |
-| Rollback of imported rules | partial | 🚧 | Step 6.8 |
+| Excel uploads (glossary / business rules / column rules) | ✅ | ✅ | Step 6.4 / 6.5 / 6.6 — Tables 11/12/13 |
+| LLM column matcher (term → column) | ❌ | ✅ | Step 6.6 — multilingual, ranked candidates |
+| LLM SQL/regex generation | ❌ | ✅ | Step 6.5/6.6 — sql_generation prompt |
+| Proposal review queue UI | ❌ | ✅ | Step 6.7 — Imports tab + bulk-approve HIGH |
+| Rollback of imported rules | partial | ✅ | Step 6.8 — strict, refuses on issue children |
 | Scan scheduler / concurrency | ✅ | 📋 | Step 8 |
 | Cross-profile dashboard | ✅ | 📋 | Step 7 |
 | Issue tracker + CSV export | ✅ | 📋 | Step 7 |
@@ -130,7 +131,7 @@ A new column named `customer_email` automatically inherits the `email_required` 
 
 ### 3.4 Two-tier matcher (fuzzy → LLM only when needed)
 - Fuzzy (`difflib`) handles ~80–90% of straightforward matches for free.
-- LLM (now local Ollama on `llama3:latest`, swappable via `DQ_LLM_PROVIDER`) only kicked off for columns fuzzy couldn't classify — typically multilingual / heavily-abbreviated names like `الاسم` or `cstmr_email_addr`.
+- LLM (local Ollama on `qwen2.5-coder:7b`, swappable via `DQ_LLM_PROVIDER`) only kicked off for columns fuzzy couldn't classify — typically multilingual / heavily-abbreviated names like `الاسم` or `cstmr_email_addr`.
 - **Permanent, not temporary** — even after Phase 2 anomaly detection, this two-tier remains.
 - Audit trail in `t_dq_llm_calls` with token counts + latency so cost is observable.
 - Informatica has no equivalent. CLAIRE is anomaly/lineage focused, not concept-matching.
@@ -151,10 +152,10 @@ A new column named `customer_email` automatically inherits the `email_required` 
 - **Snowflake / BigQuery connectors** — deferred until a real customer asks. Existing 6 dialects cover all current commitments.
 - **Score-degradation alerting** — wired into Step 8 when the scheduler lands.
 
-### In flight (Step 6.4–6.8)
-- **Excel uploads** — three templates from BRD Tables 11–13 (glossary / business rules / column rules). Easy-path + hard-path split per the plan (see `docs/IDQP_STEP6_PLAN.md`).
-- **Proposal review UI** — bulk-approve HIGH, per-row review for MEDIUM/LOW.
-- **Rollback** — walks `applied_target_id` in reverse; refuses if `t_dq_issues` references the target.
+### Next up
+- **Step 7** — cross-profile dashboard, Issue Tracker (with CSV export), Score Trends chart.
+- **Step 8** — scan scheduler + concurrency (cron-driven scans, retry policy, real-time progress).
+- **Step 9** — Phase 1 hardening (10M-row in 10 min, 20 concurrent scans, AES-256 verify, backup verify, end-to-end demo).
 
 ### Phase 2 (post-Phase-1 ship)
 - **Anomaly detection** — Isolation Forest / IQR / z-score numeric, ECOD multivariate, DBSCAN string clustering. Trigger condition: 3+ historical scans per table (baseline window).

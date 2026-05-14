@@ -10,7 +10,15 @@
 
 The Intelligent Data Quality Platform is a sibling product to Data Sharing inside the `DataSharing-1st` monorepo. After Phase 1.5 (the Informatica-inspired restructure), the unit of work is the **Profile Asset** — a named, saveable, owner-bound entity that bundles a source binding (connection + schema + table), profiling configuration (sampling, drill-down, AI on/off), and history (scans, active rules, issues).
 
-**Live demo path:** `http://localhost:8000/dq` → log in → see the Profiles list → click a profile → walk Definition / Rules / Scans / Issues sub-tabs.
+**Snapshot — 2026-05-14:**
+
+- Phase 1 + 1.5 foundations: ✅ done
+- Step 4 (scoring) / Step 4.5 (dense dashboard) / Step 5 (exceptions) / Step 5.5 (tile redesign): ✅ done
+- **Step 6 (Excel + LLM pipeline, 9 sub-steps): ✅ done** — qwen2.5-coder:7b on local Ollama, full 3-entry-point flow into the proposal queue, applier creates concepts + active_rule bindings, strict rollback safety net
+- Remaining Phase 1 work: Step 7 (dashboard), Step 8 (scheduler), Step 9 (hardening)
+- Local commits ahead of `origin/dev`: **11** (not yet pushed)
+
+**Live demo path:** `http://localhost:8000/dq` → log in → walk Profiles / Sources / All scans / Dictionary / **Imports** tabs.
 
 **API surface:** all endpoints under `/api/v1/products/data-quality/` are gated by the tenant having `data_quality` enabled in `t_tenant_products`.
 
@@ -289,10 +297,10 @@ data_quality/
 
 ### Config
 
-- `backend/app/core/config.py` — added `ANTHROPIC_API_KEY`, `DQ_LLM_MODEL`, `DQ_LLM_MAX_OUTPUT_TOKENS`.
-- `backend/pyproject.toml` — added `anthropic>=0.40.0`.
-- `.env.dev` — `ANTHROPIC_API_KEY=` (empty → fuzzy-only mode).
-- `backend/app/main.py` — registers DQ routers under `/api/v1/products/data-quality/` with `require_data_quality` gate.
+- `backend/app/core/config.py` — `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL` / `DQ_LLM_TIMEOUT_S` / `DQ_LLM_MAX_OUTPUT_TOKENS`. Anthropic key removed.
+- `backend/pyproject.toml` — `anthropic` (unused but kept in lock for future swap-back), `sqlglot`, `openpyxl`, `httpx`.
+- `.env.dev` — `DQ_LLM_PROVIDER=ollama` / `DQ_LLM_BASE_URL=http://host.docker.internal:11434` / `DQ_LLM_MODEL=qwen2.5-coder:7b`.
+- `backend/app/main.py` — registers DQ routers under `/api/v1/products/data-quality/` with `require_data_quality` gate. AI routers (`concepts_ai`, `imports`, `proposals`) included in the same loop.
 
 ### Documentation
 
@@ -303,30 +311,9 @@ data_quality/
 
 ## Next steps
 
-### Step 4.5 — Dense column dashboard (Informatica's "Results" pic 5)
-
-**Goal:** replace today's per-column profile view with the horizontal value-distribution + all-stats grid.
-
-- Compute `value_distribution` = `(null_count, distinct_count, non_distinct_count)` ratio — already have all three.
-- Compute documented-vs-detected type gap: `declared_data_type` length vs detected `max_length`. Flag when `actual << declared` (over-allocated columns).
-- Reshape Results UI into the dense grid with color bars + rule-icon indicator per column.
-
-### Step 5 — Governed exception engine (BRD §4.8 / FR-EXC)
-
-- `dq.t_dq_exceptions(issue_signature, reason_category, explanation, owner, expires_at, status)`.
-- Exception expiry worker reactivates expired exceptions.
-- Scoring engine consults active exceptions to compute **governed score** alongside raw score.
-
-### Step 6 — Excel upload pipeline + LLM SQL generation (biggest single step)
-
-**Detailed plan: [`docs/IDQP_STEP6_PLAN.md`](IDQP_STEP6_PLAN.md)** — file layout, migration 023 schema, 5 LLM prompt purposes, validators, API surface, UI plan, and 9 sub-steps (6.0 → 6.8).
-
-Summary of what changes vs the original outline:
-- **Three entry points**, not one: Excel uploads (BRD Tables 11–13) **plus** an interactive `POST /concepts/draft-from-nl` that lets users author a concept by typing natural language in the Dictionary tab.
-- **`data_quality/ai/` subpackage** quarantines all LLM-touching code. The deterministic rule engine never imports from `ai/`; only the proposal service crosses the boundary, at approval time.
-- **Easy path / hard path** in Table 12: rows that name `table` + `column` skip column-matching and only call `sql_generation`. Rows without a column run `column_match` first, then `sql_generation` per matched column.
-- **Multilingual matching** (e.g. business term "Arabic name" → `A_name` / `name_ar` / `الاسم`) handled by `column_match` returning ranked candidates with confidence; reviewer picks.
-- **Requires** ANTHROPIC_API_KEY provisioned.
+> Steps 4.5 / 5 / 5.5 / 6 are **all complete** — the chronological log
+> for each is above under "What we built". The remaining Phase 1 work
+> is Steps 7 → 9.
 
 ### Step 7 — Dashboard / Insights
 
