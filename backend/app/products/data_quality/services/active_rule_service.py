@@ -166,6 +166,29 @@ class ActiveRuleService:
             blocked_reason=None,
         )
 
+    async def delete_rule(self, rule_id: int, auth_user: AuthUser) -> dict:
+        """Hard-delete an active_rule. **Destructive** — the FK
+        t_dq_issues.active_rule_id is ON DELETE CASCADE, so every
+        validator issue ever produced by this rule goes with it
+        (same for exceptions referencing the rule).
+
+        Users get to make this call; the UI confirm dialog spells out
+        the cascade scope (issue count + exception count) so the
+        choice is informed. This is the difference between rule-delete
+        (the user said "I no longer want this rule, including its
+        history") and import rollback (Step 6.8, which refuses on
+        non-empty issue children so an undo doesn't silently nuke
+        validator output)."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        existing = await self.active_repo.find_by_id(rule_id, auth_user.tenant_id)
+        if not existing:
+            raise ResourceNotFoundException("Active rule not found")
+        await self.active_repo.delete_by_id(rule_id, auth_user.tenant_id)
+        return {
+            "detail": "Active rule deleted (cascade: issues + exceptions for this rule)",
+            "rule_id": rule_id,
+        }
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

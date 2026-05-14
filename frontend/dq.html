@@ -2710,15 +2710,22 @@ function statusBadge(s){
 }
 
 function ruleActions(r){
+  // Delete is destructive (cascades to issues + exceptions for this
+  // rule). Available in every status. Confirm dialog spells out the
+  // blast radius before the call lands.
+  const del=`<button class="tiny danger" onclick="deleteRule(${r.id})" title="Delete the rule AND every issue/exception it produced. Cannot be undone.">Delete</button>`;
   if(r.approval_status==='proposed'){
     return `<button class="tiny" onclick="approveRule(${r.id})">Approve</button>
-            <button class="tiny" onclick="blockRule(${r.id})">Block</button>`;
+            <button class="tiny" onclick="blockRule(${r.id})">Block</button>
+            ${del}`;
   }
   if(r.approval_status==='blocked'){
-    return `<button class="tiny" onclick="unblockRule(${r.id})">Unblock</button>`;
+    return `<button class="tiny" onclick="unblockRule(${r.id})">Unblock</button>
+            ${del}`;
   }
   // auto_applied / approved: still allow blocking.
-  return `<button class="tiny" onclick="blockRule(${r.id})">Block</button>`;
+  return `<button class="tiny" onclick="blockRule(${r.id})">Block</button>
+          ${del}`;
 }
 
 async function runPreview(){
@@ -2780,6 +2787,18 @@ async function unblockRule(id){
 async function blockRule(id){
   const reason=prompt('Reason (optional):','')||'';
   try{await api('POST','/api/v1/products/data-quality/active-rules/'+id+'/block',{reason});toast('Blocked');fetchRules()}catch(e){toast(e.message,false)}
+}
+async function deleteRule(id){
+  const msg=
+    `Delete rule #${id}?\n\n`+
+    `This CASCADES — every t_dq_issues row this rule produced (validator output across all past scans) and every exception suppressing it will be destroyed.\n\n`+
+    `Concept stays in the dictionary. Cannot be undone.`;
+  if(!confirm(msg)) return;
+  try{
+    await api('DELETE','/api/v1/products/data-quality/active-rules/'+id);
+    toast('Rule deleted');
+    fetchRules();
+  }catch(e){toast(e.message,false)}
 }
 
 async function saveConcept(){
