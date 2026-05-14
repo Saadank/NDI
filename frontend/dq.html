@@ -493,8 +493,14 @@
               <input type="text" id="pe-name" placeholder="e.g. customers (master)">
             </div>
             <div style="flex:1">
-              <label>Location (folder path)</label>
-              <input type="text" id="pe-location" placeholder="DQ_DWH/HEALTH_OPD">
+              <label>Folder</label>
+              <select id="pe-location-select" onchange="syncLocationField()" style="width:100%">
+                <!-- populated by openProfileEditor() -->
+              </select>
+              <div id="pe-location-new-wrap" style="display:none;margin-top:6px">
+                <input type="text" id="pe-location-new" placeholder="HEALTH/OPD or new_folder_name" style="width:100%">
+                <span class="api">Use <span class="mono">/</span> to nest. E.g. <span class="mono">HEALTH/OPD</span> makes OPD a subfolder of HEALTH.</span>
+              </div>
             </div>
           </div>
           <label>Description</label>
@@ -1964,6 +1970,76 @@ function syncSamplingField(){
   if(mode!=='all' && !$('pe-sample-size').value) $('pe-sample-size').value=100000;
 }
 
+// Collect every folder path the user has in use right now, plus the
+// parent prefixes so they can drop a new profile into an existing
+// parent without retyping (e.g. HEALTH/OPD also surfaces HEALTH as a
+// choice). Sorted alphabetically.
+function _uniqueFolders(){
+  const all=new Set();
+  for(const p of _profiles){
+    const raw=(p.location_path||'').trim();
+    if(!raw) continue;
+    const segs=raw.split('/').map(s=>s.trim()).filter(Boolean);
+    for(let i=1;i<=segs.length;i++){
+      all.add(segs.slice(0,i).join('/'));
+    }
+  }
+  return Array.from(all).sort();
+}
+
+// Populate the folder <select> with: (no folder), every existing
+// folder, and a "+ Create new folder…" trailer. Pre-selects the
+// supplied currentPath when given.
+function _populateFolderSelect(currentPath){
+  const sel=$('pe-location-select');
+  const folders=_uniqueFolders();
+  const opts=['<option value="">(no folder — root)</option>'];
+  for(const f of folders){
+    opts.push(`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`);
+  }
+  opts.push('<option value="__new__">+ Create new folder…</option>');
+  sel.innerHTML=opts.join('');
+  const current=(currentPath||'').trim();
+  if(current && folders.includes(current)){
+    sel.value=current;
+  }else if(current){
+    // Profile lives in a folder that — for whatever reason — wasn't in
+    // _uniqueFolders. Append it as a one-off so the value round-trips.
+    sel.insertAdjacentHTML('beforeend',
+      `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)} (current)</option>`);
+    sel.value=current;
+  }else{
+    sel.value='';
+  }
+  syncLocationField();
+}
+
+// Show / hide the "new folder name" text input based on whether the
+// user picked "+ Create new folder…" in the dropdown.
+function syncLocationField(){
+  const wrap=$('pe-location-new-wrap');
+  const inp=$('pe-location-new');
+  if($('pe-location-select').value==='__new__'){
+    wrap.style.display='';
+    if(!inp.value) inp.focus();
+  }else{
+    wrap.style.display='none';
+    inp.value='';
+  }
+}
+
+// Single source of truth for "what folder did the user pick?". Reads
+// the select unless it's set to __new__, in which case reads the new
+// folder name input. Returns null for the root / no-folder case.
+function _selectedLocationPath(){
+  const sel=$('pe-location-select').value;
+  if(sel==='__new__'){
+    const v=$('pe-location-new').value.trim();
+    return v||null;
+  }
+  return sel.trim()||null;
+}
+
 function openProfileEditor(profileId){
   const m=$('pe-modal');
   $('pe-id').value=profileId||'';
@@ -1977,7 +2053,7 @@ function openProfileEditor(profileId){
     if(!p){toast('Profile not found',false);return}
     $('pe-title').textContent='Edit profile';
     $('pe-name').value=p.name;
-    $('pe-location').value=p.location_path||'';
+    _populateFolderSelect(p.location_path);
     $('pe-description').value=p.description||'';
     $('pe-conn').value=p.connection_id;
     $('pe-schema').value=p.schema_name;
@@ -1993,7 +2069,7 @@ function openProfileEditor(profileId){
   }else{
     $('pe-title').textContent='New profile';
     $('pe-name').value='';
-    $('pe-location').value='';
+    _populateFolderSelect(null);
     $('pe-description').value='';
     if(_connections.length) $('pe-conn').value=_connections[0].id;
     $('pe-schema').value='';
@@ -2039,7 +2115,7 @@ async function saveProfile(){
   const body={
     name:$('pe-name').value.trim(),
     description:$('pe-description').value.trim()||null,
-    location_path:$('pe-location').value.trim()||null,
+    location_path:_selectedLocationPath(),
     sampling_mode:samplingMode,
     sample_size:sampleSize,
     drill_down:$('pe-drill').checked,
