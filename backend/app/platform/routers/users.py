@@ -20,6 +20,18 @@ class AssignGroupBody(BaseModel):
     group_id: int | None
 
 
+class DeactivateUserBody(BaseModel):
+    """Optional payload for POST /users/{id}/deactivate.
+
+    When `transfer_to_user_id` is provided, the deactivated user's open
+    responsibilities are routed to the named delegate via the existing
+    delegation pipeline (BRD §2.3) before the account is disabled. Pass
+    `null` (or omit) to deactivate without transfer — only safe when the
+    user has no in-flight responsibilities.
+    """
+    transfer_to_user_id: int | None = None
+
+
 class DelegationBody(BaseModel):
     """Payload for POST /users/me/delegation.
 
@@ -95,3 +107,45 @@ async def assign_user_group(
         raise ForbiddenException("Only admins can assign groups")
     repo = UserRepository()
     return await repo.update(user_id, group_id=body.group_id)
+
+
+@router.post("/{user_id}/deactivate")
+async def deactivate_user(
+    user_id: int,
+    body: DeactivateUserBody,
+    auth_user: AuthUser = Depends(get_current_user),
+):
+    """Deactivate a user account (Org Admin / Platform Admin only).
+
+    The Pencil-designed flow lets the admin name a delegate to receive any
+    open responsibilities. We implement that by piping through the existing
+    delegation pipeline: set the deactivated user's delegation pointer so
+    any in-flight approvals re-route immediately, then flip is_active=False.
+    The account row stays in t_users with a soft trail — a hard delete is
+    not exposed in the UI.
+    """
+    if auth_user.platform_role not in ADMIN_ROLES:
+        raise ForbiddenException("Only admins can deactivate users")
+    repo = UserRepository()
+    target = await repo.find_by_id(user_id)
+    if not target:
+        raise ForbiddenException("User not found")
+    # Org admins can only act inside their own tenant.
+    if (
+        auth_user.platform_role == PlatformRole.ORG_ADMIN
+        and target.get("tenant_id") != auth_user.tenant_id
+    ):
+        raise ForbiddenException("Cannot deactivate users from another tenant")
+
+    # 1) Reassign open responsibilities via delegation when requested.
+    #    set_delegation is a direct repo update on t_users — no need to
+    #    construct a fake AuthUser context for the delegation service.
+    if body.transfer_to_user_id is not None:
+        await repo.set_delegation(
+            user_id=user_id,
+            delegate_to=body.transfer_to_user_id,
+            reason="Account deactivation transfer",
+        )
+
+    # 2) Disable the account.
+    return await repo.update(user_id, is_active=False)

@@ -20,6 +20,17 @@ class CreateConnectionBody(BaseModel):
     description: str | None = None
 
 
+class UpdateConnectionBody(BaseModel):
+    """All fields optional — service only updates what's actually sent."""
+    db_type: str | None = None
+    host: str | None = None
+    port: int | None = None
+    database: str | None = None
+    username: str | None = None
+    password: str | None = None
+    description: str | None = None
+
+
 @router.get("/")
 async def list_connections(
     auth_user: AuthUser = Depends(get_current_user),
@@ -53,6 +64,21 @@ async def test_connection(
     service: ConnectionService = Depends(get_connection_service),
 ):
     return await service.test_connection(connection_id, auth_user)
+
+
+@router.put("/{connection_id}")
+async def update_connection(
+    connection_id: UUID,
+    body: UpdateConnectionBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ConnectionService = Depends(get_connection_service),
+):
+    """Patch a connection in-place (admin only)."""
+    return await service.update_connection(
+        connection_id,
+        body.model_dump(exclude_none=True),
+        auth_user,
+    )
 
 
 @router.delete("/{connection_id}")

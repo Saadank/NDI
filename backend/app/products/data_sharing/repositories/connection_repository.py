@@ -29,3 +29,24 @@ class ConnectionRepository(PostgresqlAsyncRepository):
         return await self._execute(
             "UPDATE t_connections SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", (connection_id,)
         )
+
+    async def update(self, connection_id: UUID, tenant_id: int, **fields) -> dict:
+        """Patch any subset of connection fields. Tenant-scoped for safety."""
+        if not fields:
+            return await self.find_by_id(connection_id, tenant_id)
+        set_clauses = []
+        args: list = []
+        idx = 1
+        for key, val in fields.items():
+            set_clauses.append(f"{key} = ${idx}")
+            args.append(val)
+            idx += 1
+        # Append id and tenant_id at the tail; both used in WHERE clause.
+        args.append(connection_id)
+        args.append(tenant_id)
+        query = (
+            f"UPDATE t_connections SET {', '.join(set_clauses)} "
+            f"WHERE id = ${idx} AND tenant_id = ${idx + 1} AND deleted_at IS NULL "
+            f"RETURNING *"
+        )
+        return await self._fetch_row(query, tuple(args))

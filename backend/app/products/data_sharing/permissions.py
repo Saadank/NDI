@@ -125,25 +125,58 @@ def can_view_request(auth_user: AuthUser, request: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
-    """Coarse role-level gate.
+    """Coarse permission gate for acting on a workflow step.
 
-    The caller (`ApprovalService._check_step_permission`) performs the fine-grained
-    assignee-user / delegation check after this returns True, because delegation
-    lookup is async and does not belong in a sync permission helper.
+    The acting user can decide a step when ALL hold:
+      1. The step is `pending` (others would 4xx in the action endpoint).
+      2. EITHER:
+         - the step's `assignee_user_id` matches the caller (assignee-
+           based — the primary path now that the workflow engine
+           resolves a specific user for most steps); OR
+         - the step has NO specific assignee (`assignee_user_id IS NULL`)
+           AND the caller's product_role matches the step's
+           assignee_role (role-based fallback for steps like DPO that
+           any tenant DPO can pick up).
+
+    A user's product_role is constant across all their steps, but the
+    step's assignee_role varies (Ahmed may be assigned to a step with
+    role=receiver even though his product_role is data_owner). The
+    rule above intentionally trusts assignee_user_id over role when
+    both are present.
+
+    The caller (`ApprovalService._check_step_permission`) performs a
+    delegation lookup after this returns True. Until that's promoted
+    here, a delegate user whose `user.id` doesn't match the assignee
+    will see `can_act=false` even though their /approve call would
+    succeed — known limitation, tracked separately.
     """
     # Platform Admin never acts on a data-controller approval step.
     if _is_platform_admin(auth_user):
         return False
+    # Status gate — applies to every role. Only the current step is
+    # actionable; waiting/approved/etc. must report False.
+    if step.get("status") != "pending":
+        return False
+    # Org Admin keeps an override on the active step (BRD EC-05).
     if _is_org_admin(auth_user):
         return True
+
+    assignee_user_id = step.get("assignee_user_id")
+    if assignee_user_id is not None:
+        # Specific-user assignment — only that exact user (delegation
+        # handled downstream).
+        return assignee_user_id == auth_user.user_id
+
+    # Null-assignee step: gate by the caller's role matching the
+    # step's `assignee_role`.
     role = _role(auth_user)
-    assignee = step.get("assignee_role")
+    assignee_role = step.get("assignee_role")
     if role == SharingRole.DPO:
-        return assignee == SharingRole.DPO
+        return assignee_role == SharingRole.DPO
     if role == SharingRole.DATA_OWNER:
-        return assignee == SharingRole.DATA_OWNER
+        return assignee_role == SharingRole.DATA_OWNER
     if role == SharingRole.RECEIVER:
-        if assignee != SharingRole.RECEIVER:
+        if assignee_role != SharingRole.RECEIVER:
             return False
         if auth_user.group_id and request.get("receiver_group_id") == auth_user.group_id:
             return True
@@ -156,12 +189,22 @@ def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def can_manage_workflows(auth_user: AuthUser) -> bool:
-    """Only Org Admins manage their tenant's workflows.
+    """Only Org Admins create / edit / delete their tenant's workflows.
 
     Platform Admin can activate products but not design a tenant's workflows
     (BRD §2.1 CRITICAL — no visibility into data-controller configuration).
     """
     return _is_org_admin(auth_user)
+
+
+def can_view_workflows(auth_user: AuthUser) -> bool:
+    """Read-only access to workflow templates.
+
+    Org Admins can view (their own write access implies read). DPOs need to
+    inspect templates to perform PDPL review against them, so they're granted
+    read access here even though they can't author workflows themselves.
+    """
+    return _is_org_admin(auth_user) or _role(auth_user) == SharingRole.DPO
 
 
 def can_manage_users(auth_user: AuthUser) -> bool:

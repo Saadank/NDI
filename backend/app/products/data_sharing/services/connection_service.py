@@ -41,6 +41,28 @@ class ConnectionService:
         require(can_manage_connections(auth_user), "Only admins can manage connections")
         await self.repo.soft_delete(connection_id)
 
+    async def update_connection(
+        self, connection_id: UUID, data: dict, auth_user: AuthUser,
+    ) -> dict:
+        """Patch a connection in-place. Only fields the admin sent are updated.
+
+        The frontend's edit form may omit `password` (we keep the existing one
+        in that case) and ignore `db_type` after creation. We map plaintext
+        `password` to the stored `password_encrypted` column for parity with
+        create_connection — full encryption-at-rest is still TODO.
+        """
+        require(can_manage_connections(auth_user), "Only admins can manage connections")
+        # Whitelist of editable columns to keep this from becoming a generic
+        # SQL update tool.
+        ALLOWED = {"db_type", "host", "port", "database", "username", "description"}
+        fields: dict = {k: v for k, v in data.items() if k in ALLOWED and v is not None}
+        # Password is a separate path because the column name differs.
+        if data.get("password"):
+            fields["password_encrypted"] = data["password"]
+        if not fields:
+            return await self.repo.find_by_id(connection_id, auth_user.tenant_id)
+        return await self.repo.update(connection_id, auth_user.tenant_id, **fields)
+
     async def list_for_browse(self, auth_user: AuthUser) -> list[dict]:
         """Requester-visible listing: strip the password."""
         require(can_browse_connections(auth_user), "You cannot browse connections")

@@ -114,6 +114,9 @@ class ShareRequestService:
             external_recipient_id=external_recipient_id,
             external_contact_id=external_contact_id,
             delivery_channel=data.get("delivery_channel", "portal"),
+            # Pull = ask another dept FOR data; Push = send data TO another
+            # dept. The engine maps source/receiver dept assignees off this.
+            request_direction=data.get("request_direction", "pull"),
         )
 
         await self.audit.log(
@@ -123,13 +126,27 @@ class ShareRequestService:
         )
         return request
 
+    # Fields that are PDPL-material per spec v4.0 §4.4. If any of them
+    # change between submissions the DPO step is re-triggered.
+    PDPL_MATERIAL_FIELDS = (
+        "data_classification",
+        "legal_basis",
+        "personal_data_involved",
+        "data_subject_categories",
+        "custom_sql",
+        "selected_items",
+    )
+
     async def submit_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
         tenant_id = auth_user.tenant_id
         request = await self.repo.find_by_id(request_id, tenant_id)
         require(can_submit_request(auth_user, request), "You can only submit your own requests")
 
-        if request["status"] != "draft":
-            raise ValidationException("Only draft requests can be submitted")
+        prior_status = request["status"]
+        if prior_status not in ("draft", "changes_requested"):
+            raise ValidationException(
+                "Only draft or changes-requested requests can be submitted"
+            )
 
         # EC-01 re-check: requester's group may have changed since draft.
         if (
@@ -156,26 +173,156 @@ class ShareRequestService:
         if classification == "sensitive" and not request.get("dpia_confirmed"):
             raise ValidationException("DPIA confirmation required for sensitive data")
 
-        # Select matching workflow template and create steps
-        template = await self.workflow_engine.select_template(
-            request["sharing_type"], request["data_classification"], tenant_id
-        )
-        if template:
-            steps = await self.workflow_engine.create_workflow_steps(
-                request_id, template, request
+        # Pull + external is not a supported combination. An external
+        # party can't initiate the request from outside the platform;
+        # if the tenant wants to receive data from an external party,
+        # they coordinate via push from the external side (handled out
+        # of band) or via the pickup portal. Reject with a 422 so the
+        # wizard can surface a clear message.
+        direction_check = (request.get("request_direction") or "pull").lower()
+        sharing_check = (request.get("sharing_type") or "internal").lower()
+        if direction_check == "pull" and sharing_check == "external":
+            raise ValidationException(
+                "Pull from external sources is not supported. To receive "
+                "data from an external party, coordinate via push from "
+                "your side or contact your DPO."
             )
-            # BRD §2.2 role-conflict resolution: EC-02 / EC-03 / EC-04.
-            # Runs after step creation so every assignment is inspected in a single pass.
-            await self.conflicts.resolve_step_conflicts(request, steps, auth_user)
-            await self.repo.update(request_id, workflow_template_id=template["id"])
+
+        # PUSH validation: the requester is sending data they already
+        # have, so Mode A must have at least one file attached, and Mode
+        # B must have a connection + selection. PULL has no such check —
+        # the source steward provides the data after approval.
+        direction = (request.get("request_direction") or "pull").lower()
+        if direction == "push":
+            data_type = request.get("data_type") or "file"
+            if data_type == "file":
+                from app.products.data_sharing.repositories.file_repository import FileRepository
+                files = await FileRepository().find_by_request(request["id"])
+                fulfilled = [
+                    f for f in files
+                    if f.get("status") in ("uploaded", "clean", "scanning")
+                ]
+                if not fulfilled:
+                    raise ValidationException(
+                        "Push requests must include at least one uploaded file before submission"
+                    )
+            else:  # structured
+                if not request.get("connection_id"):
+                    raise ValidationException(
+                        "Push (structured) requires a database connection"
+                    )
+                if not request.get("selection_mode"):
+                    raise ValidationException(
+                        "Push (structured) requires either selected tables or a custom query"
+                    )
+
+        if prior_status == "draft":
+            # First submit: create steps from the matching active template.
+            template = await self.workflow_engine.select_template(
+                request["sharing_type"], request["data_classification"], tenant_id
+            )
+            if template:
+                steps = await self.workflow_engine.create_workflow_steps(
+                    request_id, template, request
+                )
+                # BRD §2.2 role-conflict resolution: EC-02 / EC-03 / EC-04.
+                await self.conflicts.resolve_step_conflicts(request, steps, auth_user)
+                await self.repo.update(request_id, workflow_template_id=template["id"])
+        else:
+            # Re-submit after changes_requested. Spec v4.0 §4.4 — if any
+            # PDPL-material field changed since the last submitted snapshot,
+            # the DPO step is re-triggered automatically.
+            await self._maybe_retrigger_dpo(
+                request_id, request, auth_user
+            )
 
         updated = await self.repo.update_status(request_id, "submitted", auth_user.user_id)
 
+        # Snapshot the request state in the audit log so future resubmits
+        # have something to diff against. Same shape as request rows so
+        # compare-by-key works in `_maybe_retrigger_dpo`.
         await self.audit.log(
-            tenant_id=tenant_id, action_type="request.submitted", resource_type="share_request",
-            resource_id=str(request_id), actor_id=auth_user.user_id, request_id=request_id,
+            tenant_id=tenant_id,
+            action_type="request.submitted" if prior_status == "draft" else "request.resubmitted",
+            resource_type="share_request",
+            resource_id=str(request_id),
+            actor_id=auth_user.user_id,
+            request_id=request_id,
+            after_state={k: updated.get(k) for k in self.PDPL_MATERIAL_FIELDS},
         )
         return updated
+
+    async def _maybe_retrigger_dpo(self, request_id: UUID, request: dict, auth_user: AuthUser) -> None:
+        """Spec v4.0 §4.4: 'If the steward changes the classification, the
+        legal basis, the personal-data flag, or the data selection itself,
+        the DPO step is re-triggered automatically.'
+
+        Compares the request's current PDPL-material fields against the
+        last `request.submitted` / `request.resubmitted` audit snapshot.
+        If any field differs, finds the existing DPO step and resets it
+        to status='pending'; resets every later step to 'waiting' so the
+        workflow restarts from PDPL review.
+        """
+        prior = await self.audit._fetch_row_optional(
+            """SELECT after_state FROM t_audit_events
+               WHERE resource_type = 'share_request'
+                 AND resource_id = $1
+                 AND action_type IN ('request.submitted', 'request.resubmitted')
+                 AND after_state IS NOT NULL
+               ORDER BY created_at DESC LIMIT 1""",
+            (str(request_id),),
+        )
+        if not prior or not prior.get("after_state"):
+            # No snapshot exists yet (request was first submitted before
+            # snapshotting was added). Be conservative: re-trigger DPO
+            # so a stale DPO approval doesn't survive a content change.
+            should_retrigger = True
+            changed: list[str] = list(self.PDPL_MATERIAL_FIELDS)
+        else:
+            import json
+            snap = prior["after_state"]
+            if isinstance(snap, str):
+                snap = json.loads(snap)
+            changed = [
+                f for f in self.PDPL_MATERIAL_FIELDS if snap.get(f) != request.get(f)
+            ]
+            should_retrigger = bool(changed)
+
+        if not should_retrigger:
+            return
+
+        # Find the DPO step on this request and reset it.
+        steps = await self.workflow_engine.repo.find_steps_by_request(request_id)
+        dpo_step = next(
+            (
+                s
+                for s in steps
+                if (s.get("step_type") == "dpo_review")
+                or (s.get("assignee_role") == "dpo")
+            ),
+            None,
+        )
+        if not dpo_step:
+            return
+
+        # Reset DPO step to pending; reset every later step to waiting.
+        await self.workflow_engine.repo.update_step(
+            dpo_step["id"], status="pending", completed_at=None,
+            completed_by=None, decision=None,
+        )
+        for s in steps:
+            if s["step_order"] > dpo_step["step_order"]:
+                await self.workflow_engine.repo.update_step(s["id"], status="waiting")
+
+        await self.audit.log(
+            tenant_id=auth_user.tenant_id,
+            action_type="step.dpo_retriggered",
+            resource_type="workflow_step",
+            resource_id=str(dpo_step["id"]),
+            actor_id=auth_user.user_id,
+            request_id=request_id,
+            metadata={"spec": "v4.0_section_4.4", "changed_fields": changed},
+        )
 
     async def get_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
         request = await self.repo.find_by_id(request_id, auth_user.tenant_id)

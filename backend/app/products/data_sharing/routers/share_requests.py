@@ -23,6 +23,11 @@ class CreateShareRequestBody(BaseModel):
     title: str = Field(..., min_length=1)
     purpose: str = Field(..., min_length=1)
     legal_basis: str = ""
+    # PULL = requester is asking another dept FOR data; PUSH = requester
+    # is SENDING data they already have to another dept. Defaults to
+    # PULL (the spec v4.0 §3.3 case). The workflow engine maps source/
+    # receiver department roles based on this — see workflow_engine.py.
+    request_direction: Literal["pull", "push"] = "pull"
     sharing_type: Literal["internal", "external"] = "internal"
     data_classification: DataClassification = DataClassification.INTERNAL
     personal_data_involved: bool = False

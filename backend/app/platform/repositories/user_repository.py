@@ -65,6 +65,23 @@ class UserRepository(PostgresqlAsyncRepository):
             (tenant_id,),
         )
 
+    async def find_first_in_group_by_product_role(
+        self, group_id: int, product_role: str,
+    ) -> dict | None:
+        """Return the alphabetic-by-email first active user in a given
+        group with the given product_role. Used by the workflow engine
+        to pick a default Source Steward for PULL requests when the
+        template's `assignee_role` is "source" / "requester".
+        """
+        return await self._fetch_row_optional(
+            "SELECT u.* FROM t_users u "
+            "JOIN t_user_product_roles upr ON upr.user_id = u.id "
+            "WHERE u.group_id = $1 AND upr.role = $2 "
+            "  AND u.is_active = TRUE AND u.deleted_at IS NULL "
+            "ORDER BY u.email ASC LIMIT 1",
+            (group_id, product_role),
+        )
+
     async def set_delegation(
         self, user_id: int, delegate_to: int | None,
         start=None, end=None, reason: str | None = None,
