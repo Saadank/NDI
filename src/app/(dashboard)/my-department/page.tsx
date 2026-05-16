@@ -108,13 +108,13 @@ export default function MyDepartmentPage() {
         )}
       </div>
 
-      {/* Delegation active banner */}
+      {/* Delegation active banner — Pencil frame 10 uses a blue info banner */}
       {activeDelegates.length > 0 && (
         <div
-          className="flex items-center justify-between px-8 py-3"
-          style={{ backgroundColor: "#FFF5F0", borderBottom: "1px solid #FDDCCC" }}
+          className="mx-8 mt-4 flex items-center justify-between rounded-md px-4 py-2.5"
+          style={{ backgroundColor: "#EFF6FF", border: "1px solid #BFDBFE" }}
         >
-          <p className="text-[13px]" style={{ color: "#D76736" }}>
+          <p className="text-[13px]" style={{ color: "#1D4ED8" }}>
             <strong>Delegation active</strong>
             {activeDelegation?.delegation_end
               ? ` until ${new Date(activeDelegation.delegation_end).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
@@ -129,7 +129,7 @@ export default function MyDepartmentPage() {
             type="button"
             onClick={() => setPane("delegation")}
             className="text-[12px] font-medium hover:underline"
-            style={{ color: "#D76736" }}
+            style={{ color: "#3B82F6" }}
           >
             View details →
           </button>
@@ -714,26 +714,47 @@ function DelegationPane({ groupId: _groupId, groupName, productRole }: { groupId
       };
     });
 
+  // Per Pencil frame 12, the Role Delegation card opens with a green
+  // success-style header that confirms the role + dept context, then the
+  // form lives below it on a white card. We render the header and form as
+  // separate panels stacked in the same column.
+  const formattedRole = productRole
+    ? productRole.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    : "";
   return (
+    <section className="flex flex-col gap-3">
+      <div
+        className="flex items-start gap-2 rounded-lg p-4"
+        style={{ backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0" }}
+      >
+        <span
+          className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+          style={{ backgroundColor: "#10B981" }}
+        >
+          ✓
+        </span>
+        <div className="flex flex-col gap-1">
+          <p className="text-[13px] font-semibold" style={{ color: "#065F46" }}>
+            Role Delegation
+            {(formattedRole || groupName) && (
+              <span style={{ fontWeight: 500 }}>
+                {" "}— {formattedRole ? `${formattedRole} · ` : ""}
+                {groupName} Department
+              </span>
+            )}
+          </p>
+          <p className="text-[12px]" style={{ color: "#047857" }}>
+            Configure a backup to act in your absence. All decisions during
+            the active window are logged with both your name and your
+            backup&rsquo;s name in the audit trail.
+          </p>
+        </div>
+      </div>
     <section
       className="flex flex-col rounded-lg overflow-hidden"
       style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
     >
       <div className="flex flex-col gap-4 p-5">
-        <div className="flex flex-col gap-1.5">
-          <h2 className="text-[15px] font-bold text-auth-text">
-            Role Delegation
-            {(productRole || groupName) && (
-              <span className="font-normal text-[13px]" style={{ color: "#9E9E9E" }}>
-                {" "}— {productRole ? `${productRole.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} · ` : ""}{groupName} Department
-              </span>
-            )}
-          </h2>
-          <p className="text-[13px]" style={{ color: "#9E9E9E" }}>
-            Configure a backup to act in your absence. All decisions during the active window are
-            logged with both your name and your backup&rsquo;s name in the audit trail.
-          </p>
-        </div>
         <div className="flex flex-col gap-2">
           <label className="text-[12px] font-semibold text-auth-text">Select Backup</label>
           <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
@@ -887,6 +908,7 @@ function DelegationPane({ groupId: _groupId, groupName, productRole }: { groupId
           </button>
         </div>
       </div>
+    </section>
     </section>
   );
 }

@@ -60,7 +60,12 @@ function ClassificationBadge({ value }: { value: string }) {
 
 function WorkflowProgressBar({ steps }: { steps: WorkflowStep[] }) {
   if (steps.length === 0) return null;
-  const currentIdx = steps.findIndex((s) => s.status === "pending");
+  // The "current" step is the first pending OR in_progress one. If the
+  // workflow is finished there is no current step and the bar shows
+  // every node as done.
+  const currentIdx = steps.findIndex(
+    (s) => s.status === "pending" || s.status === "in_progress",
+  );
 
   return (
     <div className="flex flex-col gap-3 px-5 pb-5">
@@ -72,15 +77,38 @@ function WorkflowProgressBar({ steps }: { steps: WorkflowStep[] }) {
       </div>
       <div className="relative flex items-center">
         {steps.map((s, i) => {
-          const done = s.status !== "pending";
-          const active = s.can_act;
+          // Visual states (must match the right-rail WorkflowStepRow rule):
+          //   approved/skipped       → green ✓ (done)
+          //   pending/in_progress    → orange filled (current/active)
+          //   rejected               → red ✕
+          //   waiting/flagged/etc.   → gray empty circle (default)
+          const done = s.status === "approved" || s.status === "skipped";
+          const active = s.status === "pending" || s.status === "in_progress";
+          const rejected = s.status === "rejected";
+          const ringColor = rejected
+            ? "#DC2626"
+            : done
+              ? "#16A34A"
+              : active
+                ? "#D76736"
+                : "#EEEEEE";
+          const textColor = rejected || done || active ? "#FFFFFF" : "#9E9E9E";
+          // Connector colouring: the line BEFORE this node is "done"
+          // when this node has been reached (i.e., this node is current
+          // or already finished). The line AFTER this node fills only
+          // when THIS node itself is done.
+          const reached =
+            done ||
+            active ||
+            rejected ||
+            (currentIdx !== -1 && i < currentIdx);
           return (
             <div key={s.id} className="flex flex-1 flex-col items-center gap-1.5">
               <div className="relative flex w-full items-center">
                 {i > 0 && (
                   <div
                     className="absolute left-0 right-1/2 top-1/2 h-0.5 -translate-y-1/2"
-                    style={{ backgroundColor: done || i <= (currentIdx === -1 ? steps.length : currentIdx) ? "#D76736" : "#EEEEEE" }}
+                    style={{ backgroundColor: reached ? "#D76736" : "#EEEEEE" }}
                   />
                 )}
                 {i < steps.length - 1 && (
@@ -91,17 +119,28 @@ function WorkflowProgressBar({ steps }: { steps: WorkflowStep[] }) {
                 )}
                 <div
                   className="relative z-10 mx-auto flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold"
-                  style={{
-                    backgroundColor: done ? "#D76736" : active ? "#D76736" : "#EEEEEE",
-                    color: done || active ? "#FFFFFF" : "#9E9E9E",
-                  }}
+                  style={{ backgroundColor: ringColor, color: textColor }}
                 >
-                  {done ? <Check className="h-3 w-3" /> : i + 1}
+                  {done ? (
+                    <Check className="h-3 w-3" />
+                  ) : rejected ? (
+                    <XCircle className="h-3 w-3" />
+                  ) : (
+                    i + 1
+                  )}
                 </div>
               </div>
               <span
                 className="text-center text-[10px] leading-tight"
-                style={{ color: done || active ? "#D76736" : "#9E9E9E", maxWidth: 64 }}
+                style={{
+                  color:
+                    done || active
+                      ? "#D76736"
+                      : rejected
+                        ? "#DC2626"
+                        : "#9E9E9E",
+                  maxWidth: 64,
+                }}
               >
                 {s.name ?? s.assignee_role ?? `Step ${i + 1}`}
               </span>
@@ -115,16 +154,16 @@ function WorkflowProgressBar({ steps }: { steps: WorkflowStep[] }) {
 
 // ─── PDPL Review right panel ──────────────────────────────────────
 
-type ReviewTab = "legal_basis" | "data_min" | "dpia_status";
+type ReviewTab = "legal_basis" | "data_min" | "dpia_status" | "all_checks";
 
 function PdplReviewPanel({
   classification,
   legalBasis,
   dpia,
-  myStep,
-  onApprove,
-  onChanges,
-  onReject,
+  myStep: _myStep,
+  onApprove: _onApprove,
+  onChanges: _onChanges,
+  onReject: _onReject,
 }: {
   classification: string;
   legalBasis: string | null;
@@ -141,11 +180,25 @@ function PdplReviewPanel({
   const [dpiaVerification, setDpiaVerification] = useState<"confirmed" | "request_update" | null>(null);
   const [dpiaAssessment, setDpiaAssessment] = useState<"proceed" | "request_update" | null>(null);
 
+  // Per Pencil frame 07 the right-rail panel gains a 4th tab once all
+  // sub-checks are complete: a roll-up summary of Legal Basis +
+  // Data Minimisation + DPIA Status with the action consequences below.
   const tabs: { id: ReviewTab; label: string }[] = [
     { id: "legal_basis", label: "Legal Basis" },
     { id: "data_min", label: "Data Minimisation" },
     { id: "dpia_status", label: "DPIA Status" },
+    { id: "all_checks", label: "All Checks" },
   ];
+
+  // Each sub-tab's "satisfied?" rule. Used to roll up into the All-Checks
+  // summary as ✓/✗ rows and to drive the headline banner.
+  const legalBasisSatisfied = override === "accept" || override === "override";
+  const dataMinSatisfied = dataMinAssessment === "accept_with_note";
+  const dpiaSatisfied = dpiaVerification === "confirmed" && dpiaAssessment === "proceed";
+  const checksTotal = 3;
+  const checksSatisfied =
+    Number(legalBasisSatisfied) + Number(dataMinSatisfied) + Number(dpiaSatisfied);
+  const allChecksGreen = checksSatisfied === checksTotal;
 
   return (
     <div className="flex w-[320px] shrink-0 flex-col gap-3">
@@ -350,6 +403,98 @@ function PdplReviewPanel({
             </div>
           )}
 
+          {tab === "all_checks" && (
+            <div className="flex flex-col gap-3">
+              {/* Headline banner — green when every sub-check is satisfied,
+                  amber otherwise (with a count of remaining issues). */}
+              {allChecksGreen ? (
+                <div
+                  className="flex items-center gap-2 rounded-md p-3 text-[12px] font-semibold"
+                  style={{ backgroundColor: "#F0FAF0", color: "#2D6B21", border: "1px solid #BBF7D0" }}
+                >
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  All PDPL checks complete
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-2 rounded-md p-3 text-[12px] font-semibold"
+                  style={{ backgroundColor: "#FFFBEB", color: "#92400E", border: "1px solid #FCD34D" }}
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {checksTotal - checksSatisfied} issue{checksTotal - checksSatisfied === 1 ? "" : "s"} blocking approval
+                </div>
+              )}
+
+              {/* Per-check roll-up rows */}
+              {[
+                {
+                  key: "legal",
+                  label: "Legal Basis",
+                  satisfied: legalBasisSatisfied,
+                  note: legalBasis
+                    ? `${legalBasis} — ${override === "override" ? "DPO override applied" : override === "accept" ? "confirmed" : "needs DPO decision"}`
+                    : "Not specified",
+                },
+                {
+                  key: "data_min",
+                  label: "Data Minimisation",
+                  satisfied: dataMinSatisfied,
+                  note:
+                    dataMinAssessment === "accept_with_note"
+                      ? "Accepted — notes captured"
+                      : dataMinAssessment === "request_changes"
+                        ? "Changes requested"
+                        : "DPO assessment pending",
+                },
+                {
+                  key: "dpia",
+                  label: "DPIA Status",
+                  satisfied: dpiaSatisfied,
+                  note: dpia
+                    ? dpiaVerification === "confirmed" && dpiaAssessment === "proceed"
+                      ? "On file · DPO confirmed"
+                      : "Verification pending"
+                    : "DPIA flag not set on request",
+                },
+              ].map((c) => (
+                <div
+                  key={c.key}
+                  className="flex items-start gap-2 rounded-md p-2.5"
+                  style={{
+                    backgroundColor: c.satisfied ? "#F0FAF0" : "#FFFBEB",
+                    border: `1px solid ${c.satisfied ? "#BBF7D0" : "#FCD34D"}`,
+                  }}
+                >
+                  {c.satisfied ? (
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "#449235" }} />
+                  ) : (
+                    <X className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "#92400E" }} />
+                  )}
+                  <div className="flex flex-1 flex-col gap-0.5">
+                    <span
+                      className="text-[12px] font-semibold"
+                      style={{ color: c.satisfied ? "#2D6B21" : "#92400E" }}
+                    >
+                      {c.label}
+                    </span>
+                    <span
+                      className="text-[11px]"
+                      style={{ color: c.satisfied ? "#449235" : "#92400E" }}
+                    >
+                      {c.note}
+                    </span>
+                  </div>
+                </div>
+              ))}
+
+              <p className="text-[11px]" style={{ color: "#9E9E9E", lineHeight: 1.5 }}>
+                Switch back to a tab to refine your assessment. The action you
+                pick in the footer is recorded in the audit trail with these
+                check states attached.
+              </p>
+            </div>
+          )}
+
         </div>
       </section>
 
@@ -431,6 +576,10 @@ export function DpoRequestDetail({ id }: { id: string }) {
 
   const [modal, setModal] = useState<ModalKey>(null);
   const [comment, setComment] = useState("");
+  // Track the most recent failure so the modal can surface a real reason
+  // instead of silently closing/re-enabling the button. Must live BEFORE
+  // any conditional return to keep hook order stable across renders.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (!isReady) return null;
   if (reqQuery.isLoading) return <div className="flex flex-1 items-center justify-center"><p className="text-sm text-auth-text-subtle">Loading…</p></div>;
@@ -455,9 +604,16 @@ export function DpoRequestDetail({ id }: { id: string }) {
 
   const handleAct = async (status: "approved" | "rejected" | "changes_requested") => {
     if (!myStep) return;
-    await act.mutateAsync({ stepId: myStep.id, status, comment: comment || undefined });
-    setModal(null);
-    router.push("/dpo");
+    try {
+      setActionError(null);
+      await act.mutateAsync({ stepId: myStep.id, status, comment: comment || undefined });
+      setModal(null);
+      router.push("/dpo");
+    } catch (e) {
+      setActionError(
+        e instanceof Error ? e.message : `Could not ${status.replace("_", " ")} this request`,
+      );
+    }
   };
 
   return (
@@ -677,7 +833,7 @@ export function DpoRequestDetail({ id }: { id: string }) {
 
       {/* Modals */}
       {modal === "approve" && (
-        <ModalShell title={`Approve ${r.request_number}`} onClose={() => setModal(null)}>
+        <ModalShell title={`Approve ${r.request_number}`} onClose={() => { setModal(null); setActionError(null); }}>
           <p className="text-xs" style={{ color: "#515157", lineHeight: 1.6 }}>
             The request advances to the next workflow step. The audit trail records your decision.
           </p>
@@ -688,16 +844,19 @@ export function DpoRequestDetail({ id }: { id: string }) {
             className="h-24 w-full resize-none rounded-md border p-3 text-[13px] outline-none"
             style={{ borderColor: "#EEEEEE" }}
           />
+          {actionError && (
+            <p className="text-xs" style={{ color: "#D32F2F" }}>{actionError}</p>
+          )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setModal(null)} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
-            <button type="button" onClick={() => void handleAct("approved")} disabled={act.isPending} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white" style={{ backgroundColor: "#D76736" }}>
+            <button type="button" onClick={() => { setModal(null); setActionError(null); }} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
+            <button type="button" onClick={() => { handleAct("approved"); }} disabled={act.isPending} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white" style={{ backgroundColor: "#D76736" }}>
               {act.isPending ? "Approving…" : "Approve"}
             </button>
           </div>
         </ModalShell>
       )}
       {modal === "changes" && (
-        <ModalShell title="Request Changes" onClose={() => setModal(null)}>
+        <ModalShell title="Request Changes" onClose={() => { setModal(null); setActionError(null); }}>
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
@@ -705,16 +864,19 @@ export function DpoRequestDetail({ id }: { id: string }) {
             className="h-28 w-full resize-none rounded-md border p-3 text-[13px] outline-none"
             style={{ borderColor: "#EEEEEE" }}
           />
+          {actionError && (
+            <p className="text-xs" style={{ color: "#D32F2F" }}>{actionError}</p>
+          )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setModal(null)} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
-            <button type="button" onClick={() => void handleAct("changes_requested")} disabled={act.isPending || !comment.trim()} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-60" style={{ backgroundColor: "#D76736" }}>
+            <button type="button" onClick={() => { setModal(null); setActionError(null); }} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
+            <button type="button" onClick={() => { handleAct("changes_requested"); }} disabled={act.isPending || !comment.trim()} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-60" style={{ backgroundColor: "#D76736" }}>
               {act.isPending ? "Sending…" : "Send back"}
             </button>
           </div>
         </ModalShell>
       )}
       {modal === "reject" && (
-        <ModalShell title="Reject Request" onClose={() => setModal(null)}>
+        <ModalShell title="Reject Request" onClose={() => { setModal(null); setActionError(null); }}>
           <div className="rounded-md p-3 text-xs" style={{ backgroundColor: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B" }}>
             Rejection permanently closes this request. This action cannot be undone.
           </div>
@@ -725,9 +887,12 @@ export function DpoRequestDetail({ id }: { id: string }) {
             className="h-24 w-full resize-none rounded-md border p-3 text-[13px] outline-none"
             style={{ borderColor: "#EEEEEE" }}
           />
+          {actionError && (
+            <p className="text-xs" style={{ color: "#D32F2F" }}>{actionError}</p>
+          )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setModal(null)} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
-            <button type="button" onClick={() => void handleAct("rejected")} disabled={act.isPending} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white" style={{ backgroundColor: "#B91C1C" }}>
+            <button type="button" onClick={() => { setModal(null); setActionError(null); }} className="flex h-9 items-center rounded-md border px-4 text-[13px]" style={{ borderColor: "#EEEEEE", color: "#616161" }}>Cancel</button>
+            <button type="button" onClick={() => { handleAct("rejected"); }} disabled={act.isPending} className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white" style={{ backgroundColor: "#B91C1C" }}>
               {act.isPending ? "Rejecting…" : "Reject request"}
             </button>
           </div>

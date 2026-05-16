@@ -4,8 +4,8 @@ import { AlertTriangle, Pencil, Search, Send, UserMinus, UserPlus, X } from "luc
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { post } from "@/lib/api/client";
-import { getUsers } from "@/lib/api/platform/users.api";
+import { createInvitation } from "@/lib/api/platform/invitations.api";
+import { assignUserGroup, deactivateUser, getUsers } from "@/lib/api/platform/users.api";
 import { useGroups } from "@/lib/hooks/platform/useGroups";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { formatRelativeTime } from "@/lib/utils/formatters";
@@ -63,6 +63,7 @@ function DsRoleBadge({ role }: { role: string | null }) {
 type ModalState =
   | { kind: "none" }
   | { kind: "invite" }
+  | { kind: "edit"; userId: string; name: string; currentGroupId: number | null }
   | { kind: "deactivate"; userId: string; name: string };
 
 export default function AdminUsersPage() {
@@ -252,6 +253,14 @@ export default function AdminUsersPage() {
                         <button
                           type="button"
                           title="Edit"
+                          onClick={() =>
+                            setModal({
+                              kind: "edit",
+                              userId: u.id,
+                              name: fullName || u.email,
+                              currentGroupId: groupId,
+                            })
+                          }
                           className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[#F5F5F5]"
                           style={{ color: "#9E9E9E" }}
                         >
@@ -299,6 +308,15 @@ export default function AdminUsersPage() {
           onClose={() => setModal({ kind: "none" })}
         />
       )}
+      {modal.kind === "edit" && (
+        <EditUserModal
+          userId={modal.userId}
+          name={modal.name}
+          currentGroupId={modal.currentGroupId}
+          groups={groupsQuery.data ?? []}
+          onClose={() => setModal({ kind: "none" })}
+        />
+      )}
       {modal.kind === "deactivate" && (
         <DeactivateModal
           userId={modal.userId}
@@ -307,6 +325,104 @@ export default function AdminUsersPage() {
         />
       )}
     </>
+  );
+}
+
+// ─── Edit user modal (department-only, per backend support) ───────
+
+function EditUserModal({
+  userId,
+  name,
+  currentGroupId,
+  groups,
+  onClose,
+}: {
+  userId: string;
+  name: string;
+  currentGroupId: number | null;
+  groups: { id: number; name: string }[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [groupId, setGroupId] = useState<string>(
+    currentGroupId != null ? String(currentGroupId) : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  // The backend currently only exposes PUT /users/{id}/group for editing.
+  // Name + email + role changes require additional backend endpoints; we
+  // surface a note in the modal until those land.
+  const save = useMutation({
+    mutationFn: () =>
+      assignUserGroup(userId, groupId ? Number(groupId) : null),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      onClose();
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "Failed to update user"),
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "#00000066" }}
+    >
+      <div
+        className="flex w-[480px] flex-col gap-5 rounded-2xl bg-white p-6"
+        style={{ boxShadow: "0 24px 64px #00000026" }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-base font-bold text-auth-text">Edit user</h2>
+            <p className="text-[12px]" style={{ color: "#9E9E9E" }}>{name}</p>
+          </div>
+          <button type="button" onClick={onClose}>
+            <X className="h-4 w-4" style={{ color: "#9E9E9E" }} />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[12px] font-semibold text-auth-text">Department</label>
+          <select
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+            className="h-9 rounded-md border px-3 text-[13px] outline-none"
+            style={{ borderColor: "#EEEEEE" }}
+          >
+            <option value="">Unassigned</option>
+            {groups.map((g) => (
+              <option key={g.id} value={String(g.id)}>{g.name}</option>
+            ))}
+          </select>
+          <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
+            Name, email, and role changes are not yet supported. Use Invite + Deactivate to re-provision instead.
+          </p>
+        </div>
+
+        {error && <p className="text-xs text-red-600">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 items-center rounded-md border px-4 text-[13px] font-medium"
+            style={{ borderColor: "#EEEEEE", color: "#616161" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-60"
+            style={{ backgroundColor: "#D76736" }}
+          >
+            {save.isPending ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -328,19 +444,24 @@ function InviteUserModal({
   const [groupId, setGroupId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
+  // Backend POST /api/v1/platform/invitations/ takes only email + role + optional
+  // product_slug/product_role. Name fields stay in the form for the inviter's
+  // planning context — the invitee fills them on /accept-invitation. We DO
+  // require a department locally so the invite captures intent, but the
+  // backend flow does NOT yet assign group_id on invite (it's set later when
+  // the user accepts). If/when the backend supports group_id on invite, we
+  // can pass it through.
   const invite = useMutation({
     mutationFn: () =>
-      post("/api/v1/platform/users/invite", {
+      createInvitation({
         email: email.trim(),
-        first_name: nameEn.trim().split(" ")[0] ?? "",
-        last_name: nameEn.trim().split(" ").slice(1).join(" ") || "",
-        name_ar: nameAr.trim() || undefined,
-        platform_role: orgRole,
+        role: orgRole,
+        product_slug: dsRole ? "data-sharing" : undefined,
         product_role: dsRole || undefined,
-        group_id: groupId ? Number(groupId) : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invitations"] });
       onClose();
     },
     onError: (e) => setError(e instanceof Error ? e.message : "Failed to send invite"),
@@ -497,7 +618,9 @@ function DeactivateModal({
   name: string;
   onClose: () => void;
 }) {
+  const qc = useQueryClient();
   const [transferTo, setTransferTo] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const requestsQuery = useQuery({
     queryKey: ["data-sharing", "requests", "user", userId],
@@ -510,6 +633,24 @@ function DeactivateModal({
   });
 
   const activeRequests = requestsQuery.data?.data ?? [];
+
+  // Calls POST /api/v1/platform/users/{id}/deactivate (added in this fix
+  // round). The transferTo input today is a free-text user name; until the
+  // backend exposes a search-by-name endpoint we attempt to coerce it to a
+  // numeric id and otherwise pass null (just deactivate without transfer).
+  const deactivate = useMutation({
+    mutationFn: () => {
+      const numeric = Number(transferTo.trim());
+      const transferId = Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+      return deactivateUser(userId, transferId);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      onClose();
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "Failed to deactivate user"),
+  });
 
   return (
     <div
@@ -579,9 +720,11 @@ function DeactivateModal({
             />
           </div>
           <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
-            All pending requests and approvals will be reassigned to the selected user.
+            All pending requests and approvals will be reassigned to the selected user. Leave blank to deactivate without transfer (only safe when there are no active responsibilities).
           </p>
         </div>
+
+        {error && <p className="text-xs text-red-600">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <button
@@ -594,11 +737,16 @@ function DeactivateModal({
           </button>
           <button
             type="button"
-            disabled={!transferTo.trim()}
+            onClick={() => deactivate.mutate()}
+            disabled={deactivate.isPending || (activeRequests.length > 0 && !transferTo.trim())}
             className="flex h-9 items-center rounded-md px-4 text-[13px] font-semibold text-white disabled:opacity-60"
             style={{ backgroundColor: "#D76736" }}
           >
-            Transfer &amp; deactivate
+            {deactivate.isPending
+              ? "Deactivating…"
+              : activeRequests.length > 0
+                ? "Transfer & deactivate"
+                : "Deactivate"}
           </button>
         </div>
       </div>

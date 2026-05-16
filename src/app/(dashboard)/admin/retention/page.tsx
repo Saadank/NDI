@@ -4,43 +4,49 @@ import { AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { get, put } from "@/lib/api/client";
+import {
+  getTenant,
+  setRetentionPolicy,
+} from "@/lib/api/platform/tenants.api";
+import { useAuthStore } from "@/lib/store/auth.store";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { RoleBadge } from "@/components/shared/RoleBadge";
 
-interface RetentionPolicy {
-  id?: string;
-  default_days: number;
-}
-
-const BASE = "/api/v1/products/data-sharing/admin/retention-policy";
 const RETENTION_OPTIONS = [30, 60, 90, 180] as const;
 
 export default function AdminRetentionPage() {
   const { isReady } = useRoleGuard({ allow: ["org_admin", "platform_admin"] });
+  const tenantId = useAuthStore((s) => s.user?.tenant_id);
   const qc = useQueryClient();
   const [selected, setSelected] = useState<number>(90);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const policyQuery = useQuery({
-    queryKey: ["admin", "retention-policy"],
-    queryFn: () => get<RetentionPolicy>(BASE),
-    enabled: isReady,
+    queryKey: ["admin", "retention-policy", tenantId],
+    queryFn: () => getTenant(tenantId!),
+    enabled: isReady && tenantId != null,
   });
 
   useEffect(() => {
-    if (policyQuery.data?.default_days) {
-      setSelected(policyQuery.data.default_days);
+    if (policyQuery.data?.retention_days) {
+      setSelected(policyQuery.data.retention_days);
     }
   }, [policyQuery.data]);
 
   const saveMutation = useMutation({
-    mutationFn: () => put<RetentionPolicy>(BASE, { default_days: selected }),
+    mutationFn: () => {
+      if (tenantId == null) throw new Error("Missing tenant context");
+      return setRetentionPolicy(tenantId, selected);
+    },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["admin", "retention-policy"] });
+      void qc.invalidateQueries({ queryKey: ["admin", "retention-policy", tenantId] });
       setSaved(true);
+      setError(null);
       setTimeout(() => setSaved(false), 3000);
     },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "Failed to save retention policy"),
   });
 
   if (!isReady) return null;
@@ -125,6 +131,10 @@ export default function AdminRetentionPage() {
             This cap applies to all new sharing requests. Existing approved windows are not
             retroactively affected.
           </p>
+
+          {error && (
+            <p className="text-xs" style={{ color: "#D32F2F" }}>{error}</p>
+          )}
 
           <div className="flex justify-end">
             <button

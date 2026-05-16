@@ -5,6 +5,7 @@ import type {
   DataClassification,
   DataType,
   LegalBasis,
+  RequestDirection,
   SelectedTableItem,
   SelectionMode,
   SharingType,
@@ -13,6 +14,10 @@ import type {
 // Form state shared across the 3-step "Raise New Request" wizard. Persisted
 // in sessionStorage so reloading any step page doesn't drop user input.
 export interface NewRequestForm {
+  // Step 1 — direction (PULL = ask FOR data, PUSH = send data) chosen
+  // before anything else. Drives Step 2's branching and the workflow's
+  // source/receiver dept resolution.
+  request_direction: RequestDirection;
   // Step 1 — details
   title: string;
   purpose: string;
@@ -37,6 +42,15 @@ export interface NewRequestForm {
   selected_items: SelectedTableItem[];
   custom_sql: string;
 
+  // PUSH/EXTERNAL — recipient details when sharing_type==="external".
+  // Inline so the wizard can call /requests/ with the embedded payload
+  // and the backend's upsert_by_email handles find-or-create of the
+  // t_external_recipients + t_recipient_contacts rows.
+  external_org_name: string;
+  external_contact_email: string;
+  external_contact_name: string;
+  external_dsa_text: string;
+
   // Step 3 — delivery
   delivery_channel: "portal" | "email" | "api";
 
@@ -51,6 +65,7 @@ interface NewRequestActions {
 }
 
 const INITIAL: NewRequestForm = {
+  request_direction: "pull",
   title: "",
   purpose: "",
   sharing_type: "internal",
@@ -69,6 +84,16 @@ const INITIAL: NewRequestForm = {
   selection_mode: null,
   selected_items: [],
   custom_sql: "",
+  external_org_name: "",
+  external_contact_email: "",
+  external_contact_name: "",
+  external_dsa_text:
+    "By accepting this Data Sharing Agreement, you confirm:\n" +
+    "1. The shared data will only be used for the stated purpose.\n" +
+    "2. You will not redistribute the data to third parties.\n" +
+    "3. You will delete the data within the agreed retention period.\n" +
+    "4. You will protect the data with reasonable security measures.\n" +
+    "5. Any breach must be reported within 72 hours.",
   delivery_channel: "portal",
   draft_request_id: null,
 };

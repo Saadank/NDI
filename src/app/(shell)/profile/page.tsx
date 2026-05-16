@@ -21,13 +21,35 @@ export default function ProfilePage() {
   const storeUser = useAuthStore((s) => s.user);
   const user = userQuery.data ?? storeUser;
 
-  const fullName = user
-    ? `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || user.email
-    : "—";
-  const initials = user
-    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() ||
-      user.email[0].toUpperCase()
-    : "?";
+  // Null-safe so the page never crashes when /users/me returns partial data
+  // (e.g. invited users whose first_name hasn't been set yet).
+  const fullName =
+    [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() ||
+    user?.email ||
+    "—";
+  const initials =
+    `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase() ||
+    user?.email?.[0]?.toUpperCase() ||
+    "?";
+
+  // Surface backend errors instead of rendering a half-broken card.
+  if (userQuery.isError && !storeUser) {
+    return (
+      <ProfileShell>
+        <ProfileCard>
+          <div className="py-8 text-center">
+            <p className="text-sm font-medium text-auth-text">
+              Unable to load your profile
+            </p>
+            <p className="mt-1 text-xs" style={{ color: "#6B6B6B" }}>
+              We couldn&apos;t fetch your account details. Try refreshing the
+              page or sign in again.
+            </p>
+          </div>
+        </ProfileCard>
+      </ProfileShell>
+    );
+  }
 
   return (
     <ProfileShell>

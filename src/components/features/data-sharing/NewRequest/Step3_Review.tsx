@@ -46,14 +46,9 @@ export function Step3_Review() {
   const { isReady } = useRoleGuard({ allow: ["requester", "data_owner"] });
   const router = useRouter();
   const form = useNewRequestStore();
-
-  if (!isReady) return null;
   const reset = useNewRequestStore((s) => s.reset);
   const groupsQuery = useGroups();
   const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
-  const receiverName =
-    groupsQuery.data?.find((g) => g.id === form.receiver_group_id)?.name ??
-    "—";
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +68,13 @@ export function Step3_Review() {
     return match?.id ?? null;
   }, [templatesQuery.data, form.sharing_type, form.data_classification]);
   const templateDetailQuery = useWorkflowTemplate(matchedTemplateId);
-  const matchedTemplate = templateDetailQuery.data ?? null;
 
+  if (!isReady) return null;
+
+  const matchedTemplate = templateDetailQuery.data ?? null;
+  const receiverName =
+    groupsQuery.data?.find((g) => g.id === form.receiver_group_id)?.name ??
+    "—";
   const classificationLabel =
     DATA_CLASSIFICATIONS.find((c) => c.value === form.data_classification)
       ?.label ?? form.data_classification;
@@ -92,6 +92,19 @@ export function Step3_Review() {
       setShowSameReceiverModal(true);
       return;
     }
+    // Guard: no active workflow template matches this request's
+    // (sharing_type, classification). Without one the backend's /submit
+    // endpoint stamps the request as "submitted" but produces zero
+    // workflow steps, leaving Data Owners with nothing to act on. Surface
+    // the misconfiguration here instead of letting it silently break the
+    // approval flow downstream.
+    if (templatesQuery.isSuccess && matchedTemplateId === null) {
+      setError(
+        "No active workflow matches this request — ask your Org Admin to create an active workflow for " +
+          `${form.sharing_type} / ${form.data_classification} requests before submitting.`,
+      );
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -100,7 +113,23 @@ export function Step3_Review() {
         title: form.title.trim(),
         purpose: form.purpose.trim(),
         legal_basis: form.legal_basis || "",
+        request_direction: form.request_direction,
         sharing_type: form.sharing_type,
+        // PUSH/EXTERNAL — inline recipient. Backend create_draft
+        // upserts t_external_recipients + t_recipient_contacts and
+        // stamps external_recipient_id/external_contact_id on the
+        // request. receiver_group_id is left null for these.
+        ...(form.sharing_type === "external"
+          ? {
+              external_recipient: {
+                org_name: form.external_org_name.trim(),
+                contact_email: form.external_contact_email.trim(),
+                contact_name: form.external_contact_name.trim() || undefined,
+              },
+              external_dsa_text: form.external_dsa_text,
+              receiver_group_id: null,
+            }
+          : {}),
         data_classification: form.data_classification,
         personal_data_involved: form.personal_data_involved,
         estimated_data_subjects: form.estimated_data_subjects ?? null,
@@ -287,10 +316,21 @@ export function Step3_Review() {
               </button>
             </div>
             <div className="flex flex-col px-5 py-2">
+              <Field
+                label="Direction"
+                value={
+                  form.request_direction === "push"
+                    ? "Push — sending data to another dept"
+                    : "Pull — requesting data from another dept"
+                }
+              />
               <Field label="Title" value={form.title} />
               <Field label="Purpose" value={form.purpose} />
               <Field label="Sharing Type" value={form.sharing_type} />
-              <Field label="Receiver Department" value={receiverName} />
+              <Field
+                label={form.request_direction === "push" ? "Recipient Department" : "Source Department"}
+                value={receiverName}
+              />
               <Field label="Classification" value={classificationLabel} />
               <Field label="Legal Basis" value={legalBasisLabel} />
               <Field

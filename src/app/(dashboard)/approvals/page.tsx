@@ -94,12 +94,41 @@ export default function ApprovalsInboxPage() {
 
   const myGroupName = myGroupId ? (groupNameById.get(myGroupId) ?? "") : "";
 
+  // Bucket the inbox by the role of the CURRENT pending step (which
+  // the backend annotates as `current_step`). Per spec the bucketing
+  // is role-driven, not group-driven:
+  //
+  //   data_owner / source  → Outgoing  (you're on the source side —
+  //                                     approving release or uploading)
+  //   receiver             → Incoming  (you're on the destination side —
+  //                                     confirming receipt)
+  //
+  // Group-based fallback covers requests the backend returned that
+  // don't have a `current_step` annotation (closed / pre-migration
+  // rows): they map to Outgoing if the user's group owns the data
+  // being released, Incoming otherwise.
   const { outgoing, incoming } = useMemo(() => {
     const all = requestsQuery.data?.data ?? [];
-    return {
-      outgoing: all.filter((r) => r.requester_group_id === myGroupId),
-      incoming: all.filter((r) => r.receiver_group_id === myGroupId),
-    };
+    const out: typeof all = [];
+    const inc: typeof all = [];
+    for (const r of all) {
+      const role = r.current_step?.assignee_role ?? null;
+      if (role === "data_owner" || role === "source") {
+        out.push(r);
+      } else if (role === "receiver") {
+        inc.push(r);
+      } else {
+        // No current_step (workflow finished / not started, or this
+        // row predates the annotation) — fall back to the group-based
+        // heuristic.
+        if (r.receiver_group_id === myGroupId && r.requester_group_id !== myGroupId) {
+          out.push(r);
+        } else if (r.requester_group_id === myGroupId && r.receiver_group_id !== myGroupId) {
+          inc.push(r);
+        }
+      }
+    }
+    return { outgoing: out, incoming: inc };
   }, [requestsQuery.data?.data, myGroupId]);
 
   if (!isReady) return null;
@@ -262,18 +291,32 @@ export default function ApprovalsInboxPage() {
             {!requestsQuery.isLoading &&
               !requestsQuery.isError &&
               sorted.map((r, i) => {
+                // Outgoing: show the EXTERNAL dept that raised the request (requester).
+                // Incoming: show the EXTERNAL dept that's the data source (receiver).
                 const deptId =
-                  tab === "incoming" ? r.requester_group_id : r.receiver_group_id;
+                  tab === "outgoing" ? r.requester_group_id : r.receiver_group_id;
                 const deptName = deptId ? (groupNameById.get(deptId) ?? String(deptId)) : "—";
                 const subtitle =
                   tab === "outgoing"
                     ? `Raised by: ${r.requester_id} · ${deptName} · ${formatDate(r.created_at)}`
                     : `From ${deptName} · Requested ${formatDate(r.created_at)}`;
 
+                // Outgoing rows → /approvals/[id] (heavy review screen).
+                // Incoming rows → /approvals/incoming/[id] (light confirm screen).
+                const href =
+                  tab === "incoming"
+                    ? `/approvals/incoming/${r.id}`
+                    : `/approvals/${r.id}`;
+                // Per Pencil frame 02: Incoming uses a blue "Confirm" pill,
+                // not the brand orange.
+                const actionLabel = tab === "incoming" ? "Confirm" : "Review";
+                const actionBg = tab === "incoming" ? "#1D4ED8" : "#D76736";
+
                 return (
-                  <div
+                  <Link
                     key={r.id}
-                    className="flex h-[68px] items-center px-5"
+                    href={href}
+                    className="flex h-[68px] cursor-pointer items-center px-5 hover:bg-[#FAFAFA]"
                     style={{
                       borderBottom: i < sorted.length - 1 ? "1px solid #F5F5F5" : undefined,
                     }}
@@ -305,16 +348,15 @@ export default function ApprovalsInboxPage() {
 
                     {/* Action */}
                     <span className="w-[110px]">
-                      <Link
-                        href={`/approvals/${r.id}`}
+                      <span
                         className="flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium text-white"
-                        style={{ backgroundColor: "#D76736" }}
+                        style={{ backgroundColor: actionBg }}
                       >
-                        {tab === "incoming" ? "Confirm" : "Review"}
+                        {actionLabel}
                         <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
+                      </span>
                     </span>
-                  </div>
+                  </Link>
                 );
               })}
 

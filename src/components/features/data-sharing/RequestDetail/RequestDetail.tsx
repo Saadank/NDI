@@ -73,13 +73,17 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 // ─── Step bubble ─────────────────────────────────────────────────────────────
 
 const STEP_STATUS_STYLE: Record<StepStatus, { bg: string; color: string }> = {
-  pending:           { bg: "#EEEEEE", color: "#9E9E9E" },
+  pending:           { bg: "#D76736", color: "#FFFFFF" },
   in_progress:       { bg: "#D76736", color: "#FFFFFF" },
   approved:          { bg: "#449235", color: "#FFFFFF" },
   rejected:          { bg: "#D32F2F", color: "#FFFFFF" },
   changes_requested: { bg: "#B45309", color: "#FFFFFF" },
   flagged:           { bg: "#1D4ED8", color: "#FFFFFF" },
   skipped:           { bg: "#EEEEEE", color: "#9E9E9E" },
+  // Future / inactive steps — render gray-empty so the steward sees
+  // the shape of their workflow without mistaking queued steps for
+  // either active (orange) or completed (green) work.
+  waiting:           { bg: "#EEEEEE", color: "#9E9E9E" },
 };
 
 // ─── Download button ──────────────────────────────────────────────────────────

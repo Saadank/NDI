@@ -195,6 +195,10 @@ export function Step1_BasicInfo() {
   const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
   const groupsQuery = useGroups();
 
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [showLegalModal, setShowLegalModal] = useState(false);
+
   if (!isReady) return null;
 
   const isSensitive = form.data_classification === "sensitive";
@@ -221,10 +225,6 @@ export function Step1_BasicInfo() {
     router.push("/data-sharing/new/step-2");
   };
 
-  const [savingDraft, setSavingDraft] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
-  const [showLegalModal, setShowLegalModal] = useState(false);
-
   // Step 1 "Save as Draft" — wireframe shows it bottom-left. We post the
   // current Step 1 fields so the partial draft shows up in My Requests.
   const saveDraft = async () => {
@@ -235,6 +235,7 @@ export function Step1_BasicInfo() {
         title: form.title.trim() || "Untitled draft",
         purpose: form.purpose.trim() || " ",
         legal_basis: form.legal_basis || "",
+        request_direction: form.request_direction,
         sharing_type: form.sharing_type,
         data_classification: form.data_classification,
         personal_data_involved: form.personal_data_involved,
@@ -266,6 +267,54 @@ export function Step1_BasicInfo() {
       />
     )}
     <div className="flex flex-col gap-4">
+      {/* Step 1.0 — direction picker (PULL vs PUSH). Placed above
+          everything else because it changes Step 2's behaviour and
+          the workflow's source/receiver dept resolution. */}
+      <SectionHeader>What do you want to do?</SectionHeader>
+      <div className="flex flex-col gap-2">
+        {([
+          {
+            value: "pull" as const,
+            label: "Request data from another department",
+            description: "I need data from another department for my work.",
+          },
+          {
+            value: "push" as const,
+            label: "Share data with another department",
+            description: "I have data ready to share with another department.",
+          },
+        ]).map((opt) => {
+          const checked = form.request_direction === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setField("request_direction", opt.value)}
+              className="flex items-start gap-3 rounded-md p-3 text-left transition-colors"
+              style={{
+                border: `1px solid ${checked ? "#D76736" : "#EEEEEE"}`,
+                backgroundColor: checked ? "#FFF5F0" : "#FFFFFF",
+              }}
+            >
+              <span className="mt-0.5"><Radio checked={checked} /></span>
+              <div className="flex flex-col gap-0.5">
+                <span
+                  className="text-[13px] font-semibold"
+                  style={{ color: checked ? "#D76736" : "#1A1A1A" }}
+                >
+                  {opt.label}
+                </span>
+                <span className="text-[12px]" style={{ color: "#9E9E9E" }}>
+                  {opt.description}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="h-px w-full" style={{ backgroundColor: "#EEEEEE" }} />
+
       <SectionHeader>Request Details</SectionHeader>
 
       <div className="flex flex-col gap-[6px]">
@@ -314,50 +363,70 @@ export function Step1_BasicInfo() {
         </div>
 
         <div className="flex flex-1 flex-col gap-[6px]">
-          <FieldLabel required>Receiver department</FieldLabel>
-          <div className="relative">
-            <select
-              value={form.receiver_group_id ?? ""}
-              onChange={(e) =>
-                setField(
-                  "receiver_group_id",
-                  e.target.value ? Number(e.target.value) : null,
-                )
-              }
-              disabled={
-                groupsQuery.isLoading ||
-                groupsQuery.isError ||
-                !(groupsQuery.data ?? []).some((g) => g.is_active)
-              }
-              className="h-9 w-full appearance-none rounded-md border bg-white pl-3 pr-8 text-[13px] outline-none disabled:cursor-not-allowed disabled:bg-[#F8F8F8]"
-              style={{
-                borderColor: ownDeptError ? "#EF4444" : "#EEEEEE",
-                color: form.receiver_group_id ? "#070709" : "#BABABA",
-              }}
-            >
-              <option value="">
-                {groupsQuery.isLoading
-                  ? "Loading departments…"
-                  : groupsQuery.isError
-                    ? "Failed to load departments"
-                    : (groupsQuery.data ?? []).filter((g) => g.is_active)
-                          .length === 0
-                      ? "No departments configured"
-                      : "Select department..."}
-              </option>
-              {(groupsQuery.data ?? [])
-                .filter((g) => g.is_active)
-                .map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
+          {form.sharing_type === "external" ? (
+            // PUSH/EXTERNAL: instead of an internal dept picker, collect
+            // the external recipient inline. Backend's upsert_by_email
+            // (in create_draft) handles find-or-create of the
+            // t_external_recipients + t_recipient_contacts rows.
+            <>
+              <FieldLabel required>Recipient organisation</FieldLabel>
+              <input
+                type="text"
+                value={form.external_org_name}
+                onChange={(e) => setField("external_org_name", e.target.value)}
+                placeholder="e.g. Aramco Trading Company"
+                className="h-9 w-full rounded-md border px-3 text-[13px] outline-none placeholder:text-[#BABABA]"
+                style={{ borderColor: "#EEEEEE" }}
+              />
+            </>
+          ) : (
+            <>
+              <FieldLabel required>Receiver department</FieldLabel>
+              <div className="relative">
+                <select
+                  value={form.receiver_group_id ?? ""}
+                  onChange={(e) =>
+                    setField(
+                      "receiver_group_id",
+                      e.target.value ? Number(e.target.value) : null,
+                    )
+                  }
+                  disabled={
+                    groupsQuery.isLoading ||
+                    groupsQuery.isError ||
+                    !(groupsQuery.data ?? []).some((g) => g.is_active)
+                  }
+                  className="h-9 w-full appearance-none rounded-md border bg-white pl-3 pr-8 text-[13px] outline-none disabled:cursor-not-allowed disabled:bg-[#F8F8F8]"
+                  style={{
+                    borderColor: ownDeptError ? "#EF4444" : "#EEEEEE",
+                    color: form.receiver_group_id ? "#070709" : "#BABABA",
+                  }}
+                >
+                  <option value="">
+                    {groupsQuery.isLoading
+                      ? "Loading departments…"
+                      : groupsQuery.isError
+                        ? "Failed to load departments"
+                        : (groupsQuery.data ?? []).filter((g) => g.is_active)
+                              .length === 0
+                          ? "No departments configured"
+                          : "Select department..."}
                   </option>
-                ))}
-            </select>
-            <ChevronDown
-              className="pointer-events-none absolute right-3 top-1/2 h-[14px] w-[14px] -translate-y-1/2"
-              style={{ color: "#9E9E9E" }}
-            />
-          </div>
+                  {(groupsQuery.data ?? [])
+                    .filter((g) => g.is_active)
+                    .map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-[14px] w-[14px] -translate-y-1/2"
+                  style={{ color: "#9E9E9E" }}
+                />
+              </div>
+            </>
+          )}
           {ownDeptError && (
             <p className="text-xs" style={{ color: "#EF4444" }}>
               You cannot raise a request to your own department.
@@ -383,6 +452,52 @@ export function Step1_BasicInfo() {
           )}
         </div>
       </div>
+
+      {/* PUSH/EXTERNAL only — recipient contact + editable DSA. The
+          backend create_draft handler upserts the t_external_recipients
+          and t_recipient_contacts rows from these values. */}
+      {form.sharing_type === "external" && (
+        <div className="flex flex-col gap-3 rounded-md p-4" style={{ backgroundColor: "#FFFBF5", border: "1px solid #FCD34D" }}>
+          <SectionHeader>External recipient</SectionHeader>
+          <div className="flex gap-4">
+            <div className="flex flex-1 flex-col gap-[6px]">
+              <FieldLabel required>Recipient contact email</FieldLabel>
+              <input
+                type="email"
+                value={form.external_contact_email}
+                onChange={(e) => setField("external_contact_email", e.target.value)}
+                placeholder="e.g. analyst@aramco.example"
+                className="h-9 w-full rounded-md border px-3 text-[13px] outline-none placeholder:text-[#BABABA]"
+                style={{ borderColor: "#EEEEEE" }}
+              />
+            </div>
+            <div className="flex flex-1 flex-col gap-[6px]">
+              <FieldLabel>Recipient name</FieldLabel>
+              <input
+                type="text"
+                value={form.external_contact_name}
+                onChange={(e) => setField("external_contact_name", e.target.value)}
+                placeholder="Optional"
+                className="h-9 w-full rounded-md border px-3 text-[13px] outline-none placeholder:text-[#BABABA]"
+                style={{ borderColor: "#EEEEEE" }}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-[6px]">
+            <FieldLabel>Data Sharing Agreement (DSA)</FieldLabel>
+            <textarea
+              value={form.external_dsa_text}
+              onChange={(e) => setField("external_dsa_text", e.target.value)}
+              rows={6}
+              className="w-full resize-none rounded-md border p-3 text-[12px] outline-none"
+              style={{ borderColor: "#EEEEEE", fontFamily: "ui-monospace, Menlo, monospace" }}
+            />
+            <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
+              The recipient must accept this DSA before they can download files via the pickup portal.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <FieldLabel required>Data classification</FieldLabel>

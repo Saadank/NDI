@@ -7,13 +7,13 @@ import type {
 export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   draft: "Draft",
   submitted: "Submitted",
-  in_review: "Under Review",
-  approved: "Approved",
+  in_review: "In Review",
+  approved: "Approval · Preparing",
   rejected: "Rejected",
   changes_requested: "Changes Requested",
   cancelled: "Cancelled",
   completed: "Completed",
-  expired: "Expired",
+  expired: "Auto-cancelled",
 };
 
 export const REQUEST_STATUS_COLORS: Record<RequestStatus, string> = {

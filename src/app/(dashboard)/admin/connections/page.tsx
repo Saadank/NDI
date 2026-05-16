@@ -262,6 +262,7 @@ function EditConnectionView({
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
   const [showPass, setShowPass] = useState(false);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
   const saveMutation = useMutation({
     mutationFn: () =>
       put(`/api/v1/products/data-sharing/connections/${connection?.id}`, {
@@ -274,8 +275,13 @@ function EditConnectionView({
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "connections"] });
+      setSaveError(null);
       onClose();
     },
+    onError: (e) =>
+      setSaveError(
+        e instanceof Error ? e.message : "Failed to save connection",
+      ),
   });
 
   const handleTest = async () => {
@@ -443,6 +449,10 @@ function EditConnectionView({
           )}
           {testResult === "fail" && (
             <p className="text-[13px]" style={{ color: "#D32F2F" }}>Connection test failed.</p>
+          )}
+
+          {saveError && (
+            <p className="text-[13px]" style={{ color: "#D32F2F" }}>{saveError}</p>
           )}
 
           <div className="flex items-center gap-3">

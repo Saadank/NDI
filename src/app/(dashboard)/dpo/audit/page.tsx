@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Download, Info, X } from "lucide-react";
+import { ChevronDown, Download, Lock, X } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -394,13 +394,30 @@ export default function AuditTrailPage() {
           </div>
         </div>
 
-        {/* Append-only banner */}
-        <div className="flex items-center gap-2 rounded-md px-4 py-2" style={{ backgroundColor: "#FFF5F0", border: "1px solid #FFCDB8" }}>
-          <Info className="h-3.5 w-3.5 shrink-0" style={{ color: "#D76736" }} />
-          <p className="text-[12px]" style={{ color: "#D76736" }}>
-            Append-only · regulatory log — entries cannot be added or deleted
+        {/* Append-only banner — Pencil frame 14 uses a gray, low-key
+            note (not the brand-orange treatment); it reads more like a
+            regulatory disclaimer than a CTA. */}
+        <div
+          className="flex items-center gap-2 rounded-md px-4 py-2"
+          style={{ backgroundColor: "#F9FAFB", border: "1px solid #E5E7EB" }}
+        >
+          <Lock className="h-3.5 w-3.5 shrink-0" style={{ color: "#6B7280" }} />
+          <p className="text-[12px]" style={{ color: "#6B7280" }}>
+            Append-only · regulatory log — entries cannot be edited or deleted
           </p>
         </div>
+
+        {/* "N of M events match active filters" — visible only when at
+            least one filter is on, per Pencil frame 15. */}
+        {hasFilters && (
+          <p className="text-[12px]" style={{ color: "#6B7280" }}>
+            <span style={{ color: "#111827", fontWeight: 600 }}>
+              {filtered.length}
+            </span>{" "}
+            of <span style={{ color: "#111827", fontWeight: 600 }}>{total}</span>{" "}
+            event{total === 1 ? "" : "s"} match active filters
+          </p>
+        )}
 
         {/* Table */}
         <div className="flex flex-col overflow-hidden rounded-lg" style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}>

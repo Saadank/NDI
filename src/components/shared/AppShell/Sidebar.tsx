@@ -6,10 +6,8 @@ import {
   Bell,
   Building2,
   CalendarOff,
-  ClipboardList,
   Database,
   FileSpreadsheet,
-  FileText,
   GitBranch,
   Inbox,
   LayoutGrid,
@@ -21,6 +19,9 @@ import {
   UserCog,
   Users as UsersIcon,
 } from "lucide-react";
+// DO + DPO sidebars no longer include duplicate "Request Detail + …"
+// items — those pages are reached by clicking rows in the list/inbox.
+// FileText and ClipboardList icons are no longer needed here.
 import type { LucideIcon } from "lucide-react";
 
 import { Logo } from "@/components/shared/Logo";
@@ -41,6 +42,7 @@ interface NavItem {
   icon: LucideIcon;
   match?: Matcher;
   badgeKey?: "requests" | "approvals";
+  tooltip?: string;
 }
 
 interface NavSection {
@@ -79,13 +81,9 @@ const ITEM = {
     href: "/approvals",
     icon: Inbox,
     badgeKey: "approvals",
-    match: (p: string) => p === "/approvals",
-  } as NavItem,
-  requestDetailActions: {
-    label: "Request Detail + Actions",
-    href: "/approvals",
-    icon: FileText,
-    match: (p: string) => p.startsWith("/approvals/"),
+    // Highlights for the inbox AND for any nested approval detail page
+    // (/approvals/[id] outgoing OR /approvals/incoming/[id]).
+    match: (p: string) => p === "/approvals" || p.startsWith("/approvals/"),
   } as NavItem,
   myDepartment: { label: "My Department", href: "/my-department", icon: UsersIcon } as NavItem,
 
@@ -94,31 +92,33 @@ const ITEM = {
     label: "Organisation Request List",
     href: "/dpo",
     icon: ListChecks,
-    match: (p: string) => p === "/dpo",
-  } as NavItem,
-  requestDetailPdpl: {
-    label: "Request Detail + PDPL Review",
-    href: "/dpo",
-    icon: FileText,
+    // Highlights for the list AND for the request-detail/PDPL Review page
+    // (/dpo/[id]) — same pattern as Data Owner inbox.
     match: (p: string) =>
-      p.startsWith("/dpo/") &&
-      !p.startsWith("/dpo/workflows") &&
-      !p.startsWith("/dpo/templates") &&
-      !p.startsWith("/dpo/audit"),
+      p === "/dpo" ||
+      (p.startsWith("/dpo/") &&
+        !p.startsWith("/dpo/workflows") &&
+        !p.startsWith("/dpo/recipients") &&
+        !p.startsWith("/dpo/audit")),
   } as NavItem,
   workflowEditor: {
     label: "Workflow Editor",
     href: "/dpo/workflows",
     icon: GitBranch,
-    match: (p: string) => p === "/dpo/workflows",
+    match: (p: string) => p.startsWith("/dpo/workflows"),
   } as NavItem,
-  requestTemplates: {
-    label: "Request Templates",
-    href: "/dpo/templates",
-    icon: ClipboardList,
-    match: (p: string) => p === "/dpo/templates",
+  externalRecipients: {
+    label: "External Recipients Directory",
+    href: "/dpo/recipients",
+    icon: Building2,
+    match: (p: string) => p.startsWith("/dpo/recipients"),
   } as NavItem,
-  auditTrail: { label: "Audit Trail", href: "/dpo/audit", icon: ListChecks } as NavItem,
+  auditTrail: {
+    label: "Audit Trail",
+    href: "/dpo/audit",
+    icon: ListChecks,
+    match: (p: string) => p.startsWith("/dpo/audit"),
+  } as NavItem,
 
   // Org Admin administration
   adminDepartments: { label: "Departments", href: "/admin/departments", icon: Building2 } as NavItem,
@@ -139,21 +139,23 @@ const ITEM = {
   delegation: { label: "Delegation", href: "/delegation", icon: UserCog } as NavItem,
 };
 
+// Org Admin still uses the legacy 5-item Governance list; the DPO sidebar
+// per the latest Pencil is a trimmed 4-item list (no "Request Detail +
+// PDPL Review" duplicate, no "Request Templates", + External Recipients
+// Directory promoted in).
 const GOVERNANCE_SECTION: NavSection = {
   title: "GOVERNANCE",
   items: [
     ITEM.orgRequestList,
-    ITEM.requestDetailPdpl,
     ITEM.workflowEditor,
-    ITEM.requestTemplates,
     ITEM.auditTrail,
   ],
 };
 
 const PRIMARY_NAV: Record<EffectiveRole, NavSection[]> = {
   requester: [{ items: [ITEM.myRequests, ITEM.raise, ITEM.prepare] }],
-  data_owner: [{ items: [ITEM.approvalsInbox, ITEM.requestDetailActions, ITEM.myDepartment] }],
-  dpo: [{ items: [ITEM.orgRequestList, ITEM.requestDetailPdpl, ITEM.workflowEditor, ITEM.requestTemplates, ITEM.auditTrail] }],
+  data_owner: [{ items: [ITEM.approvalsInbox, ITEM.myDepartment] }],
+  dpo: [{ items: [ITEM.orgRequestList, ITEM.workflowEditor, ITEM.externalRecipients, ITEM.auditTrail] }],
   org_admin: [
     GOVERNANCE_SECTION,
     {
@@ -205,16 +207,18 @@ function NavLink({
   badge?: number;
 }) {
   const Icon = item.icon;
+  const cls = cn(
+    "flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-3 text-[13px] transition-colors",
+    active
+      ? "bg-[#FFF5F0] font-semibold text-brand"
+      : "font-medium text-[#515157] hover:bg-[#F4F4F4] hover:text-[#070709]",
+  );
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
-      className={cn(
-        "flex h-9 items-center gap-2.5 rounded-md px-3 text-[13px] transition-colors",
-        active
-          ? "bg-[#FFF5F0] font-semibold text-brand"
-          : "font-medium text-[#515157] hover:bg-[#F4F4F4] hover:text-[#070709]",
-      )}
+      className={cls}
+      title={item.tooltip}
     >
       <Icon className="h-4 w-4 shrink-0" />
       <span className="flex-1 truncate">{item.label}</span>
@@ -288,7 +292,7 @@ export function Sidebar() {
     : "PA";
 
   return (
-    <aside className="sticky top-0 flex h-screen w-[240px] shrink-0 flex-col border-r border-auth-border bg-white px-3 py-5">
+    <aside className="sticky top-0 z-20 flex h-screen w-[240px] shrink-0 flex-col border-r border-auth-border bg-white px-3 py-5">
       {/* Header */}
       {isPlatformAdmin ? (
         <div className="mb-4 flex items-center gap-2 px-3">

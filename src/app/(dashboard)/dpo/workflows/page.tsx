@@ -1,15 +1,19 @@
 "use client";
 
-import { GripVertical, Pencil, Plus, Save, Trash2, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { CheckCircle2, GripVertical, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, TriangleAlert, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import { post, put } from "@/lib/api/client";
 import {
+  backfillWorkflows,
+  deleteWorkflowTemplate,
   getWorkflowTemplates,
   getWorkflowTemplate,
 } from "@/lib/api/products/data-sharing/workflows.api";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
+import { useAuthStore } from "@/lib/store/auth.store";
 import { formatDate } from "@/lib/utils/formatters";
 import type {
   WorkflowTemplate,
@@ -58,7 +62,23 @@ const CLASS_COLORS: Record<string, { bg: string; color: string }> = {
   public:        { bg: "#F0FAF0", color: "#449235" },
 };
 
-const ROLE_OPTIONS = ["data_owner", "dpo", "org_admin", "data_steward", "requester"] as const;
+// Workflow assignee roles. Must mirror the backend `SharingRole` enum
+// exactly — those five values are the only strings that
+// `can_approve_step` accepts. "org_admin" and "data_steward" do NOT
+// exist as workflow assignee roles (org_admin is a platform-level role
+// applied via auto-delegation, not a step assignment).
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "dpo",        label: "DPO (Privacy Officer)" },
+  { value: "data_owner", label: "Data Owner (source dept manager)" },
+  { value: "source",     label: "Source Steward (data preparer)" },
+  { value: "receiver",   label: "Receiver (target dept data owner)" },
+  { value: "requester",  label: "Requester (request creator)" },
+];
+
+const ROLE_LABEL_BY_VALUE: Record<string, string> = Object.fromEntries(
+  ROLE_OPTIONS.map((o) => [o.value, o.label]),
+);
+
 const STEP_TYPES = ["approval", "review", "dpo_review", "data_owner_approval", "signature", "notification"] as const;
 
 function ScopeBadge({ value }: { value: string | null }) {
@@ -98,7 +118,13 @@ function StatusBadge({ active }: { active: boolean }) {
 
 function roleLabel(role: string | null) {
   if (!role) return "Unassigned";
-  return role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  // Use the explicit, spec-aligned label when we have one; only fall
+  // back to title-casing for unknown values that may exist on legacy
+  // templates (e.g. "data_steward") so saved workflows still render.
+  return (
+    ROLE_LABEL_BY_VALUE[role] ??
+    role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }
 
 function StepRow({
@@ -174,7 +200,7 @@ function StepRow({
             style={{ borderColor: "#EEEEEE" }}
           >
             {ROLE_OPTIONS.map((r) => (
-              <option key={r} value={r}>{roleLabel(r)}</option>
+              <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
         </div>
@@ -220,6 +246,79 @@ function StepRow({
   );
 }
 
+// ─── Delete Workflow modal ────────────────────────────────────────
+
+function DeleteWorkflowModal({
+  name,
+  onCancel,
+  onConfirm,
+  isPending,
+  error,
+}: {
+  name: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+  error?: string | null;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "#07070966" }}
+    >
+      <div
+        className="flex w-[480px] flex-col gap-5 rounded-xl p-6"
+        style={{ backgroundColor: "#FFFFFF", boxShadow: "0 24px 64px #00000026" }}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-[15px] font-bold text-auth-text">Delete workflow?</h2>
+          <button type="button" onClick={onCancel}>
+            <X className="h-4 w-4" style={{ color: "#9E9E9E" }} />
+          </button>
+        </div>
+
+        <p className="text-[13px]" style={{ color: "#616161", lineHeight: 1.5 }}>
+          This will permanently delete <strong>&ldquo;{name}&rdquo;</strong>.
+          Active requests using this workflow will keep the workflow steps
+          they already have but will be migrated to the default workflow on
+          their next save.
+        </p>
+
+        <div
+          className="flex items-start gap-2 rounded-md p-3 text-[12px]"
+          style={{ backgroundColor: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B" }}
+        >
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>This action cannot be undone.</span>
+        </div>
+
+        {error && <p className="text-[12px]" style={{ color: "#D32F2F" }}>{error}</p>}
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isPending}
+            className="flex h-9 items-center rounded-md border px-4 text-[13px]"
+            style={{ borderColor: "#EEEEEE", color: "#515157" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isPending}
+            className="flex h-9 items-center rounded-md px-5 text-[13px] font-semibold text-white disabled:opacity-50"
+            style={{ backgroundColor: "#B91C1C" }}
+          >
+            {isPending ? "Deleting…" : "Delete workflow"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Save Workflow Changes modal ──────────────────────────────────
 
 function SaveWorkflowModal({
@@ -227,15 +326,16 @@ function SaveWorkflowModal({
   onCancel,
   onConfirm,
   isPending,
+  error,
 }: {
   version: number;
   onCancel: () => void;
   onConfirm: (applyToActive: boolean, justification: string) => void;
   isPending: boolean;
+  error?: string | null;
 }) {
   const [applyToActive, setApplyToActive] = useState(false);
   const [justification, setJustification] = useState("");
-  const INFLIGHT_COUNT = 6;
 
   return (
     <div
@@ -293,10 +393,10 @@ function SaveWorkflowModal({
             style={{ backgroundColor: "#FFF5F0", border: "1px solid #FFCDB8" }}
           >
             <p className="font-semibold" style={{ color: "#D76736" }}>
-              {INFLIGHT_COUNT} in-flight requests will be affected
+              All in-flight requests using this workflow will be affected
             </p>
             <p style={{ color: "#9E9E9E" }}>
-              Any newly added step is inserted at each request's current position — not backdated.
+              Any newly added step is inserted at each request&apos;s current position — not backdated.
             </p>
           </div>
         )}
@@ -304,6 +404,10 @@ function SaveWorkflowModal({
         <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
           This justification is recorded in the audit trail for every affected request.
         </p>
+
+        {error && (
+          <p className="text-[12px]" style={{ color: "#D32F2F" }}>{error}</p>
+        )}
 
         <div className="flex items-center justify-end gap-2">
           <button
@@ -339,52 +443,47 @@ function WorkflowEditorPanel({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  // BRD §2.1: Org Admin authors workflows; DPO views only.
+  const platformRole = useAuthStore((s) => s.user?.platform_role);
+  const canEdit = platformRole === "org_admin";
   const templateQuery = useQuery({
     queryKey: ["data-sharing", "workflow-template", templateId],
     queryFn: () => getWorkflowTemplate(templateId),
   });
 
   const [steps, setSteps] = useState<DraftStep[]>([]);
-  const [dirty, setDirty] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [sharingType, setSharingType] = useState<string>("");
   const [classification, setClassification] = useState<string>("");
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  // Transient "Saved at HH:MM" chip near the title. Cleared after 3s so
+  // it doesn't sit there forever after the save completes.
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  useEffect(() => {
+    if (!savedAt) return;
+    const t = setTimeout(() => setSavedAt(null), 3000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
 
+  // Hydrate the editor's local form state once the template fetch lands.
+  // This MUST be useEffect — using useMemo for side effects is unsafe
+  // because React may re-execute the memo body even when deps don't
+  // change (per docs, "to free memory"). When that happened here it kept
+  // resetting form state to the loaded values, leaving the Save button
+  // permanently disabled even after the user added steps.
   const loadedKey = templateQuery.data?.id;
-  useMemo(() => {
-    if (templateQuery.data) {
-      const t = templateQuery.data;
-      setSharingType(t.sharing_type ?? "");
-      setClassification(t.data_classification ?? "");
-      setSteps(
-        [...t.steps]
-          .sort((a, b) => a.step_order - b.step_order)
-          .map((s) => ({
-            _key: newKey(),
-            step_order: s.step_order,
-            step_type: s.step_type,
-            name: s.name,
-            assignee_role: s.assignee_role,
-            execution_mode: s.execution_mode,
-            sla_days: s.sla_days,
-            condition_expr: s.condition_expr,
-          })),
-      );
-      setDirty(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedKey]);
-
-  const save = useMutation({
-    mutationFn: ({ applyToActive, justification }: { applyToActive: boolean; justification: string }) =>
-      put(`/api/v1/products/data-sharing/workflows/templates/${templateId}`, {
-        sharing_type: sharingType || null,
-        data_classification: classification || null,
-        apply_to_active: applyToActive,
-        justification,
-        steps: steps.map((s) => ({
+  useEffect(() => {
+    if (!templateQuery.data) return;
+    const t = templateQuery.data;
+    setSharingType(t.sharing_type ?? "");
+    setClassification(t.data_classification ?? "");
+    setSteps(
+      [...t.steps]
+        .sort((a, b) => a.step_order - b.step_order)
+        .map((s) => ({
+          _key: newKey(),
           step_order: s.step_order,
           step_type: s.step_type,
           name: s.name,
@@ -393,29 +492,95 @@ function WorkflowEditorPanel({
           sla_days: s.sla_days,
           condition_expr: s.condition_expr,
         })),
-      }),
-    onSuccess: () => {
+    );
+  // Hydrate only when we land on a different template id, not on every
+  // re-render of the same one — otherwise refetch-on-focus would blow
+  // away in-progress edits.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedKey]);
+
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: async ({ applyToActive, justification }: { applyToActive: boolean; justification: string }) => {
+      const result = await put(`/api/v1/products/data-sharing/workflows/templates/${templateId}`, {
+        // Backend UpdateTemplateBody requires `name` (no default). Pull it
+        // from the loaded template so renames aren't required for saves.
+        name: templateQuery.data?.name ?? "",
+        sharing_type: sharingType || null,
+        data_classification: classification || null,
+        is_active: true,
+        // apply_to_active + justification are UI-only audit-trail breadcrumbs
+        // that the backend currently ignores. Sent as extras for forward-
+        // compatibility with the audit endpoint when it lands.
+        apply_to_active: applyToActive,
+        justification,
+        steps: steps.map((s) => ({
+          step_type: s.step_type,
+          name: s.name,
+          assignee_role: s.assignee_role,
+          execution_mode: s.execution_mode,
+          sla_days: s.sla_days,
+          condition_expr: s.condition_expr,
+        })),
+      });
+      // If the user toggled "Apply to active requests too?" ON in the
+      // save modal, fan out a backfill so in-flight requests bound to
+      // this template (or stuck without one) actually receive steps.
+      let backfilled = 0;
+      if (applyToActive) {
+        const bf = await backfillWorkflows({ all_stuck: true });
+        backfilled = bf.backfilled;
+      }
+      return { backfilled };
+    },
+    onSuccess: ({ backfilled }) => {
       qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-templates"] });
-      setDirty(false);
+      qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-template", templateId] });
       setShowSaveModal(false);
+      setSaveError(null);
+      setSavedAt(new Date());
+      toast.success("Workflow saved");
+      if (backfilled > 0) {
+        toast.success(`${backfilled} in-flight request${backfilled === 1 ? "" : "s"} updated`);
+      }
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Failed to save workflow changes";
+      setSaveError(msg);
+      toast.error(msg);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteWorkflowTemplate(templateId),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-templates"] });
+      setShowDeleteModal(false);
+      setDeleteError(null);
+      const label = templateQuery.data?.name ?? "Workflow";
+      toast.success(`${label} deleted${res.detached_requests > 0 ? ` · ${res.detached_requests} request${res.detached_requests === 1 ? "" : "s"} detached` : ""}`);
+      onClose();
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Failed to delete workflow";
+      setDeleteError(msg);
+      toast.error(msg);
     },
   });
 
   const addStep = () => {
     setSteps((prev) => [...prev, makeStep(prev.length + 1)]);
-    setDirty(true);
   };
 
   const removeStep = (key: string) => {
     setSteps((prev) =>
       prev.filter((s) => s._key !== key).map((s, i) => ({ ...s, step_order: i + 1 })),
     );
-    setDirty(true);
   };
 
   const updateStep = useCallback((key: string, field: keyof DraftStep, value: unknown) => {
     setSteps((prev) => prev.map((s) => (s._key === key ? { ...s, [field]: value } : s)));
-    setDirty(true);
   }, []);
 
   const handleDragStart = (key: string) => setDragging(key);
@@ -431,10 +596,26 @@ function WorkflowEditorPanel({
       next.splice(to, 0, item);
       return next.map((s, i) => ({ ...s, step_order: i + 1 }));
     });
-    setDirty(true);
   };
 
   const template = templateQuery.data;
+
+  // Save validation. Per spec: enable when steps.length >= 1 AND every
+  // step has a name AND the workflow itself has a name. We previously
+  // gated Save on a separate `dirty` flag that was being reset by an
+  // unsafe `useMemo` body — that's gone; this rule is the single source
+  // of truth and is reflected inline so the user can see what to fix.
+  const templateName = (template?.name ?? "").trim();
+  const stepsHaveNames = steps.every((s) => s.name.trim().length > 0);
+  const validationError =
+    !templateName
+      ? "This workflow has no name — rename it from the list before saving."
+      : steps.length === 0
+        ? "Add at least one step before saving."
+        : !stepsHaveNames
+          ? "Every step needs a name."
+          : null;
+  const canSave = validationError === null && !save.isPending;
 
   return (
     <div className="flex flex-1 flex-col" style={{ backgroundColor: "#FFFFF9" }}>
@@ -455,6 +636,17 @@ function WorkflowEditorPanel({
               {template.is_active ? "Active" : "Draft"} v{template.version}
             </span>
           )}
+          {/* Transient "Saved at HH:MM" chip — confirmation that the last
+              save round-tripped. Auto-clears after 3s (see useEffect above). */}
+          {savedAt && (
+            <span
+              className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+              style={{ backgroundColor: "#ECFDF5", color: "#047857", border: "1px solid #A7F3D0" }}
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              Saved at {savedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -465,25 +657,46 @@ function WorkflowEditorPanel({
           >
             Discard
           </button>
-          <button
-            type="button"
-            onClick={() => setShowSaveModal(true)}
-            disabled={!dirty || save.isPending}
-            className="flex h-9 items-center gap-1.5 rounded-md px-4 text-[13px] font-semibold text-white disabled:opacity-50"
-            style={{ backgroundColor: "#D76736" }}
-          >
-            <Save className="h-3.5 w-3.5" />
-            Save changes
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setShowSaveModal(true)}
+              disabled={!canSave}
+              title={validationError ?? undefined}
+              className="flex h-9 items-center gap-1.5 rounded-md px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor: "#D76736" }}
+            >
+              {save.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="h-3.5 w-3.5" />
+                  Save changes
+                </>
+              )}
+            </button>
+          )}
+          {!canEdit && (
+            <span
+              className="flex h-9 items-center rounded-md border px-4 text-[13px] font-medium"
+              style={{ borderColor: "#EEEEEE", color: "#9E9E9E" }}
+            >
+              Read-only (Org Admin authors workflows)
+            </span>
+          )}
         </div>
       </div>
 
       {showSaveModal && (
         <SaveWorkflowModal
           version={template?.version ?? 1}
-          onCancel={() => setShowSaveModal(false)}
+          onCancel={() => { setShowSaveModal(false); setSaveError(null); }}
           onConfirm={(applyToActive, justification) => save.mutate({ applyToActive, justification })}
           isPending={save.isPending}
+          error={saveError}
         />
       )}
 
@@ -494,7 +707,7 @@ function WorkflowEditorPanel({
             <label className="text-[11px] font-semibold" style={{ color: "#9E9E9E" }}>Sharing type</label>
             <select
               value={sharingType}
-              onChange={(e) => { setSharingType(e.target.value); setDirty(true); }}
+              onChange={(e) => setSharingType(e.target.value)}
               className="h-9 rounded-md border px-3 text-[13px] outline-none"
               style={{ borderColor: "#EEEEEE", minWidth: 160 }}
             >
@@ -507,7 +720,7 @@ function WorkflowEditorPanel({
             <label className="text-[11px] font-semibold" style={{ color: "#9E9E9E" }}>Classification</label>
             <select
               value={classification}
-              onChange={(e) => { setClassification(e.target.value); setDirty(true); }}
+              onChange={(e) => setClassification(e.target.value)}
               className="h-9 rounded-md border px-3 text-[13px] outline-none"
               style={{ borderColor: "#EEEEEE", minWidth: 160 }}
             >
@@ -526,6 +739,22 @@ function WorkflowEditorPanel({
           <div className="py-20 text-center text-sm text-auth-text-subtle">Loading…</div>
         ) : (
           <div className="flex flex-col" style={{ maxWidth: 640 }}>
+            {/* Inline validation banner — only shown when the user can
+                edit AND something is preventing save. Tells them exactly
+                which condition failed instead of leaving Save mysteriously
+                disabled. */}
+            {canEdit && validationError && (
+              <div
+                className="mb-3 flex items-start gap-2 rounded-md px-3 py-2"
+                style={{
+                  backgroundColor: "#FFFBEB",
+                  border: "1px solid #FCD34D",
+                  color: "#92400E",
+                }}
+              >
+                <span className="text-[12px]">{validationError}</span>
+              </div>
+            )}
             <div className="mb-2 flex items-center justify-between">
               <span className="text-[12px] font-semibold" style={{ color: "#9E9E9E" }}>
                 Steps · {steps.length} total
@@ -554,9 +783,37 @@ function WorkflowEditorPanel({
             >
               + Add step
             </button>
+
+            {/* Delete workflow — bottom-left of the editor, deliberately
+                far from the Save button so it's not clicked by accident.
+                Only renders for users who can author workflows. */}
+            {canEdit && (
+              <div className="mt-12 flex">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  disabled={deleteMutation.isPending}
+                  className="flex h-9 items-center gap-1.5 rounded-md border px-4 text-[13px] font-medium disabled:opacity-50"
+                  style={{ borderColor: "#FCA5A5", color: "#B91C1C", backgroundColor: "#FFFFFF" }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete workflow
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {showDeleteModal && (
+        <DeleteWorkflowModal
+          name={template?.name ?? "this workflow"}
+          isPending={deleteMutation.isPending}
+          error={deleteError}
+          onCancel={() => { setShowDeleteModal(false); setDeleteError(null); }}
+          onConfirm={() => deleteMutation.mutate()}
+        />
+      )}
     </div>
   );
 }
@@ -564,7 +821,12 @@ function WorkflowEditorPanel({
 // ─── Main page ────────────────────────────────────────────────────
 
 export default function WorkflowEditorPage() {
-  const { isReady } = useRoleGuard({ allow: ["dpo", "platform_admin"] });
+  const { isReady } = useRoleGuard({ allow: ["dpo", "org_admin", "platform_admin"] });
+  // Per backend permissions (BRD §2.1) only Org Admin can author workflows.
+  // DPO + Platform Admin get a read-only view of this same page so they can
+  // inspect templates without being able to mutate them.
+  const platformRole = useAuthStore((s) => s.user?.platform_role);
+  const canEdit = platformRole === "org_admin";
   const [editId, setEditId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const qc = useQueryClient();
@@ -575,12 +837,76 @@ export default function WorkflowEditorPage() {
     enabled: isReady,
   });
 
+  const [createError, setCreateError] = useState<string | null>(null);
   const createMutation = useMutation({
     mutationFn: (name: string) =>
-      post("/api/v1/products/data-sharing/workflows/templates", { name }),
+      // Backend CreateTemplateBody requires `steps` — sending an empty
+      // list creates a blank workflow that the user fills in via the editor.
+      // Without this we got a 422 Unprocessable Entity on the field.
+      post("/api/v1/products/data-sharing/workflows/templates", {
+        name,
+        steps: [],
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-templates"] });
       setShowNew(false);
+      setNewName("");
+      setCreateError(null);
+      toast.success("Workflow created");
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Failed to create workflow";
+      setCreateError(msg);
+      toast.error(msg);
+    },
+  });
+
+  // List-row delete: confirm modal first, then DELETE → toast.
+  const [deleteCandidate, setDeleteCandidate] = useState<WorkflowTemplate | null>(null);
+  const [listDeleteError, setListDeleteError] = useState<string | null>(null);
+  const listDeleteMutation = useMutation({
+    mutationFn: (id: string) => deleteWorkflowTemplate(id),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-templates"] });
+      const label = deleteCandidate?.name ?? "Workflow";
+      setDeleteCandidate(null);
+      setListDeleteError(null);
+      toast.success(`${label} deleted${res.detached_requests > 0 ? ` · ${res.detached_requests} request${res.detached_requests === 1 ? "" : "s"} detached` : ""}`);
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Failed to delete workflow";
+      setListDeleteError(msg);
+      toast.error(msg);
+    },
+  });
+
+  // Apply existing active templates to every stuck request in this tenant.
+  // Uses the new POST /workflows/backfill endpoint with all_stuck=true.
+  const backfillMutation = useMutation({
+    mutationFn: () => backfillWorkflows({ all_stuck: true }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["data-sharing", "requests"] });
+      if (res.backfilled === 0) {
+        toast.message("No stuck requests found", {
+          description:
+            res.skipped.length > 0
+              ? `${res.skipped.length} request${res.skipped.length === 1 ? "" : "s"} could not be matched to an active template.`
+              : undefined,
+        });
+      } else {
+        toast.success(
+          `${res.backfilled} request${res.backfilled === 1 ? "" : "s"} updated`,
+          {
+            description:
+              res.skipped.length > 0
+                ? `${res.skipped.length} skipped — no matching active template.`
+                : undefined,
+          },
+        );
+      }
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Backfill failed");
     },
   });
 
@@ -607,15 +933,42 @@ export default function WorkflowEditorPage() {
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: "#D76736" }} />
             DPO · Data Sharing
           </span>
-          <button
-            type="button"
-            onClick={() => setShowNew(true)}
-            className="flex h-9 items-center gap-2 rounded-md px-4 text-[13px] font-semibold text-white"
-            style={{ backgroundColor: "#D76736" }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New workflow
-          </button>
+          {!canEdit && (
+            <span
+              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+              style={{ backgroundColor: "#F5F5F5", color: "#515157" }}
+            >
+              Read-only
+            </span>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => backfillMutation.mutate()}
+              disabled={backfillMutation.isPending}
+              title="Attach the matching active workflow to every submitted request that has no steps yet"
+              className="flex h-9 items-center gap-2 rounded-md border px-4 text-[13px] font-medium disabled:opacity-50"
+              style={{ borderColor: "#EEEEEE", color: "#515157" }}
+            >
+              {backfillMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              Apply to in-flight requests
+            </button>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setShowNew(true)}
+              className="flex h-9 items-center gap-2 rounded-md px-4 text-[13px] font-semibold text-white"
+              style={{ backgroundColor: "#D76736" }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New workflow
+            </button>
+          )}
         </div>
       </div>
 
@@ -637,7 +990,7 @@ export default function WorkflowEditorPage() {
             <span className="w-[120px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>VERSION</span>
             <span className="w-[140px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>LAST EDITED</span>
             <span className="w-[90px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>STATUS</span>
-            <span className="w-[40px]" />
+            <span className="w-[80px] text-[11px] font-semibold tracking-[0.6px]" style={{ color: "#9E9E9E" }}>ACTIONS</span>
           </div>
 
           {templatesQuery.isLoading ? (
@@ -690,14 +1043,30 @@ export default function WorkflowEditorPage() {
                 <div className="w-[90px]">
                   <StatusBadge active={t.is_active} />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEditId(t.id)}
-                  className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[#F5F5F5]"
-                  style={{ color: "#9E9E9E" }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex w-[80px] items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditId(t.id)}
+                    title="Edit"
+                    className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[#F5F5F5]"
+                    style={{ color: "#9E9E9E" }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => { setListDeleteError(null); setDeleteCandidate(t); }}
+                      title="Delete workflow"
+                      className="group flex h-7 w-7 items-center justify-center rounded-md hover:bg-[#FEF2F2]"
+                      style={{ color: "#9E9E9E" }}
+                    >
+                      <Trash2
+                        className="h-3.5 w-3.5 transition-colors group-hover:text-[#B91C1C]"
+                      />
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -730,6 +1099,9 @@ export default function WorkflowEditorPage() {
                 style={{ borderColor: "#EEEEEE" }}
               />
             </div>
+            {createError && (
+              <p className="text-xs" style={{ color: "#D32F2F" }}>{createError}</p>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -751,6 +1123,16 @@ export default function WorkflowEditorPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {deleteCandidate && (
+        <DeleteWorkflowModal
+          name={deleteCandidate.name}
+          isPending={listDeleteMutation.isPending}
+          error={listDeleteError}
+          onCancel={() => { setDeleteCandidate(null); setListDeleteError(null); }}
+          onConfirm={() => listDeleteMutation.mutate(deleteCandidate.id)}
+        />
       )}
     </div>
   );

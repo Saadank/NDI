@@ -4,18 +4,32 @@ import { AlertCircle, CheckCircle2, ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { get, post } from "@/lib/api/client";
+import {
+  createHoliday,
+  listHolidays,
+  type HolidayRecord,
+} from "@/lib/api/platform/holidays.api";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 
+// Local view-model. The backend currently doesn't store is_recurring; the
+// Pencil toggle is kept in the UI but the value is not persisted yet.
 interface Holiday {
-  id: string;
+  id: number;
   date: string;
   name: string;
   name_ar?: string | null;
   is_recurring: boolean;
 }
 
-const BASE = "/api/v1/products/data-sharing/admin/holidays";
+function adaptHoliday(row: HolidayRecord): Holiday {
+  return {
+    id: row.id,
+    date: row.holiday_date,
+    name: row.name,
+    name_ar: row.name_ar,
+    is_recurring: false, // backend does not yet store this
+  };
+}
 
 function formatHolidayDate(dateStr: string): string {
   try {
@@ -38,7 +52,7 @@ export default function AdminHolidaysPage() {
 
   const holidaysQuery = useQuery({
     queryKey: ["admin", "holidays"],
-    queryFn: () => get<Holiday[]>(BASE),
+    queryFn: async () => (await listHolidays()).map(adaptHoliday),
     enabled: isReady,
   });
 
@@ -179,11 +193,10 @@ function AddHolidayPage({
 
   const add = useMutation({
     mutationFn: () =>
-      post<Holiday>(BASE, {
-        date,
+      createHoliday({
+        holiday_date: date,
         name: name.trim(),
         name_ar: nameAr.trim() || undefined,
-        is_recurring: isRecurring,
       }),
     onSuccess: onSaved,
     onError: (e) => setError(e instanceof Error ? e.message : "Failed"),

@@ -1,4 +1,4 @@
-import { get } from "@/lib/api/client";
+import { del, get, post } from "@/lib/api/client";
 
 // Mirrors `t_workflow_templates` rows from the backend.
 export interface WorkflowTemplate {
@@ -41,4 +41,30 @@ export function getWorkflowTemplate(
   id: string,
 ): Promise<WorkflowTemplateWithSteps> {
   return get<WorkflowTemplateWithSteps>(`${BASE}/templates/${id}`);
+}
+
+export interface DeleteTemplateResponse {
+  deleted: boolean;
+  detached_requests: number;
+}
+
+export function deleteWorkflowTemplate(
+  id: string,
+): Promise<DeleteTemplateResponse> {
+  return del<DeleteTemplateResponse>(`${BASE}/templates/${id}`);
+}
+
+export interface BackfillResponse {
+  backfilled: number;
+  skipped: { request_id: string; reason: string }[];
+}
+
+export function backfillWorkflows(body: {
+  request_id?: string;
+  all_stuck?: boolean;
+}): Promise<BackfillResponse> {
+  return post<BackfillResponse, { request_id?: string; all_stuck?: boolean }>(
+    `${BASE}/backfill`,
+    body,
+  );
 }

@@ -44,6 +44,105 @@ export interface LocalFile {
   progress: number;
 }
 
+// ─── PULL describe pane ───────────────────────────────────────────────────────
+//
+// Used in Step 2 when request_direction === "pull". The requester is
+// asking another dept FOR data, so they have nothing to upload. They
+// describe what they need (free text → reuses the `purpose` column),
+// pick the format they expect (file vs structured), and optionally
+// estimate row count. The Source Steward fulfilling the request will
+// later upload the file or write the SQL.
+
+function PullDescribe({
+  dataType,
+  onDataType,
+  purpose,
+  onPurpose,
+  estimatedRows,
+  onEstimatedRows,
+}: {
+  dataType: DataType;
+  onDataType: (m: DataType) => void;
+  purpose: string;
+  onPurpose: (v: string) => void;
+  estimatedRows: number | null;
+  onEstimatedRows: (v: number | null) => void;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-4 rounded-lg p-5"
+      style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
+    >
+      <div className="flex flex-col gap-1">
+        <h2 className="text-[15px] font-semibold text-auth-text">
+          Describe what you need
+        </h2>
+        <p className="text-xs" style={{ color: "#9E9E9E" }}>
+          You&rsquo;re asking another department for data. Tell them what
+          you need — the steward fulfilling this request will prepare and
+          upload it after approval.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium" style={{ color: "#616161" }}>
+          What data do you need?{" "}
+          <span style={{ color: "#D76736" }}>*</span>
+        </label>
+        <textarea
+          value={purpose}
+          onChange={(e) => onPurpose(e.target.value)}
+          placeholder="Tables, columns, date range, filters, anything that helps the source steward prepare the right extract…"
+          className="h-28 w-full resize-none rounded-md border p-3 text-[13px] text-auth-text outline-none placeholder:text-[#BABABA]"
+          style={{ borderColor: "#EEEEEE" }}
+        />
+        <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
+          This is the same description shown on Step 1 — edits flow both ways.
+        </p>
+      </div>
+
+      <div className="flex gap-4">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <label className="text-xs font-medium" style={{ color: "#616161" }}>
+            Expected format
+          </label>
+          <select
+            value={dataType}
+            onChange={(e) => onDataType(e.target.value as DataType)}
+            className="h-9 rounded-md border px-3 text-[13px] outline-none"
+            style={{ borderColor: "#EEEEEE", color: "#070709" }}
+          >
+            <option value="file">File (CSV / XLSX / PDF / JSON)</option>
+            <option value="structured">Structured query result</option>
+          </select>
+          <p className="text-[11px]" style={{ color: "#9E9E9E" }}>
+            A hint for the source steward; they pick the actual delivery method.
+          </p>
+        </div>
+
+        <div className="flex flex-1 flex-col gap-1.5">
+          <label className="text-xs font-medium" style={{ color: "#616161" }}>
+            Estimated row count (optional)
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={estimatedRows ?? ""}
+            onChange={(e) =>
+              onEstimatedRows(
+                e.target.value === "" ? null : Number(e.target.value),
+              )
+            }
+            placeholder="e.g. 50000"
+            className="h-9 rounded-md border px-3 text-[13px] outline-none"
+            style={{ borderColor: "#EEEEEE" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Mode Switcher ────────────────────────────────────────────────────────────
 
 function ModeSwitcher({
@@ -795,17 +894,27 @@ function StructuredMode() {
 export function Step2_DataSelection() {
   const { isReady } = useRoleGuard({ allow: ["requester", "data_owner"] });
   const router = useRouter();
+  const direction = useNewRequestStore((s) => s.request_direction);
   const dataType = useNewRequestStore((s) => s.data_type);
   const setField = useNewRequestStore((s) => s.set);
   const connectionId = useNewRequestStore((s) => s.connection_id);
   const selectionMode = useNewRequestStore((s) => s.selection_mode);
   const customSql = useNewRequestStore((s) => s.custom_sql);
   const selectedItems = useNewRequestStore((s) => s.selected_items);
+  const purpose = useNewRequestStore((s) => s.purpose);
+  const estimatedRows = useNewRequestStore((s) => s.estimated_data_subjects);
 
   const [localFiles, setLocalFiles] = useState<LocalFile[]>([]);
 
   if (!isReady) return null;
 
+  // PULL: requester is asking another dept FOR data. They have nothing
+  // to upload — they just describe what they need. Proceed once Step 1
+  // is complete (purpose required) and an expected format is chosen.
+  const pullCanProceed = purpose.trim().length > 0;
+
+  // PUSH: requester is sending data they have. Mode A requires files,
+  // Mode B requires connection + selection — same gates as before.
   const fileCanProceed =
     localFiles.length > 0 && localFiles.every((f) => f.status === "complete");
 
@@ -815,22 +924,36 @@ export function Step2_DataSelection() {
       selectedItems.some((it) => (it.columns?.length ?? 0) > 0)) ||
       (selectionMode === "query" && customSql.trim().length > 0));
 
-  const canProceed = dataType === "file" ? fileCanProceed : structuredCanProceed;
+  const canProceed = direction === "pull"
+    ? pullCanProceed
+    : (dataType === "file" ? fileCanProceed : structuredCanProceed);
 
   return (
     <div className="flex flex-col gap-4">
-      <ModeSwitcher mode={dataType} onChange={(m) => setField("data_type", m)} />
-
-      <div
-        className="flex flex-1 flex-col overflow-hidden rounded-lg"
-        style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
-      >
-        {dataType === "file" ? (
-          <FileMode files={localFiles} onFiles={setLocalFiles} />
-        ) : (
-          <StructuredMode />
-        )}
-      </div>
+      {direction === "pull" ? (
+        <PullDescribe
+          dataType={dataType}
+          onDataType={(m) => setField("data_type", m)}
+          purpose={purpose}
+          onPurpose={(v) => setField("purpose", v)}
+          estimatedRows={estimatedRows}
+          onEstimatedRows={(v) => setField("estimated_data_subjects", v)}
+        />
+      ) : (
+        <>
+          <ModeSwitcher mode={dataType} onChange={(m) => setField("data_type", m)} />
+          <div
+            className="flex flex-1 flex-col overflow-hidden rounded-lg"
+            style={{ backgroundColor: "#FFFFFF", border: "1px solid #EEEEEE" }}
+          >
+            {dataType === "file" ? (
+              <FileMode files={localFiles} onFiles={setLocalFiles} />
+            ) : (
+              <StructuredMode />
+            )}
+          </div>
+        </>
+      )}
 
       <div className="flex items-center justify-between">
         <button

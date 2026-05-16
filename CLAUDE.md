@@ -9,6 +9,34 @@ Datarix is an enterprise data governance platform.
 - Frontend runs on: http://localhost:3001
 - Branch: Frontend
 
+## Request Direction — PULL vs PUSH (extension to spec v4.0 §3.3)
+
+The product spec v4.0 §3.3 only describes one request flow: a steward
+asks another department FOR data. Real workflows also need the reverse:
+a steward who already has data and wants to SEND it to another
+department. We model both:
+
+- **PULL** (`request_direction = "pull"`, default): the requester is in
+  the receiving department and is asking the source department for
+  data. The Source Steward fulfilling the request later uploads the
+  data after approval.
+- **PUSH** (`request_direction = "push"`): the requester is in the
+  source department and attaches the data themselves at create-time.
+  No separate Source Steward Upload step is generated.
+
+The DB columns `requester_group_id` / `receiver_group_id` mean *who
+created the request* / *the other department*. The mapping to the
+spec's "source dept" / "receiver dept" terminology FLIPS by direction:
+
+|             | PULL (default) | PUSH |
+|-------------|----------------|------|
+| **Source dept** (data provider) | `receiver_group_id` | `requester_group_id` |
+| **Receiver dept** (destination) | `requester_group_id` | `receiver_group_id` |
+
+The workflow engine resolves Source DO / Receiver DO assignees off
+this mapping. PUSH workflows skip the `source_steward_upload` step.
+External shares (any direction) skip `receiver_data_owner_confirmation`.
+
 ## Code Quality Standards — Non-Negotiable
 You are a Senior Software Engineer. Every line must reflect that.
 

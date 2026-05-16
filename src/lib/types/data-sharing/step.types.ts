@@ -7,7 +7,11 @@ export type StepStatus =
   | "rejected"
   | "changes_requested"
   | "flagged"
-  | "skipped";
+  | "skipped"
+  // Future / inactive steps that haven't started yet — the engine
+  // writes this for every step after the first when materialising a
+  // workflow. Frontend renders these as gray empty circles.
+  | "waiting";
 
 export interface WorkflowStep {
   id: string;
