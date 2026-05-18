@@ -64,18 +64,22 @@ class ProfileRepository(PostgresqlAsyncRepository):
         location_path: str | None, connection_id: UUID,
         schema_name: str, table_name: str,
         sampling_mode: str, sample_size: int | None,
-        drill_down: bool, ai_enabled: bool, created_by: int | None,
+        drill_down: bool, ai_enabled: bool,
+        selected_columns: list[str] | None,
+        created_by: int | None,
     ) -> dict:
         return await self._fetch_row(
             """INSERT INTO dq.t_dq_profiles
                   (tenant_id, name, description, location_path,
                    connection_id, schema_name, table_name,
-                   sampling_mode, sample_size, drill_down, ai_enabled, created_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                   sampling_mode, sample_size, drill_down, ai_enabled,
+                   selected_columns, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *""",
             (tenant_id, name, description, location_path,
              connection_id, schema_name, table_name,
-             sampling_mode, sample_size, drill_down, ai_enabled, created_by),
+             sampling_mode, sample_size, drill_down, ai_enabled,
+             selected_columns, created_by),
         )
 
     async def update(
@@ -84,6 +88,7 @@ class ProfileRepository(PostgresqlAsyncRepository):
         location_path: str | None = None,
         sampling_mode: str | None = None, sample_size: int | None = None,
         drill_down: bool | None = None, ai_enabled: bool | None = None,
+        selected_columns: list[str] | None = None,
     ) -> dict:
         # Patch update — each non-None field contributes a SET clause.
         # Connection / schema / table are NOT editable: they define the
@@ -105,6 +110,8 @@ class ProfileRepository(PostgresqlAsyncRepository):
             args.append(drill_down);    sets.append(f"drill_down = ${len(args)}")
         if ai_enabled is not None:
             args.append(ai_enabled);    sets.append(f"ai_enabled = ${len(args)}")
+        if selected_columns is not None:
+            args.append(selected_columns); sets.append(f"selected_columns = ${len(args)}")
 
         return await self._fetch_row(
             f"""UPDATE dq.t_dq_profiles

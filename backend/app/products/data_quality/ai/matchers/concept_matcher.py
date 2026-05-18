@@ -14,12 +14,19 @@ Returned dicts are intentionally shape-compatible with
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.products.data_quality.ai.client import get_llm_client, is_llm_available
 from app.products.data_quality.ai.prompts import concept_match as prompt
 
 logger = logging.getLogger(__name__)
+
+# Ollama defaults to OLLAMA_NUM_PARALLEL=1 — without this gate, parallel
+# fan-out from the orchestrator queues every request at the server and the
+# tail ones blow their per-request timeout while waiting. Serializing here
+# matches Ollama's real concurrency so each call gets a clean compute window.
+_LLM_SEMAPHORE = asyncio.Semaphore(1)
 
 
 def is_available() -> bool:
@@ -40,7 +47,8 @@ async def match_column(
     system = prompt.system_prompt(concepts)
     user = prompt.user_prompt(column, semantic_type)
 
-    result = await client.call(system=system, user=user, json_mode=True)
+    async with _LLM_SEMAPHORE:
+        result = await client.call(system=system, user=user, json_mode=True)
     if not result.success:
         logger.warning(
             "concept_match LLM call failed for %s: %s",

@@ -150,13 +150,16 @@ async def _eval_unique(gateway, db_type, schema_name, table_name, column_name,
                        row_count, parameter):
     qcol = _quote_ident(db_type, column_name)
     qtable = _qualified_table(db_type, schema_name, table_name)
-    # Count rows whose value isn't unique. Excludes NULL (NULL groups vary by
-    # dialect; "uniqueness on a NULL column" is conventionally interpreted as
-    # "non-null values must be unique"). Completeness is a separate concept.
+    # Count rows whose value isn't unique. Excludes both NULL (NULL groups
+    # vary by dialect; "uniqueness on a NULL column" is conventionally
+    # "non-null values must be unique") AND pseudo-null tokens like
+    # "N/A"/"null" — those repeating across rows are a completeness issue,
+    # not a real key-collision. Reporting them here would double-count.
+    no_pseudo = _pseudo_null_exclusion(db_type, qcol)
     sql = (
         f"SELECT COALESCE(SUM(c), 0) FROM ("
         f"  SELECT {qcol} AS v, COUNT(*) AS c FROM {qtable} "
-        f"  WHERE {qcol} IS NOT NULL "
+        f"  WHERE {qcol} IS NOT NULL AND {no_pseudo} "
         f"  GROUP BY {qcol} "
         f"  HAVING COUNT(*) > 1"
         f") dups"
@@ -173,6 +176,20 @@ async def _eval_unique(gateway, db_type, schema_name, table_name, column_name,
             "diagnostic_text": diag, "violation_patterns": []}
 
 
+def _pseudo_null_exclusion(db_type: str, qcol: str) -> str:
+    """SQL predicate that's TRUE when {qcol} is NOT a pseudo-null token
+    ('null', 'n/a', '-', etc. — see profiler._PSEUDO_NULL_TOKENS).
+
+    Validity / uniqueness checks compose this with `IS NOT NULL` so a row
+    whose value is the literal string ``"N/A"`` is reported only by the
+    completeness `no_pseudo_nulls` rule, not double-counted as a validity
+    failure. Mirrors the cast-and-tokenize logic used by the profiler."""
+    cast_target = "TEXT" if db_type == "postgresql" else (
+        "NVARCHAR(MAX)" if db_type == "mssql" else "CHAR")
+    tokens = ", ".join(f"'{t}'" for t in _PSEUDO_NULL_TOKENS)
+    return f"LOWER(TRIM(CAST({qcol} AS {cast_target}))) NOT IN ({tokens})"
+
+
 async def _eval_format_regex(gateway, db_type, schema_name, table_name, column_name,
                              row_count, parameter):
     pattern = (parameter or {}).get("pattern")
@@ -184,8 +201,13 @@ async def _eval_format_regex(gateway, db_type, schema_name, table_name, column_n
     if pred is None:
         return _error_result(f"format_regex unsupported on {db_type}", "")
 
-    # Count violators (NOT match), excluding NULL — NULL is completeness's job.
-    sql = f"SELECT COUNT(*) FROM {qtable} WHERE {qcol} IS NOT NULL AND NOT ({pred})"
+    # Count violators (NOT match), excluding both real NULL and pseudo-null
+    # tokens. Both are completeness's job: NULL via not_null/max_null_rate,
+    # "N/A"/"null"/"-" via no_pseudo_nulls. Reporting them here would
+    # double-count the same root cause.
+    no_pseudo = _pseudo_null_exclusion(db_type, qcol)
+    sql = (f"SELECT COUNT(*) FROM {qtable} "
+           f"WHERE {qcol} IS NOT NULL AND {no_pseudo} AND NOT ({pred})")
     vc, err = await _scalar_count(gateway, sql)
     if vc is None:
         return _error_result(err, sql)
@@ -195,7 +217,7 @@ async def _eval_format_regex(gateway, db_type, schema_name, table_name, column_n
     if vc > 0:
         sample_sql = (
             f"SELECT {qcol} FROM {qtable} "
-            f"WHERE {qcol} IS NOT NULL AND NOT ({pred}) "
+            f"WHERE {qcol} IS NOT NULL AND {no_pseudo} AND NOT ({pred}) "
             f"LIMIT {_VIOLATION_PATTERN_SAMPLE}"
         )
         sr = await gateway.execute_query(sample_sql)

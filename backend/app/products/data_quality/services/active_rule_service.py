@@ -246,33 +246,48 @@ class ActiveRuleService:
                 "warning": "Dictionary is empty. Seed defaults from the Dictionary tab.",
             }
 
-        # 4. Match each column.
-        per_column: list[dict] = []
-        llm_called = False
-        all_concept_ids: list[int] = []
-        for col in columns:
-            col_name = col["column_name"]
-            fuzzy_hits = fuzzy_matcher.match_column_against_concepts(
-                col_name, concepts, semantic_type=semantic_type,
-            )
+        # 4. Match each column. Fuzzy is in-memory (cheap, synchronous);
+        # LLM calls are network-bound and we fan them out in parallel so the
+        # overall preview runs in ~1× LLM latency instead of N×.
+        import asyncio
 
-            if fuzzy_hits:
-                matches = fuzzy_hits
-            else:
-                # No fuzzy hit — try the LLM if available.
-                if llm_matcher.is_available():
-                    llm_called = True
-                    matches = await llm_matcher.match_column(
-                        col, concepts, semantic_type=semantic_type,
+        fuzzy_results: list[list[dict]] = [
+            fuzzy_matcher.match_column_against_concepts(
+                col["column_name"], concepts, semantic_type=semantic_type,
+            )
+            for col in columns
+        ]
+        llm_available = llm_matcher.is_available()
+        llm_called = llm_available and any(not r for r in fuzzy_results)
+        llm_tasks: dict[int, asyncio.Task] = {}
+        if llm_available:
+            for idx, hits in enumerate(fuzzy_results):
+                if hits:
+                    continue
+                llm_tasks[idx] = asyncio.create_task(
+                    llm_matcher.match_column(
+                        columns[idx], concepts, semantic_type=semantic_type,
                     )
-                else:
-                    matches = []
+                )
+        if llm_tasks:
+            await asyncio.gather(*llm_tasks.values(), return_exceptions=True)
+
+        per_column: list[dict] = []
+        all_concept_ids: list[int] = []
+        for idx, col in enumerate(columns):
+            if fuzzy_results[idx]:
+                matches = fuzzy_results[idx]
+            elif idx in llm_tasks:
+                task_result = llm_tasks[idx].result() if not llm_tasks[idx].cancelled() else None
+                matches = task_result if isinstance(task_result, list) else []
+            else:
+                matches = []
 
             for m in matches:
                 all_concept_ids.append(m["concept_id"])
 
             per_column.append({
-                "column_name": col_name,
+                "column_name": col["column_name"],
                 "type_category": col.get("type_category"),
                 "inferred_column_type": col.get("inferred_column_type"),
                 "dominant_pattern": col.get("dominant_pattern"),
@@ -321,6 +336,12 @@ class ActiveRuleService:
             connection_id, schema_name, table_name, tenant_id,
         )
         if profiled:
+            # asyncpg returns jsonb as a string on this query path; matchers
+            # downstream (concept_match.py) expect real list/dict — coerce
+            # once here so both fuzzy and LLM see well-formed data.
+            for col in profiled:
+                col["top_patterns"] = _coerce_jsonb(col.get("top_patterns"), default=[])
+                col["raw_metrics"] = _coerce_jsonb(col.get("raw_metrics"), default={})
             return profiled
 
         # Fall back: ask the source DB directly. This is rarer; we still
@@ -349,6 +370,21 @@ class ActiveRuleService:
             ]
         finally:
             await gateway.close()
+
+
+def _coerce_jsonb(raw: Any, *, default: Any) -> Any:
+    """asyncpg returns jsonb as a Python object when a codec is registered
+    and as a string when not. Normalize so downstream consumers don't have
+    to care which path delivered the row."""
+    if isinstance(raw, (dict, list)):
+        return raw
+    if isinstance(raw, str):
+        import json as _json
+        try:
+            return _json.loads(raw)
+        except _json.JSONDecodeError:
+            return default
+    return default if raw is None else raw
 
 
 def get_active_rule_service() -> ActiveRuleService:

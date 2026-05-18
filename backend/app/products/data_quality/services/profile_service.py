@@ -84,12 +84,15 @@ class ProfileService:
         self, *, name: str, description: str | None, location_path: str | None,
         connection_id: UUID, schema_name: str, table_name: str,
         sampling_mode: str, sample_size: int | None,
-        drill_down: bool, ai_enabled: bool, auth_user: AuthUser,
+        drill_down: bool, ai_enabled: bool,
+        selected_columns: list[str] | None,
+        auth_user: AuthUser,
     ) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
         self._validate_name(name)
         self._validate_location(location_path)
         self._validate_sampling(sampling_mode, sample_size)
+        self._validate_selected_columns(selected_columns)
         if not schema_name or not table_name:
             raise ValidationException("schema_name and table_name are required")
 
@@ -110,7 +113,8 @@ class ProfileService:
             connection_id=connection_id, schema_name=schema_name,
             table_name=table_name, sampling_mode=sampling_mode,
             sample_size=sample_size, drill_down=drill_down,
-            ai_enabled=ai_enabled, created_by=auth_user.user_id,
+            ai_enabled=ai_enabled, selected_columns=selected_columns,
+            created_by=auth_user.user_id,
         )
 
     async def update_profile(
@@ -119,6 +123,7 @@ class ProfileService:
         location_path: str | None = None,
         sampling_mode: str | None = None, sample_size: int | None = None,
         drill_down: bool | None = None, ai_enabled: bool | None = None,
+        selected_columns: list[str] | None = None,
         auth_user: AuthUser,
     ) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
@@ -142,12 +147,15 @@ class ProfileService:
             effective_mode = sampling_mode if sampling_mode is not None else existing["sampling_mode"]
             effective_size = sample_size  if sample_size  is not None else existing["sample_size"]
             self._validate_sampling(effective_mode, effective_size)
+        if selected_columns is not None:
+            self._validate_selected_columns(selected_columns)
 
         return await self.repo.update(
             profile_id, auth_user.tenant_id,
             name=name, description=description, location_path=location_path,
             sampling_mode=sampling_mode, sample_size=sample_size,
             drill_down=drill_down, ai_enabled=ai_enabled,
+            selected_columns=selected_columns,
         )
 
     async def delete_profile(self, profile_id: int, auth_user: AuthUser) -> None:
@@ -185,6 +193,7 @@ class ProfileService:
             schema_name=src["schema_name"], table_name=src["table_name"],
             sampling_mode=src["sampling_mode"], sample_size=src.get("sample_size"),
             drill_down=src["drill_down"], ai_enabled=src["ai_enabled"],
+            selected_columns=src.get("selected_columns"),
             created_by=auth_user.user_id,
         )
 
@@ -302,6 +311,28 @@ class ProfileService:
             raise ValidationException(
                 "Location path may contain only letters/digits/space/dot/dash/underscore/slash, max 500 chars"
             )
+
+    def _validate_selected_columns(self, cols: list[str] | None) -> None:
+        """``selected_columns`` is a TEXT[] of source column names. We allow
+        an empty list (deliberate "scan nothing" — degenerate but legal at
+        the schema level; the profiler raises a clearer error at run time)
+        but enforce shape and a sane upper bound so a tenant can't paste a
+        million-element array."""
+        if cols is None:
+            return
+        if not isinstance(cols, list):
+            raise ValidationException("selected_columns must be a list of strings")
+        if len(cols) > 2000:
+            raise ValidationException("selected_columns capped at 2000 entries")
+        for c in cols:
+            if not isinstance(c, str) or not c.strip():
+                raise ValidationException(
+                    "selected_columns entries must be non-empty strings"
+                )
+            if len(c) > 255:
+                raise ValidationException(
+                    "selected_columns entries capped at 255 chars"
+                )
 
     def _validate_sampling(self, mode: str, size: int | None) -> None:
         if mode not in _VALID_SAMPLING:

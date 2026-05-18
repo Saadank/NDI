@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     DQ_LLM_BASE_URL: str = "http://host.docker.internal:11434"
     DQ_LLM_MODEL: str = "qwen2.5-coder:7b"
     DQ_LLM_MAX_OUTPUT_TOKENS: int = 1024
-    DQ_LLM_TIMEOUT_S: int = 90               # cold-start can take ~30s on first call
+    DQ_LLM_TIMEOUT_S: int = 45               # parallel matcher fan-out — fail fast, retry next click
 
     # External pickup portal
     PICKUP_TOKEN_TTL_HOURS: int = 72

@@ -24,6 +24,8 @@ class CreateProfileBody(BaseModel):
     sample_size: int | None = None
     drill_down: bool = True
     ai_enabled: bool = True
+    # Per-profile column subset. Omit (or pass null) to profile every column.
+    selected_columns: list[str] | None = None
 
 
 class UpdateProfileBody(BaseModel):
@@ -34,6 +36,17 @@ class UpdateProfileBody(BaseModel):
     sample_size: int | None = None
     drill_down: bool | None = None
     ai_enabled: bool | None = None
+    # NOTE: PATCH semantics need a sentinel to distinguish "leave alone"
+    # (omit) from "set to NULL i.e. all columns" (None) from "set to a
+    # specific list" (a list). Pydantic can't model that cleanly without
+    # either Optional[Optional[...]] or a custom type, so we treat:
+    #   - field absent / explicit null → no change
+    #   - empty list                   → set to empty list (zero columns; profiler errors out)
+    #   - non-empty list               → set to that list
+    # If a tenant ever needs "go back to all-columns mode", they can
+    # currently re-create the profile or we add a `clear_selected_columns`
+    # flag later.
+    selected_columns: list[str] | None = None
 
 
 class CloneProfileBody(BaseModel):
@@ -65,7 +78,9 @@ async def create_profile(
         connection_id=body.connection_id, schema_name=body.schema_name,
         table_name=body.table_name, sampling_mode=body.sampling_mode,
         sample_size=body.sample_size, drill_down=body.drill_down,
-        ai_enabled=body.ai_enabled, auth_user=auth_user,
+        ai_enabled=body.ai_enabled,
+        selected_columns=body.selected_columns,
+        auth_user=auth_user,
     )
     return {"detail": "Profile created", "profile": row}
 
@@ -89,7 +104,9 @@ async def update_profile(
         profile_id, name=body.name, description=body.description,
         location_path=body.location_path, sampling_mode=body.sampling_mode,
         sample_size=body.sample_size, drill_down=body.drill_down,
-        ai_enabled=body.ai_enabled, auth_user=auth_user,
+        ai_enabled=body.ai_enabled,
+        selected_columns=body.selected_columns,
+        auth_user=auth_user,
     )
     return {"detail": "Profile updated", "profile": row}
 

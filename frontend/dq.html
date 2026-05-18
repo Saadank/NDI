@@ -101,6 +101,17 @@
   .dim-tile .dim-blurb{color:var(--mute);font-size:12px;line-height:1.5;margin:0 0 10px}
   .dim-tile .dim-pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;background:#eef2ff;color:#3730a3}
   .dim-back{cursor:pointer;color:var(--blue);font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
+  /* ---- dictionary unified-list filter chips ---- */
+  .filter-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .filter-group{display:inline-flex;gap:4px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:3px}
+  .filter-group .lbl{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;padding:0 8px}
+  .filter-chip{padding:4px 10px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--ink)}
+  .filter-chip:hover{background:#f1f5f9}
+  .filter-chip.active{background:var(--blue);color:#fff}
+  .dim-pill-c{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;background:#dcfce7;color:#166534}
+  .dim-pill-v{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;background:#fef3c7;color:#92400e}
+  .dim-pill-u{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;background:#e0e7ff;color:#3730a3}
+  .seed-mark{display:inline-block;font-size:10px;color:var(--mute);margin-left:6px;font-weight:400}
   /* ---- table preview (sample rows) ---- */
   .preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .preview-cols-card{padding:0}
@@ -381,7 +392,7 @@
       </div>
     </div>
 
-    <!-- DICTIONARY TAB — pick a dimension first, then see only its rules -->
+    <!-- DICTIONARY TAB — single searchable list with filter chips -->
     <div id="panel-dictionary" class="hidden">
       <div class="card" style="padding:12px 14px;margin-bottom:14px">
         <div class="row">
@@ -403,8 +414,8 @@
           </div>
         </div>
       </div>
-      <div id="dict-picker"></div>
-      <div id="dict-content" class="hidden"></div>
+      <div id="dict-toolbar" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
+      <div id="dict-list"></div>
     </div>
 
     <!-- IMPORTS TAB (Step 6.7) -->
@@ -449,7 +460,10 @@
             </div>
           </div>
           <label>Host *</label>
-          <input type="text" id="conn-host" placeholder="db.example.com">
+          <input type="text" id="conn-host" placeholder="db.example.com" oninput="syncHostWarning()">
+          <div id="conn-host-warning" class="api" style="display:none;color:#92400e;background:#fef3c7;border-radius:6px;padding:6px 10px;margin-top:4px;font-size:11.5px">
+            <strong>Heads up:</strong> the API runs inside a Docker container, so <span class="mono">localhost</span> means the container itself — not your host machine. If your DB is on this computer, use <span class="mono">host.docker.internal</span> instead (on Docker Desktop) or your host's LAN IP. <a href="#" onclick="event.preventDefault();$('conn-host').value='host.docker.internal';syncHostWarning()" style="color:var(--blue)">Use host.docker.internal →</a>
+          </div>
           <label>Database</label>
           <input type="text" id="conn-database" placeholder="(optional — e.g. analytics)">
           <div class="row" style="gap:10px">
@@ -634,15 +648,17 @@
     <div class="modal-overlay" id="pd-modal" onclick="if(event.target===this)closeProfileDetail()">
       <div class="modal" style="width:1100px">
         <div class="modal-head">
+          <span id="pd-dirty-dot" class="hidden" title="Unsaved changes" style="width:8px;height:8px;border-radius:50%;background:var(--blue);display:inline-block;margin-right:6px"></span>
           <strong id="pd-title">Profile</strong>
           <span class="api" id="pd-meta"></span>
-          <button class="alt tiny" style="margin-left:auto" onclick="pdRunScan()">Scan now</button>
-          <button class="alt tiny" onclick="pdEdit()">Edit</button>
+          <button class="alt tiny" style="margin-left:auto" id="pd-btn-save" onclick="pdSaveDefinition()" disabled>Save</button>
+          <button class="tiny" id="pd-btn-run" onclick="pdRunScan()" title="Profile + validate this table now">Run</button>
           <button class="alt tiny" onclick="pdClone()">Clone</button>
           <button class="alt tiny" onclick="closeProfileDetail()">Close</button>
         </div>
         <div class="tabs" style="padding:0 18px;margin-top:0">
           <div class="tab active" id="pd-tab-definition" onclick="pdSwitch('definition')">Definition</div>
+          <div class="tab" id="pd-tab-columns"    onclick="pdSwitch('columns')">Columns</div>
           <div class="tab" id="pd-tab-rules"      onclick="pdSwitch('rules')">Rules</div>
           <div class="tab" id="pd-tab-scans"      onclick="pdSwitch('scans')">Scans</div>
           <div class="tab" id="pd-tab-metrics"    onclick="pdSwitch('metrics')">Metrics</div>
@@ -651,6 +667,7 @@
         </div>
         <div class="modal-body" style="max-height:65vh;overflow-y:auto">
           <div id="pd-panel-definition"></div>
+          <div id="pd-panel-columns" class="hidden"></div>
           <div id="pd-panel-rules" class="hidden"></div>
           <div id="pd-panel-scans" class="hidden"></div>
           <div id="pd-panel-metrics" class="hidden"></div>
@@ -660,22 +677,21 @@
       </div>
     </div>
 
-    <!-- MANUAL BIND-RULE MODAL -->
+    <!-- MANUAL BIND-CONCEPT MODAL — pick one concept, apply to many columns -->
     <div class="modal-overlay" id="bind-modal" onclick="if(event.target===this)closeBindModal()">
-      <div class="modal" style="width:560px">
+      <div class="modal" style="width:680px">
         <div class="modal-head">
-          <strong>Add rule manually</strong>
+          <strong>Bind concept to columns</strong>
           <span class="api" id="bind-meta"></span>
           <button class="alt tiny" style="margin-left:auto" onclick="closeBindModal()">Close</button>
         </div>
         <div class="modal-body">
           <p class="api" style="margin:0 0 10px">
-            Bind a concept directly to a column on this profile, bypassing the matcher.
-            The rule lands as <span class="mono">auto_applied</span>; the next scan picks it up.
+            Pick one concept and tick every column it should apply to. Bypasses the
+            matcher; rules land as <span class="mono">auto_applied</span> and survive
+            future matcher re-runs.
           </p>
-          <label>Column</label>
-          <select id="bind-column"></select>
-          <div class="row" style="gap:10px;margin-top:10px">
+          <div class="row" style="gap:10px">
             <div style="flex:1">
               <label>Dimension</label>
               <select id="bind-dimension" onchange="bindRefreshConcepts()">
@@ -690,10 +706,21 @@
               <select id="bind-concept"></select>
             </div>
           </div>
+          <label style="margin-top:14px">
+            Apply to columns
+            <span class="api" id="bind-col-count">— Selected 0 of 0</span>
+          </label>
+          <input type="search" id="bind-col-search" placeholder="Filter columns…"
+                 oninput="bindRenderColumns()" style="width:100%;margin-bottom:6px">
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
+            <button class="tiny" onclick="bindToggleAllColumns(true)">Select all (filtered)</button>
+            <button class="tiny" onclick="bindToggleAllColumns(false)">Clear all</button>
+          </div>
+          <div id="bind-col-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:6px"></div>
         </div>
         <div class="modal-foot">
           <button class="alt" onclick="closeBindModal()">Cancel</button>
-          <button onclick="saveBindManual()">Add rule</button>
+          <button id="bind-save-btn" onclick="saveBindManual()">Bind to selected</button>
         </div>
       </div>
     </div>
@@ -963,10 +990,22 @@ function syncConnectionDefaults(){
   if(wasDefault) portEl.value=suggested;
 }
 
+// Surfaces the localhost-vs-Docker gotcha inline as the user types.
+// localhost / 127.0.0.1 / ::1 from inside the API container resolve
+// to the container itself, not to the user's machine — a real
+// catch documented in this project's Step 6 setup.
+function syncHostWarning(){
+  const h=$('conn-host').value.trim().toLowerCase();
+  const bad=(h==='localhost' || h==='127.0.0.1' || h==='::1' || h==='0.0.0.0');
+  $('conn-host-warning').style.display=bad?'':'none';
+}
+
 function openConnectionModal(){
   $('conn-db-type').value='postgresql';
   $('conn-port').value=_DEFAULT_PORTS.postgresql;
   $('conn-host').value='';
+  // Hide any leftover warning from a previous open.
+  $('conn-host-warning').style.display='none';
   $('conn-database').value='';
   $('conn-username').value='';
   $('conn-password').value='';
@@ -1321,7 +1360,9 @@ function renderProfileTable(scan, profiles){
     const lenCell=(p.min_length!=null||p.max_length!=null)
       ? `${p.min_length??'—'} / ${p.max_length??'—'}` : '—';
     const minMax=(p.min_value!=null||p.max_value!=null)
-      ? `${fmtNum(p.min_value)} / ${fmtNum(p.max_value)}` : '—';
+      ? `${fmtNum(p.min_value)} / ${fmtNum(p.max_value)}`
+      : ((p.min_text!=null||p.max_text!=null)
+          ? `${escapeHtml(p.min_text??'—')} / ${escapeHtml(p.max_text??'—')}` : '—');
     const dom=p.dominant_pattern?`<span class="mono">${trunc(p.dominant_pattern,30)}</span>`:'—';
     const tvBtnId=`tv-btn-row-${idx}`;
     const tvSlotId=`tv-slot-row-${idx}`;
@@ -1368,11 +1409,11 @@ function renderProfileTiles(scan, profiles){
       <div class="tile-grid">
         <div class="tile tile-max">
           <div class="tile-label">Max value</div>
-          <div class="tile-value ${p.max_value==null?'muted':''}">${p.max_value!=null?fmtNum(p.max_value):'—'}</div>
+          <div class="tile-value ${(p.max_value==null && p.max_text==null)?'muted':''}">${p.max_value!=null?fmtNum(p.max_value):(p.max_text!=null?escapeHtml(p.max_text):'—')}</div>
         </div>
         <div class="tile tile-min">
           <div class="tile-label">Min value</div>
-          <div class="tile-value ${p.min_value==null?'muted':''}">${p.min_value!=null?fmtNum(p.min_value):'—'}</div>
+          <div class="tile-value ${(p.min_value==null && p.min_text==null)?'muted':''}">${p.min_value!=null?fmtNum(p.min_value):(p.min_text!=null?escapeHtml(p.min_text):'—')}</div>
         </div>
         <div class="tile tile-central">
           <div class="tile-label">Mean · Median · Percentiles</div>
@@ -1460,67 +1501,121 @@ function closeProfile(){$('profile-card').classList.add('hidden')}
 // ---------- Dictionary ----------
 const DIMENSIONS=['completeness','validity','uniqueness'];
 const SEMANTIC_TYPES_FULL=['master_data','transaction','event_log','reference','staging','snapshot'];
+const RULE_TYPES=['not_null','max_null_rate','no_pseudo_nulls','unique','format_regex'];
 let _concepts=[];
 
-const DIM_BLURB={
-  completeness:'Make sure required values are present — not_null, max_null_rate, no_pseudo_nulls.',
-  validity:'Make sure values match the expected shape — format_regex, ranges, lookups.',
-  uniqueness:'Make sure key columns don\'t repeat — unique constraint checks.'
-};
-let _dictActiveDim=null;
+// Filter state for the unified Dictionary list. Persisted across re-renders.
+const _dictFilter={ dim:'all', rule:'all', source:'all', enabled:'all', q:'' };
 
 async function loadConcepts(){
   try{
     const resp=await api('GET','/api/v1/products/data-quality/concepts');
     _concepts=resp.items||[];
-    if(_dictActiveDim) renderDictDimension(_dictActiveDim);
-    else renderDictPicker();
+    renderDictionary();
   }catch(e){toast(e.message,false)}
 }
 
-function renderDictPicker(){
-  $('dict-picker').classList.remove('hidden');
-  $('dict-content').classList.add('hidden');
+function renderDictionary(){
+  // Empty state — no concepts at all.
   if(_concepts.length===0){
-    $('dict-picker').innerHTML='<div class="card"><p class="api" style="margin:0">No concepts yet. Click <strong>Seed defaults</strong> to install the 19 concepts that cover completeness, validity, and uniqueness.</p></div>';
+    $('dict-toolbar').innerHTML=`<p class="api" style="margin:0">
+      No concepts yet. Click <strong>Seed defaults</strong> to install the 19 starter
+      concepts (10 validity + 6 completeness + 3 uniqueness).</p>`;
+    $('dict-list').innerHTML='';
     return;
   }
-  const tiles=DIMENSIONS.map(dim=>{
-    const n=_concepts.filter(c=>c.dimension===dim).length;
-    return `<div class="dim-tile" onclick="openDictDimension('${dim}')">
-      <h3>${dim}</h3>
-      <p class="dim-blurb">${DIM_BLURB[dim]||''}</p>
-      <span class="dim-pill">${n} concept${n!==1?'s':''}</span>
-    </div>`;
+  renderDictToolbar();
+  renderDictTable();
+}
+
+function renderDictToolbar(){
+  // Per-dimension counts go on the chips so users see what's populated.
+  const dimCount=d=>_concepts.filter(c=>c.dimension===d).length;
+  const ruleCount=r=>_concepts.filter(c=>c.rule_type===r).length;
+  const seedCount=_concepts.filter(c=>c.is_seed).length;
+  const customCount=_concepts.length-seedCount;
+  const enabledCount=_concepts.filter(c=>c.enabled!==false).length;
+  const disabledCount=_concepts.length-enabledCount;
+  const f=_dictFilter;
+
+  const dimChips=['all',...DIMENSIONS].map(d=>{
+    const n=d==='all'?_concepts.length:dimCount(d);
+    return `<button class="filter-chip ${f.dim===d?'active':''}" onclick="setDictFilter('dim','${d}')">${d}${d!=='all'?` (${n})`:''}</button>`;
   }).join('');
-  $('dict-picker').innerHTML=`<div class="dim-picker">${tiles}</div>`;
+  const ruleChips=['all',...RULE_TYPES].map(r=>{
+    const n=r==='all'?_concepts.length:ruleCount(r);
+    return `<button class="filter-chip ${f.rule===r?'active':''}" onclick="setDictFilter('rule','${r}')">${r}${r!=='all'?` (${n})`:''}</button>`;
+  }).join('');
+  const sourceChips=[
+    ['all',_concepts.length], ['seeded',seedCount], ['custom',customCount]
+  ].map(([s,n])=>
+    `<button class="filter-chip ${f.source===s?'active':''}" onclick="setDictFilter('source','${s}')">${s}${s!=='all'?` (${n})`:''}</button>`
+  ).join('');
+  const enabledChips=[
+    ['all',_concepts.length], ['enabled',enabledCount], ['disabled',disabledCount]
+  ].map(([s,n])=>
+    `<button class="filter-chip ${f.enabled===s?'active':''}" onclick="setDictFilter('enabled','${s}')">${s}${s!=='all'?` (${n})`:''}</button>`
+  ).join('');
+
+  $('dict-toolbar').innerHTML=`
+    <div class="filter-row" style="margin-bottom:8px">
+      <div class="filter-group"><span class="lbl">Dim</span>${dimChips}</div>
+      <div class="filter-group"><span class="lbl">Rule</span>${ruleChips}</div>
+      <div class="filter-group"><span class="lbl">Src</span>${sourceChips}</div>
+      <div class="filter-group"><span class="lbl">State</span>${enabledChips}</div>
+      <input type="search" id="dict-search" placeholder="Search name or synonym…"
+             value="${escapeHtml(f.q)}" oninput="setDictFilter('q', this.value)"
+             style="margin-left:auto;min-width:220px">
+    </div>`;
 }
 
-function openDictDimension(dim){
-  _dictActiveDim=dim;
-  renderDictDimension(dim);
+function setDictFilter(key, value){
+  _dictFilter[key]=value;
+  // Search input only re-renders the table (preserving focus); chips
+  // re-render the toolbar so the active state updates.
+  if(key==='q') renderDictTable();
+  else { renderDictToolbar(); renderDictTable(); }
 }
 
-function backToDictPicker(){
-  _dictActiveDim=null;
-  renderDictPicker();
+function _filteredConcepts(){
+  const f=_dictFilter;
+  const q=(f.q||'').trim().toLowerCase();
+  return _concepts.filter(c=>{
+    if(f.dim!=='all' && c.dimension!==f.dim) return false;
+    if(f.rule!=='all' && c.rule_type!==f.rule) return false;
+    if(f.source==='seeded' && !c.is_seed) return false;
+    if(f.source==='custom' && c.is_seed) return false;
+    if(f.enabled==='enabled' && c.enabled===false) return false;
+    if(f.enabled==='disabled' && c.enabled!==false) return false;
+    if(q){
+      const haystack=(c.concept||'').toLowerCase()+'|'+(c.synonyms||[]).join('|').toLowerCase();
+      if(!haystack.includes(q)) return false;
+    }
+    return true;
+  });
 }
 
-function renderDictDimension(dim){
-  $('dict-picker').classList.add('hidden');
-  $('dict-content').classList.remove('hidden');
-  const items=_concepts.filter(c=>c.dimension===dim);
+function _dimPill(dim){
+  const cls={completeness:'dim-pill-c',validity:'dim-pill-v',uniqueness:'dim-pill-u'}[dim]||'dim-pill-c';
+  return `<span class="${cls}">${escapeHtml(dim)}</span>`;
+}
+
+function renderDictTable(){
+  const items=_filteredConcepts();
+  const total=_concepts.length;
   const rows=items.length?items.map(c=>{
-    const syns=(c.synonyms||[]).slice(0,8).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
-    const more=(c.synonyms||[]).length>8?`<span class="chip">+${(c.synonyms||[]).length-8} more</span>`:'';
+    const syns=(c.synonyms||[]).slice(0,6).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
+    const more=(c.synonyms||[]).length>6?`<span class="chip">+${(c.synonyms||[]).length-6}</span>`:'';
     const at=Array.isArray(c.applies_to_types)&&c.applies_to_types.length
       ?c.applies_to_types.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')
       :'<span class="cell-mute">any</span>';
     const sevPill=`<span class="pill pill-${c.severity}">${c.severity}</span>`;
     const stat=c.enabled?'':'<span class="pill pill-disabled" style="margin-left:6px">disabled</span>';
+    const seedMark=c.is_seed?'<span class="seed-mark" title="Came from the seed defaults">seed</span>':'';
     const param=paramSummary(c.rule_type, c.parameter);
     return `<tr>
-      <td class="mono">${escapeHtml(c.concept)}${stat}</td>
+      <td>${_dimPill(c.dimension)}</td>
+      <td class="mono">${escapeHtml(c.concept)}${seedMark}${stat}</td>
       <td>${syns}${more}</td>
       <td class="mono">${c.rule_type}</td>
       <td class="cell-mute">${param}</td>
@@ -1531,23 +1626,21 @@ function renderDictDimension(dim){
         <button class="tiny" onclick="deleteConcept(${c.id},'${c.concept.replace(/'/g,"\\'")}')">Del</button>
       </td>
     </tr>`;
-  }).join('') : `<tr><td class="empty" colspan="7">No concepts in <strong>${dim}</strong> yet. Click <strong>+ Add concept</strong>.</td></tr>`;
-  $('dict-content').innerHTML=`
-    <div class="card" style="padding:10px 14px;margin-bottom:10px">
-      <span class="dim-back" onclick="backToDictPicker()">← All dimensions</span>
-      <span style="margin-left:14px"><strong style="text-transform:uppercase;letter-spacing:.04em">${dim}</strong></span>
-      <span class="api" style="margin-left:10px">${DIM_BLURB[dim]||''}</span>
-      <span class="dim-count" style="margin-left:auto;float:right">${items.length} concept${items.length!==1?'s':''}</span>
+  }).join('') : `<tr><td class="empty" colspan="8">No concepts match the current filter.</td></tr>`;
+  $('dict-list').innerHTML=`
+    <div class="card" style="padding:10px 14px;margin-bottom:10px;display:flex;align-items:center">
+      <span class="api">Showing <strong>${items.length}</strong> of ${total} concept${total!==1?'s':''}.</span>
     </div>
     <div class="card" style="padding:0">
       <table>
         <thead><tr>
+          <th style="width:120px">Dim</th>
           <th style="width:200px">Concept</th>
           <th>Synonyms</th>
           <th style="width:130px">Rule</th>
           <th style="width:180px">Parameter</th>
           <th style="width:90px">Severity</th>
-          <th style="width:200px">Applies to</th>
+          <th style="width:180px">Applies to</th>
           <th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -2250,10 +2343,17 @@ function openProfileEditor(profileId){
     $('pe-conn').value=p.connection_id;
     $('pe-schema').value=p.schema_name;
     $('pe-table').value=p.table_name;
-    // Source binding is locked after create.
-    ['pe-conn','pe-schema','pe-table','pe-semantic-type'].forEach(id=>$(id).disabled=true);
+    // Source binding (conn/schema/table) is locked after create; the semantic
+    // type lives on t_dq_table_types and stays editable.
+    ['pe-conn','pe-schema','pe-table'].forEach(id=>$(id).disabled=true);
+    $('pe-semantic-type').disabled=false;
     $('pe-source-locked-note').style.display='';
-    $('pe-semantic-type').value='';  // type lookup happens lazily — Edit doesn't show/persist it
+    $('pe-semantic-type').value='';
+    api('GET','/api/v1/products/data-quality/tables/connections/'+p.connection_id)
+      .then(r=>{
+        const row=(r.items||[]).find(it=>it.schema_name===p.schema_name && it.table_name===p.table_name);
+        if(row && row.semantic_type) $('pe-semantic-type').value=row.semantic_type;
+      }).catch(()=>{});
     $('pe-sampling').value=p.sampling_mode||'all';
     $('pe-sample-size').value=p.sample_size||'';
     $('pe-drill').checked=!!p.drill_down;
@@ -2316,6 +2416,19 @@ async function saveProfile(){
   try{
     if(id){
       await api('PUT','/api/v1/products/data-quality/profiles/'+id, body);
+      const stype=$('pe-semantic-type').value;
+      const cid=$('pe-conn').value;
+      const sname=$('pe-schema').value;
+      const tname=$('pe-table').value;
+      try{
+        if(stype){
+          await api('PUT','/api/v1/products/data-quality/tables/connections/'+cid+'/assign',
+            {schema_name:sname, table_name:tname, semantic_type:stype});
+        }else{
+          await api('DELETE','/api/v1/products/data-quality/tables/connections/'+cid+'/assign',
+            {schema_name:sname, table_name:tname});
+        }
+      }catch(e){toast('Profile updated — type tag failed: '+e.message, false)}
       toast('Profile updated');
     }else{
       Object.assign(body,{
@@ -2358,16 +2471,20 @@ async function openProfileDetail(profileId){
 function closeProfileDetail(){
   $('pd-modal').classList.remove('show');
   _pdProfile=null;
+  _pdLiveColumns=[];
+  _pdColSelected=null;
+  pdResetDirty();
 }
 
 function pdSwitch(name){
   _pdActiveTab=name;
-  ['definition','rules','scans','metrics','exceptions','issues'].forEach(n=>{
+  ['definition','columns','rules','scans','metrics','exceptions','issues'].forEach(n=>{
     $('pd-tab-'+n).classList.toggle('active', n===name);
     $('pd-panel-'+n).classList.toggle('hidden', n!==name);
   });
   if(!_pdProfile)return;
   if(name==='definition')  pdRenderDefinition();
+  if(name==='columns')     pdRenderColumns();
   if(name==='rules')       pdRenderRules();
   if(name==='scans')       pdRenderScans();
   if(name==='metrics')     pdRenderMetrics();
@@ -2375,24 +2492,276 @@ function pdSwitch(name){
   if(name==='issues')      pdRenderIssues();
 }
 
+// In-tab editor for the Definition tab. Mirrors the +New profile modal but
+// the source-binding fields stay locked (immutable post-create). Edits flip
+// the top-right Save button on via pdMarkDirty().
 function pdRenderDefinition(){
   const p=_pdProfile;
+  // Pull the current semantic_type tag (lives on t_dq_table_types). Async,
+  // best-effort — the field defaults to "" until the lookup returns.
+  const stypeOptions=['','master_data','transaction','event_log','reference','staging','snapshot']
+    .map(t=>`<option value="${t}">${t||'— unset —'}</option>`).join('');
+  const sampleSizeAttr=p.sampling_mode==='all'?' disabled':'';
   $('pd-panel-definition').innerHTML=`
-    <div class="card" style="padding:14px;margin-bottom:0">
-      <div class="row" style="gap:14px">
+    <div class="card" style="padding:14px;margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:10px">Asset details</div>
+      <div class="row" style="gap:10px">
         <div style="flex:1">
-          <label>Name</label><div class="mono">${p.name}</div>
-          <label>Location</label><div class="cell-mute">${p.location_path||'—'}</div>
-          <label>Description</label><div class="cell-mute">${p.description||'—'}</div>
+          <label>Name *</label>
+          <input type="text" id="pdef-name" value="${escapeHtml(p.name)}" oninput="pdMarkDirty()" style="width:100%">
         </div>
         <div style="flex:1">
-          <label>Connection</label><div class="mono">${p.connection_id}</div>
-          <label>Schema / Table</label><div class="mono">${p.schema_name}.${p.table_name}</div>
-          <label>Sampling</label><div>${p.sampling_mode}${p.sample_size?' · '+p.sample_size.toLocaleString()+' rows':''}</div>
-          <label>Drill-down · AI</label><div>${p.drill_down?'on':'off'} · ${p.ai_enabled?'on':'off'}</div>
+          <label>Location</label>
+          <input type="text" id="pdef-location" value="${escapeHtml(p.location_path||'')}" placeholder="e.g. HEALTH/OPD" oninput="pdMarkDirty()" style="width:100%">
         </div>
       </div>
+      <label style="margin-top:10px">Description</label>
+      <textarea id="pdef-description" oninput="pdMarkDirty()" style="width:100%">${escapeHtml(p.description||'')}</textarea>
+    </div>
+
+    <div class="card" style="padding:14px;margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:10px">Source binding
+        <span class="api">— connection / schema / table are locked. Use Clone to retarget.</span>
+      </div>
+      <div class="row" style="gap:10px">
+        <div style="flex:1">
+          <label>Connection</label>
+          <input type="text" value="${escapeHtml(p.connection_id)}" disabled class="mono" style="width:100%">
+        </div>
+        <div style="flex:1">
+          <label>Schema</label>
+          <input type="text" value="${escapeHtml(p.schema_name)}" disabled class="mono" style="width:100%">
+        </div>
+        <div style="flex:1">
+          <label>Table</label>
+          <input type="text" value="${escapeHtml(p.table_name)}" disabled class="mono" style="width:100%">
+        </div>
+      </div>
+      <div class="row" style="gap:10px;margin-top:8px">
+        <div style="flex:1">
+          <label>Semantic type
+            <span class="api">— gates which rules the matcher proposes for this table.</span>
+          </label>
+          <select id="pdef-semantic-type" onchange="pdMarkDirty()" style="width:100%">${stypeOptions}</select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:14px">
+      <div style="font-weight:600;margin-bottom:10px">Profile settings</div>
+      <div class="row" style="gap:10px">
+        <div style="flex:1">
+          <label>Sampling</label>
+          <select id="pdef-sampling" onchange="pdSyncSampling();pdMarkDirty()" style="width:100%">
+            <option value="all"${p.sampling_mode==='all'?' selected':''}>All rows (full analysis)</option>
+            <option value="first_n"${p.sampling_mode==='first_n'?' selected':''}>First N rows (fast)</option>
+            <option value="random"${p.sampling_mode==='random'?' selected':''}>Random N rows</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <label>Sample size</label>
+          <input type="number" id="pdef-sample-size" min="1" step="1" value="${p.sample_size||''}"${sampleSizeAttr} oninput="pdMarkDirty()" style="width:100%">
+        </div>
+      </div>
+      <div class="row" style="gap:14px;margin-top:10px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="pdef-drill"${p.drill_down?' checked':''} onchange="pdMarkDirty()"> Drill-down (sample violators on demand)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="pdef-ai"${p.ai_enabled?' checked':''} onchange="pdMarkDirty()"> AI matcher fallback when fuzzy fails
+        </label>
+      </div>
     </div>`;
+
+  // Cleared by render — Save shouldn't show as dirty just because we re-rendered.
+  pdResetDirty();
+
+  // Pull current semantic_type from the table-types endpoint and pre-select.
+  api('GET','/api/v1/products/data-quality/tables/connections/'+p.connection_id)
+    .then(r=>{
+      const row=(r.items||[]).find(it=>it.schema_name===p.schema_name && it.table_name===p.table_name);
+      const sel=$('pdef-semantic-type');
+      if(sel) sel.value=(row && row.semantic_type) || '';
+      // Stash the loaded value so the Save handler can detect a change.
+      _pdProfile._loadedSemanticType=sel?sel.value:'';
+    }).catch(()=>{});
+}
+
+function pdSyncSampling(){
+  const mode=$('pdef-sampling').value;
+  $('pdef-sample-size').disabled=(mode==='all');
+}
+
+// ---- Columns tab (per-profile column-subset selection, migration 026) ----
+// Edits live in _pdColSelected (Set<string>) until Save flushes them to
+// the profile via PUT. NULL on the profile = "all columns" — initially
+// we mirror that by checking everything; the Save handler turns the Set
+// into an array (or NULL when every live column is checked).
+let _pdLiveColumns=[];   // [{name, data_type, nullable, ordinal}, ...]
+let _pdColSelected=null; // Set<string> | null (null = "not loaded yet")
+
+async function pdRenderColumns(){
+  const p=_pdProfile;
+  $('pd-panel-columns').innerHTML=`
+    <div class="card" style="padding:14px;margin-bottom:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <strong>Columns to profile</strong>
+        <span class="api" id="pdcol-count">— Selected 0 of 0</span>
+        <span class="api" id="pdcol-mode" style="margin-left:auto"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <input type="search" id="pdcol-search" placeholder="Filter columns…"
+               oninput="pdColRender()" style="flex:1">
+        <button class="tiny" onclick="pdColToggleAll(true)">Select all (filtered)</button>
+        <button class="tiny" onclick="pdColToggleAll(false)">Clear all</button>
+        <button class="alt tiny" onclick="pdColResetToAll()" title="Mark every live column as selected (the default 'all columns' behavior)">Reset to all</button>
+      </div>
+      <div id="pdcol-list" style="border:1px solid var(--line);border-radius:6px;overflow:hidden">
+        <div class="api" style="padding:14px">Loading columns from <span class="mono">${escapeHtml(p.schema_name)}.${escapeHtml(p.table_name)}</span>…</div>
+      </div>
+      <p class="api" style="margin:10px 0 0">
+        Unticked columns are skipped at scan time. Leaving every column ticked
+        is identical to <strong>all columns</strong> mode (the default for legacy profiles).
+        Changes don't take effect until you click <strong>Save</strong> — and apply on the next <strong>Run</strong>.
+      </p>
+    </div>`;
+  try{
+    const url=`/api/v1/products/data-quality/tables/connections/${p.connection_id}/preview?schema_name=${encodeURIComponent(p.schema_name)}&table_name=${encodeURIComponent(p.table_name)}&limit=1`;
+    const r=await api('GET',url);
+    _pdLiveColumns=r.columns||[];
+    // Seed _pdColSelected from the saved profile state.
+    //   selected_columns=null  → all live columns checked (legacy/default)
+    //   selected_columns=[]    → none checked (degenerate but legal)
+    //   selected_columns=list  → exactly those names checked (intersected
+    //                            with live set; missing ones drop silently)
+    if(p.selected_columns==null){
+      _pdColSelected=new Set(_pdLiveColumns.map(c=>c.name));
+    }else{
+      const live=new Set(_pdLiveColumns.map(c=>c.name));
+      _pdColSelected=new Set((p.selected_columns||[]).filter(n=>live.has(n)));
+    }
+    pdColRender();
+  }catch(e){
+    $('pdcol-list').innerHTML=`<div class="api" style="padding:14px;color:var(--err)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function pdColRender(){
+  if(!_pdColSelected)return;
+  const q=($('pdcol-search').value||'').trim().toLowerCase();
+  const filtered=q?_pdLiveColumns.filter(c=>c.name.toLowerCase().includes(q)):_pdLiveColumns;
+  const sel=_pdColSelected.size;
+  const total=_pdLiveColumns.length;
+  $('pdcol-count').textContent=`— Selected ${sel} of ${total}`;
+  // Mode hint: helps users understand what gets persisted.
+  const allChecked=(sel===total && total>0);
+  $('pdcol-mode').innerHTML=allChecked
+    ? `<span class="pill pill-no_rules">all columns</span>`
+    : (sel===0
+        ? `<span class="pill pill-not_acceptable">none — scan will fail</span>`
+        : `<span class="pill pill-acceptable">subset (${sel})</span>`);
+  if(!_pdLiveColumns.length){
+    $('pdcol-list').innerHTML='<div class="api" style="padding:14px">No columns returned from the source.</div>';
+    return;
+  }
+  const rows=filtered.map(c=>{
+    const checked=_pdColSelected.has(c.name)?' checked':'';
+    return `<label style="display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid #f1f5f9;font-size:12px">
+      <input type="checkbox" value="${escapeHtml(c.name)}"${checked} onchange="pdColToggleOne(this.value, this.checked)">
+      <span class="cell-mute" style="width:30px;text-align:right">${c.ordinal??''}</span>
+      <span class="mono" style="flex:1">${escapeHtml(c.name)}</span>
+      <span class="cell-mute" style="font-size:11px;width:140px">${escapeHtml(c.data_type||'')}</span>
+      <span class="cell-mute" style="font-size:11px;width:60px">${c.nullable?'nullable':'not null'}</span>
+    </label>`;
+  }).join('') || '<div class="api" style="padding:14px">No columns match the filter.</div>';
+  $('pdcol-list').innerHTML=rows;
+}
+
+function pdColToggleOne(name, on){
+  if(on) _pdColSelected.add(name); else _pdColSelected.delete(name);
+  pdColRender();
+  pdMarkDirty();
+}
+
+function pdColToggleAll(on){
+  // Respects the search filter — same UX as the bind-modal version.
+  const q=($('pdcol-search').value||'').trim().toLowerCase();
+  const visible=q?_pdLiveColumns.filter(c=>c.name.toLowerCase().includes(q)):_pdLiveColumns;
+  for(const c of visible){
+    if(on) _pdColSelected.add(c.name); else _pdColSelected.delete(c.name);
+  }
+  pdColRender();
+  pdMarkDirty();
+}
+
+function pdColResetToAll(){
+  if(!_pdLiveColumns.length)return;
+  _pdColSelected=new Set(_pdLiveColumns.map(c=>c.name));
+  pdColRender();
+  pdMarkDirty();
+}
+
+// ---- Dirty / Save ----
+function pdMarkDirty(){
+  $('pd-btn-save').disabled=false;
+  $('pd-dirty-dot').classList.remove('hidden');
+}
+function pdResetDirty(){
+  $('pd-btn-save').disabled=true;
+  $('pd-dirty-dot').classList.add('hidden');
+}
+
+async function pdSaveDefinition(){
+  if(!_pdProfile)return;
+  const samplingMode=$('pdef-sampling').value;
+  let sampleSize=null;
+  if(samplingMode!=='all'){
+    const v=parseInt($('pdef-sample-size').value,10);
+    if(isNaN(v)||v<=0){toast('Sample size must be a positive integer',false);return}
+    sampleSize=v;
+  }
+  const body={
+    name: $('pdef-name').value.trim(),
+    description: $('pdef-description').value.trim()||null,
+    location_path: $('pdef-location').value.trim()||null,
+    sampling_mode: samplingMode,
+    sample_size: sampleSize,
+    drill_down: $('pdef-drill').checked,
+    ai_enabled: $('pdef-ai').checked,
+  };
+  // Columns tab edits — only include if the user actually loaded the
+  // Columns tab (otherwise we don't have a Set to flush). Sending an
+  // empty list would clobber the profile to "scan nothing".
+  if(_pdColSelected){
+    body.selected_columns=Array.from(_pdColSelected);
+  }
+  try{
+    const updated=await api('PUT','/api/v1/products/data-quality/profiles/'+_pdProfile.id, body);
+    // Persist semantic-type tag too (lives on t_dq_table_types). Skip the
+    // round-trip when the value didn't change.
+    const stype=$('pdef-semantic-type').value;
+    if(stype !== (_pdProfile._loadedSemanticType||'')){
+      try{
+        if(stype){
+          await api('PUT','/api/v1/products/data-quality/tables/connections/'+_pdProfile.connection_id+'/assign',
+            {schema_name:_pdProfile.schema_name, table_name:_pdProfile.table_name, semantic_type:stype});
+        }else{
+          await api('DELETE','/api/v1/products/data-quality/tables/connections/'+_pdProfile.connection_id+'/assign',
+            {schema_name:_pdProfile.schema_name, table_name:_pdProfile.table_name});
+        }
+        _pdProfile._loadedSemanticType=stype;
+      }catch(e){toast('Profile saved — type tag failed: '+e.message, false)}
+    }
+    // Refresh the in-memory profile so subsequent renders see the new values.
+    if(updated && updated.profile){
+      Object.assign(_pdProfile, updated.profile);
+      $('pd-title').textContent=_pdProfile.name;
+      $('pd-meta').textContent=`${_pdProfile.schema_name}.${_pdProfile.table_name} · sampling=${_pdProfile.sampling_mode}${_pdProfile.sample_size?'/'+_pdProfile.sample_size:''}`;
+    }
+    toast('Saved');
+    pdResetDirty();
+    loadProfiles();  // refresh the outer list (name / sampling may have changed)
+  }catch(e){toast(e.message,false)}
 }
 
 async function pdRenderRules(){
@@ -2406,30 +2775,63 @@ async function pdRenderRules(){
         const stat=statusBadge(r.approval_status);
         const conf=`<span class="pill" style="background:#e0e7ff;color:#3730a3">${r.confidence}</span>`;
         const why=r.matcher_reasoning?trunc(r.matcher_reasoning,55):'—';
+        // Surface where the rule came from. matcher = fuzzy/llm = auto;
+        // manual = the user hand-bound it via the Bind concept modal.
+        const sourceBy=(r.matched_by||'').toLowerCase();
+        const sourceCls=sourceBy==='manual'?'pill-good':'pill-no_rules';
+        const sourceLbl=sourceBy==='manual'?'manual':(sourceBy==='llm'?'matcher · llm':(sourceBy==='fuzzy'?'matcher · fuzzy':'matcher'));
+        const sourcePill=`<span class="pill ${sourceCls}" title="How this rule was bound to the column">${sourceLbl}</span>`;
         return `<tr>
           <td class="mono">${r.column_name}</td>
           <td class="cell-mute">${r.c_dimension}</td>
           <td>${r.c_concept} ${sev}</td>
           <td class="mono">${r.c_rule_type}</td>
+          <td>${sourcePill}</td>
           <td>${conf}</td>
           <td>${stat}</td>
           <td class="cell-mute" title="${(r.matcher_reasoning||'').replace(/"/g,'&quot;')}">${why}</td>
           <td style="white-space:nowrap">${ruleActions(r)}</td>
         </tr>`;
       }).join('')
-      :'<tr><td class="empty" colspan="8">No rules yet. Run the matcher to propose rules.</td></tr>';
+      :'<tr><td class="empty" colspan="9">No rules yet. Run the matcher to propose rules, or click <strong>+ Bind concept</strong> to hand-bind one.</td></tr>';
+
+    // Detect columns where BOTH a completeness rule AND a validity (or
+    // uniqueness) rule are bound. On those, naïvely you'd expect a NULL
+    // to fail both — the validator skips NULL/pseudo-nulls in
+    // validity/uniqueness so it doesn't. Surface this here so users
+    // don't have to trust it blindly.
+    const dimsByCol={};
+    for(const r of items){
+      const d=dimsByCol[r.column_name] || (dimsByCol[r.column_name]={});
+      d[r.c_dimension]=true;
+    }
+    const collidingCols=Object.entries(dimsByCol)
+      .filter(([,d]) => d.completeness && (d.validity || d.uniqueness))
+      .map(([c]) => c);
+    const nullNote=collidingCols.length
+      ? `<div style="padding:0 14px 10px"><p class="api" style="margin:0;padding:8px 10px;background:#eff6ff;border-left:3px solid var(--blue);border-radius:4px;font-size:11.5px;color:#1e3a8a">
+          <strong>How NULLs are counted:</strong>
+          <span class="mono">${collidingCols.slice(0,4).map(escapeHtml).join('</span>, <span class="mono">')}</span>${collidingCols.length>4?` and ${collidingCols.length-4} more`:''}
+          ${collidingCols.length===1?'has':'have'} both completeness and validity/uniqueness rules bound.
+          NULL rows and pseudo-null tokens (<span class="mono">"null"</span>, <span class="mono">"N/A"</span>, <span class="mono">"-"</span>…)
+          are counted only by the completeness rule — validity/uniqueness skip them.
+          One missing value never produces two issues.
+        </p></div>`
+      : '';
     $('pd-panel-rules').innerHTML=`
       <div style="padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="tiny" onclick="openBindModal()" title="Hand-bind a concept to a column on this profile">+ Add rule</button>
+        <button class="tiny" onclick="openBindModal()" title="Pick a concept and apply it to one or more columns on this profile">+ Bind concept</button>
         <span class="api">·</span>
         <button class="alt tiny" onclick="pdMatcherPreview()">Preview matcher</button>
         <button class="alt tiny" onclick="pdMatcherApply()">Apply matcher</button>
-        <span class="api" style="margin-left:auto">Manual rules survive matcher re-applies (the matcher won't overwrite them).</span>
+        <span class="api" style="margin-left:auto">Manual bindings survive matcher re-applies (the matcher won't overwrite them).</span>
       </div>
+      ${nullNote}
       <table>
         <thead><tr>
           <th>Column</th><th style="width:90px">Dim</th>
           <th>Concept</th><th style="width:110px">Rule</th>
+          <th style="width:110px">Source</th>
           <th style="width:80px">Conf</th>
           <th style="width:130px">Status</th>
           <th>Why</th>
@@ -2440,7 +2842,10 @@ async function pdRenderRules(){
   }catch(e){$('pd-panel-rules').innerHTML=`<div class="api" style="padding:10px;color:var(--err)">${e.message}</div>`}
 }
 
-// ---- Manual rule binding ----
+// ---- Manual rule binding (one concept → many columns) ----
+let _bindColumns=[];           // [{name, data_type}, ...] from live source
+let _bindSelected=new Set();   // column names currently checked
+
 async function openBindModal(){
   if(!_pdProfile)return;
   // Pre-load concepts list (cheap; cached in _concepts most of the time).
@@ -2450,22 +2855,22 @@ async function openBindModal(){
       _concepts=r.items||[];
     }catch(e){toast(e.message,false);return}
   }
-  // Pull live columns from the profile's source table so the user picks
-  // from real names rather than typing.
   $('bind-meta').textContent=`${_pdProfile.schema_name}.${_pdProfile.table_name}`;
-  $('bind-column').innerHTML='<option value="">Loading columns…</option>';
   $('bind-dimension').value='';
+  $('bind-col-search').value='';
+  _bindColumns=[];
+  _bindSelected=new Set();
   bindRefreshConcepts();
+  $('bind-col-list').innerHTML='<div class="api" style="padding:8px">Loading columns…</div>';
+  bindUpdateCount();
   $('bind-modal').classList.add('show');
   try{
     const url=`/api/v1/products/data-quality/tables/connections/${_pdProfile.connection_id}/preview?schema_name=${encodeURIComponent(_pdProfile.schema_name)}&table_name=${encodeURIComponent(_pdProfile.table_name)}&limit=1`;
     const r=await api('GET',url);
-    const cols=r.columns||[];
-    $('bind-column').innerHTML=cols.length
-      ?cols.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} — ${escapeHtml(c.data_type||'')}</option>`).join('')
-      :'<option value="">— no columns —</option>';
+    _bindColumns=r.columns||[];
+    bindRenderColumns();
   }catch(e){
-    $('bind-column').innerHTML=`<option value="">${escapeHtml(e.message)}</option>`;
+    $('bind-col-list').innerHTML=`<div class="api" style="padding:8px;color:var(--err)">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -2477,18 +2882,69 @@ function bindRefreshConcepts(){
     :'<option value="">— no enabled concepts in this dimension —</option>';
 }
 
+function bindRenderColumns(){
+  const q=($('bind-col-search').value||'').trim().toLowerCase();
+  const filtered=q?_bindColumns.filter(c=>c.name.toLowerCase().includes(q)):_bindColumns;
+  if(!_bindColumns.length){
+    $('bind-col-list').innerHTML='<div class="api" style="padding:8px">— no columns —</div>';
+    return;
+  }
+  $('bind-col-list').innerHTML=filtered.map(c=>{
+    const checked=_bindSelected.has(c.name)?' checked':'';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px solid #f1f5f9;font-size:12px">
+      <input type="checkbox" value="${escapeHtml(c.name)}"${checked} onchange="bindToggleColumn(this.value, this.checked)">
+      <span class="mono" style="flex:1">${escapeHtml(c.name)}</span>
+      <span class="cell-mute" style="font-size:11px">${escapeHtml(c.data_type||'')}</span>
+    </label>`;
+  }).join('') || '<div class="api" style="padding:8px">No columns match the filter.</div>';
+  bindUpdateCount();
+}
+
+function bindToggleColumn(name, on){
+  if(on) _bindSelected.add(name); else _bindSelected.delete(name);
+  bindUpdateCount();
+}
+
+function bindToggleAllColumns(on){
+  // Toggles only what's currently visible (respects the search filter).
+  const q=($('bind-col-search').value||'').trim().toLowerCase();
+  const visible=q?_bindColumns.filter(c=>c.name.toLowerCase().includes(q)):_bindColumns;
+  for(const c of visible){
+    if(on) _bindSelected.add(c.name); else _bindSelected.delete(c.name);
+  }
+  bindRenderColumns();
+}
+
+function bindUpdateCount(){
+  const total=_bindColumns.length;
+  const sel=_bindSelected.size;
+  $('bind-col-count').textContent=`— Selected ${sel} of ${total}`;
+  $('bind-save-btn').disabled=(sel===0);
+}
+
 function closeBindModal(){$('bind-modal').classList.remove('show')}
 
 async function saveBindManual(){
-  const col=$('bind-column').value;
   const cid=parseInt($('bind-concept').value,10);
-  if(!col){toast('Pick a column',false);return}
   if(!cid){toast('Pick a concept',false);return}
+  if(_bindSelected.size===0){toast('Pick at least one column',false);return}
+  const cols=Array.from(_bindSelected);
+  // POST one binding per column. Run in parallel since the manual endpoint
+  // is a simple upsert (no LLM involvement).
   try{
-    await api('POST','/api/v1/products/data-quality/active-rules/manual',{
-      profile_id:_pdProfile.id, column_name:col, concept_id:cid,
-    });
-    toast('Rule bound');
+    const results=await Promise.all(cols.map(col=>
+      api('POST','/api/v1/products/data-quality/active-rules/manual',{
+        profile_id:_pdProfile.id, column_name:col, concept_id:cid,
+      }).then(()=>({col, ok:true})).catch(e=>({col, ok:false, err:e.message}))
+    ));
+    const ok=results.filter(r=>r.ok).length;
+    const fail=results.length-ok;
+    if(fail===0){
+      toast(`Bound to ${ok} column${ok!==1?'s':''}`);
+    }else{
+      toast(`Bound to ${ok}/${results.length} (${fail} failed) — see console`, false);
+      console.warn('Manual bind failures:', results.filter(r=>!r.ok));
+    }
     closeBindModal();
     pdRenderRules();
   }catch(e){toast(e.message,false)}
@@ -2864,7 +3320,9 @@ async function pdRunScan(){
     setTimeout(()=>{ if(_pdActiveTab==='scans') pdRenderScans(); }, 1500);
   }catch(e){toast(e.message,false)}
 }
-function pdEdit(){if(_pdProfile){closeProfileDetail();openProfileEditor(_pdProfile.id)}}
+// Definition tab is editable in-place; this shim stays only for any
+// stray callers (e.g. the breadcrumb on the Sources tab).
+function pdEdit(){pdSwitch('definition')}
 async function pdClone(){
   const newName=prompt('Clone profile as:', _pdProfile.name+' (copy)');
   if(!newName)return;

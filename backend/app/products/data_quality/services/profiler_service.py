@@ -220,6 +220,19 @@ def _stringify_for_pattern(value: Any) -> str:
     return str(value)
 
 
+def _stringify_min_max(value: Any) -> str | None:
+    """ISO-stringify a MIN/MAX result for persistence into min_text/max_text.
+    Returns None for null inputs so the column distinguishes "no data" from
+    "empty string". Capped at 200 chars to avoid pathologically long rows."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return None
+    return str(value)[:200]
+
+
 def _tokenize_pattern(s: str) -> str:
     """Replace upper letters with 'A', lower with 'a', digits with '9'; keep
     punctuation/spaces as separators. Empty string for empty input."""
@@ -541,6 +554,32 @@ class ProfilerService:
                     f"No columns found for {scan['schema_name']}.{scan['table_name']}"
                 )
 
+            # Per-profile column-subset filter (migration 026). NULL = scan
+            # everything (current default for legacy profiles). Empty list =
+            # explicit "scan nothing" — error rather than silently no-op.
+            # Non-empty list = intersect with the live information_schema
+            # list, so a column the user picked but that no longer exists in
+            # the source is silently skipped.
+            selected = (asset or {}).get("selected_columns")
+            if selected is not None:
+                if not selected:
+                    raise RuntimeError(
+                        "Profile has selected_columns=[] (zero columns picked). "
+                        "Edit the Columns tab and pick at least one column."
+                    )
+                wanted = {c for c in selected}
+                before = len(columns)
+                columns = [c for c in columns if c["name"] in wanted]
+                logger.info(
+                    "Scan %s column subset: %d/%d columns kept (profile.selected_columns)",
+                    scan_id, len(columns), before,
+                )
+                if not columns:
+                    raise RuntimeError(
+                        "Profile's selected_columns matches no live source columns. "
+                        "The source schema may have changed — review the Columns tab."
+                    )
+
             # Build the FROM-clause expression once. With sampling, every
             # aggregate operates on the same LIMIT-bounded subquery — within
             # a single column's queries the sample is consistent, and across
@@ -729,6 +768,8 @@ class ProfilerService:
             # tokenizes each, persists ONLY the resulting signatures + counts.
             # Raw values are discarded when this function returns.
             await self._compute_pattern_signature(gateway, profile, qcol, qtable)
+        elif category == "datetime":
+            await self._compute_text_min_max(gateway, profile, qcol, qtable)
 
         profile["inferred_column_type"] = _infer_column_type(profile)
         return profile
@@ -838,6 +879,25 @@ class ProfilerService:
             profile["avg_length"] = float(lavg) if lavg is not None else None
         except (TypeError, ValueError):
             profile["avg_length"] = None
+
+        # Alphabetical min/max — same single-row leak class as numeric min/max
+        # (see migration 025 header). Stored in min_text / max_text.
+        await self._compute_text_min_max(gateway, profile, qcol, qtable)
+
+    async def _compute_text_min_max(
+        self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str,
+    ) -> None:
+        """MIN/MAX for non-numeric columns. For dates the DB returns a
+        datetime/date object; ISO-stringify so a single TEXT column fits all
+        types. Persisted into min_text / max_text (migration 025)."""
+        sql = f"SELECT MIN({qcol}) AS mn, MAX({qcol}) AS mx FROM {qtable}"
+        result = await gateway.execute_query(sql)
+        if not result.success or not result.data or not result.data["rows"]:
+            logger.debug("text min/max failed for %s: %s", qcol, result.error)
+            return
+        mn, mx = (result.data["rows"][0] + [None, None])[:2]
+        profile["min_text"] = _stringify_min_max(mn)
+        profile["max_text"] = _stringify_min_max(mx)
 
     async def _compute_pseudo_null(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,

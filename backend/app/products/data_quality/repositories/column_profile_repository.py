@@ -28,7 +28,8 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                    p25_value, p75_value, p95_value,
                    min_length, max_length, avg_length,
                    dominant_pattern, pattern_conformance_rate, top_patterns,
-                   inferred_column_type, raw_metrics)
+                   inferred_column_type, raw_metrics,
+                   min_text, max_text)
                VALUES ($1, $2, $3, $4, $5,
                        $6, $7, $8, $9,
                        $10, $11, $12, $13,
@@ -39,7 +40,8 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                        $23, $24, $25,
                        $26, $27, $28,
                        $29, $30, $31::jsonb,
-                       $32, $33::jsonb)
+                       $32, $33::jsonb,
+                       $34, $35)
                ON CONFLICT (scan_id, column_name) DO UPDATE SET
                    ordinal_position         = EXCLUDED.ordinal_position,
                    declared_data_type       = EXCLUDED.declared_data_type,
@@ -67,7 +69,9 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                    pattern_conformance_rate = EXCLUDED.pattern_conformance_rate,
                    top_patterns             = EXCLUDED.top_patterns,
                    inferred_column_type     = EXCLUDED.inferred_column_type,
-                   raw_metrics              = EXCLUDED.raw_metrics""",
+                   raw_metrics              = EXCLUDED.raw_metrics,
+                   min_text                 = EXCLUDED.min_text,
+                   max_text                 = EXCLUDED.max_text""",
             (
                 scan_id, tenant_id, connection_id, schema_name, table_name,
                 profile["column_name"], profile.get("ordinal_position"),
@@ -88,6 +92,7 @@ class ColumnProfileRepository(PostgresqlAsyncRepository):
                 json.dumps(profile.get("top_patterns") or []),
                 profile.get("inferred_column_type"),
                 json.dumps(profile.get("raw_metrics") or {}),
+                profile.get("min_text"), profile.get("max_text"),
             ),
         )
 

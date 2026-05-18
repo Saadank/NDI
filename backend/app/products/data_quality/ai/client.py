@@ -98,7 +98,13 @@ class OllamaClient(LlmClient):
     and Ollama runs on the Windows/Mac host).
     """
 
-    def __init__(self, base_url: str, model: str, default_timeout_s: float = 90.0,
+    # Default loaded context for the small-context Ollama models is 4096 — too
+    # tight once the dictionary grows past ~15 concepts (system prompt +
+    # concept JSON + per-column user prompt overflows). Bumping to 8192
+    # roughly doubles per-token cost but keeps the prompt unwrapped.
+    NUM_CTX = 8192
+
+    def __init__(self, base_url: str, model: str, default_timeout_s: float = 45.0,
                  default_max_tokens: int = 1024) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -139,6 +145,7 @@ class OllamaClient(LlmClient):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_t,
+                "num_ctx": self.NUM_CTX,
             },
         }
         if json_mode:
