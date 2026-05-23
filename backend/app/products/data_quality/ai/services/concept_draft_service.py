@@ -16,8 +16,11 @@ from __future__ import annotations
 import hashlib
 import logging
 
+import re
+
 from app.products.data_quality.ai.client import get_llm_client
 from app.products.data_quality.ai.prompts import concept_draft as prompt
+from app.products.data_quality.ai.prompts import regex_draft as regex_prompt
 from app.products.data_quality.ai.repositories.llm_call_repository import (
     LlmCallRepository,
 )
@@ -38,6 +41,7 @@ from app.utils.exceptions import ValidationException
 logger = logging.getLogger(__name__)
 
 _PURPOSE = "concept_draft"
+_PURPOSE_REGEX = "regex_draft"
 _VALID_DIMENSIONS = {"completeness", "validity", "uniqueness"}
 
 
@@ -146,18 +150,101 @@ class ConceptDraftService:
             "output_tokens": result.output_tokens,
         }
 
+    async def draft_regex(
+        self, *, nl_text: str, concept_name: str | None,
+        current_pattern: str | None, auth_user: AuthUser,
+    ) -> dict:
+        """Generate just a regex pattern (+ examples) from a NL description.
+        Used by the Edit-concept modal's 'Ask AI' button to fill the Regex
+        pattern field for an existing format_regex concept."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        if not nl_text or not nl_text.strip():
+            raise ValidationException("nl_text is required")
+        if len(nl_text) > 2000:
+            raise ValidationException("nl_text too long (max 2000 chars)")
+
+        client = get_llm_client()
+        if client is None:
+            return {
+                "status": "llm_unavailable",
+                "error": "DQ_LLM_PROVIDER not configured or LLM unreachable",
+            }
+
+        safe_text = pii_anonymizer.anonymize_text(nl_text)
+        system = regex_prompt.system_prompt()
+        user = regex_prompt.user_prompt(safe_text, concept_name, current_pattern)
+
+        result = await client.call(
+            system=system, user=user,
+            json_mode=True, max_tokens=512, temperature=0.2,
+        )
+
+        prompt_hash = hashlib.sha256(
+            (system + "\n---\n" + user).encode("utf-8")
+        ).hexdigest()
+        response_hash = (
+            hashlib.sha256(result.text.encode("utf-8")).hexdigest()
+            if result.text else None
+        )
+
+        if not result.success:
+            await self._audit(auth_user, result, status="api_error",
+                              prompt_hash=prompt_hash, response_hash=response_hash,
+                              purpose=_PURPOSE_REGEX,
+                              prompt_version=regex_prompt.PROMPT_VERSION)
+            return {"status": "llm_error", "error": result.error,
+                    "latency_ms": result.latency_ms}
+
+        model, err = validate_response(_PURPOSE_REGEX, result.parsed_json)
+        if err is not None or model is None:
+            await self._audit(auth_user, result, status="validator_failed",
+                              error=err, prompt_hash=prompt_hash,
+                              response_hash=response_hash,
+                              purpose=_PURPOSE_REGEX,
+                              prompt_version=regex_prompt.PROMPT_VERSION)
+            return {"status": "invalid_response", "error": err,
+                    "raw": result.text[:400], "latency_ms": result.latency_ms}
+
+        # Defence in depth — make sure the regex actually compiles in Python.
+        # (The frontend will also try it in the JS engine before saving.)
+        try:
+            re.compile(model.pattern)
+        except re.error as e:
+            await self._audit(auth_user, result, status="validator_failed",
+                              error=f"regex compile failed: {e}",
+                              prompt_hash=prompt_hash,
+                              response_hash=response_hash,
+                              purpose=_PURPOSE_REGEX,
+                              prompt_version=regex_prompt.PROMPT_VERSION)
+            return {"status": "invalid_response",
+                    "error": f"LLM returned an invalid regex: {e}",
+                    "latency_ms": result.latency_ms}
+
+        await self._audit(auth_user, result, status="ok",
+                          prompt_hash=prompt_hash, response_hash=response_hash,
+                          purpose=_PURPOSE_REGEX,
+                          prompt_version=regex_prompt.PROMPT_VERSION)
+        return {
+            "status": "ok",
+            "draft": model.model_dump(),
+            "latency_ms": result.latency_ms,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+        }
+
     async def _audit(
         self, auth_user: AuthUser, result, *,
         status: str, error: str | None = None,
         prompt_hash: str | None, response_hash: str | None,
+        purpose: str | None = None, prompt_version: int | None = None,
     ) -> None:
         """Best-effort audit log — never fails the user-facing call."""
         try:
             await self.audit.insert(
                 tenant_id=auth_user.tenant_id,
-                purpose=_PURPOSE,
+                purpose=purpose or _PURPOSE,
                 model=result.model or "unknown",
-                prompt_version=prompt.PROMPT_VERSION,
+                prompt_version=prompt_version if prompt_version is not None else prompt.PROMPT_VERSION,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
                 cache_read_tokens=result.cache_read_tokens,

@@ -151,7 +151,7 @@ def kc_set_attributes(token, user_id, attributes, profile=None):
 
 def sql(query):
     result = subprocess.run(
-        ["docker", "exec", "datasharing-1st-postgres-1",
+        ["docker", "exec", "ndi-postgres-1",
          "psql", "-U", "dsplatform", "-d", "datasharing_dev", "-c", query],
         capture_output=True, text=True,
     )

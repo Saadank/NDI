@@ -107,3 +107,15 @@ async def seed_defaults(
     Concepts that already exist (by dimension + name) are left untouched —
     user edits are preserved."""
     return await service.seed_defaults(auth_user)
+
+
+@router.post("/refresh-seeded")
+async def refresh_seeded(
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ConceptService = Depends(get_concept_service),
+):
+    """Re-apply the current seed file to all is_seed=TRUE concepts: inserts
+    missing concepts and overwrites stale fields (e.g. regex patterns added
+    after the original install). Customized concepts (is_seed=FALSE) are
+    skipped."""
+    return await service.refresh_seeded(auth_user)

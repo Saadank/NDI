@@ -112,6 +112,47 @@
   .dim-pill-v{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;background:#fef3c7;color:#92400e}
   .dim-pill-u{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;background:#e0e7ff;color:#3730a3}
   .seed-mark{display:inline-block;font-size:10px;color:var(--mute);margin-left:6px;font-weight:400}
+  /* ---- expandable dictionary rows ---- */
+  .dict-row{cursor:pointer}
+  .dict-row:hover{background:#f8fafc}
+  .dict-row.expanded{background:#f1f5f9}
+  .dict-chevron{display:inline-block;width:10px;color:var(--mute);transition:transform .15s ease;font-size:9px;margin-right:4px}
+  .dict-chevron.expanded{transform:rotate(90deg)}
+  .dict-detail-row > td{background:#f8fafc;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .dict-detail{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;font-size:12px;max-width:900px}
+  .dict-detail .k{color:var(--mute);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em;padding-top:5px}
+  .dict-detail .v{color:var(--ink);word-break:break-word}
+  .dict-detail .v.regex-box{font-family:ui-monospace,monospace;background:#fff;padding:6px 10px;border:1px solid var(--line);border-radius:4px;font-size:12px;user-select:all}
+  /* ---- regex tester in concept modal ---- */
+  .regex-tester{margin-top:10px;border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#f8fafc}
+  .regex-tester > label{margin-top:0;margin-bottom:6px}
+  .regex-tester textarea{min-height:70px;font-family:ui-monospace,monospace;font-size:12px;background:#fff;width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:6px;resize:vertical}
+  .rt-results{margin-top:8px;font-family:ui-monospace,monospace;font-size:11.5px;max-height:160px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:4px;padding:4px}
+  .rt-line{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:3px}
+  .rt-line.pass{background:#dcfce7;color:#166534}
+  .rt-line.fail{background:#fee2e2;color:#991b1b}
+  .rt-line.empty{background:transparent;color:var(--mute);font-style:italic}
+  .rt-mark{font-weight:700;width:14px;text-align:center;flex-shrink:0}
+  .rt-text{white-space:pre;overflow-x:auto}
+  /* ---- Ask-AI inline panel inside the Edit modal ---- */
+  .ai-label-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px}
+  .ai-label-row > label{margin:0;padding:0}
+  .ai-toggle-btn{background:#fff;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer}
+  .ai-toggle-btn:hover{background:#eff6ff}
+  .ai-toggle-btn.active{background:var(--blue);color:#fff}
+  .ai-panel{margin-top:8px;border:1px solid #c7d2fe;border-radius:6px;padding:10px 12px;background:#eef2ff}
+  .ai-panel textarea{min-height:50px;font-size:12px;width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:6px;resize:vertical;background:#fff}
+  .ai-panel-actions{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .ai-panel-actions .api{margin-left:auto}
+  .ai-result{margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px 12px;font-size:12px}
+  .ai-result .ai-pattern{font-family:ui-monospace,monospace;background:#f8fafc;padding:5px 8px;border:1px solid var(--line);border-radius:4px;word-break:break-all;margin:4px 0 8px}
+  .ai-result .ai-explain{color:var(--ink);margin-bottom:6px}
+  .ai-result .ai-examples{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+  .ai-result .ai-examples > div{background:#f8fafc;border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-family:ui-monospace,monospace;font-size:11.5px}
+  .ai-result .ai-examples .ai-ex-head{font-family:inherit;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+  .ai-result .ai-examples .ai-pass .ai-ex-head{color:#166534}
+  .ai-result .ai-examples .ai-fail .ai-ex-head{color:#991b1b}
+  .ai-result .ai-use-btn{margin-top:10px}
   /* ---- table preview (sample rows) ---- */
   .preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .preview-cols-card{padding:0}
@@ -402,6 +443,9 @@
           </div>
           <div style="flex:0">
             <button class="alt" onclick="seedDefaults()">Seed defaults</button>
+          </div>
+          <div style="flex:0">
+            <button class="alt" onclick="refreshSeeded()" title="Re-apply the current seed file to every seeded concept — backfills missing patterns, overwrites stale defaults. Custom concepts (edited by you) are NOT touched.">Refresh seeded</button>
           </div>
           <div style="flex:0">
             <button class="alt" onclick="openDraftModal()" title="Describe a rule in natural language; an LLM drafts the concept for you to edit">Draft with AI</button>
@@ -870,9 +914,27 @@
             </div>
           </div>
           <div id="cm-param-wrap">
-            <label id="cm-param-label">Parameter</label>
-            <input type="text" id="cm-parameter" placeholder="—">
+            <div class="ai-label-row">
+              <label id="cm-param-label" style="margin:0">Parameter</label>
+              <button type="button" id="cm-ai-toggle" class="ai-toggle-btn" style="display:none" onclick="toggleRegexAi()">✨ Ask AI</button>
+            </div>
+            <input type="text" id="cm-parameter" placeholder="—" oninput="syncRegexTester()">
             <div class="api" id="cm-param-hint"></div>
+            <div id="cm-ai-panel" class="ai-panel" style="display:none">
+              <label style="margin:0 0 4px">Describe what should match <span class="api">(e.g. "Saudi mobile number starting with 05, 10 digits total")</span></label>
+              <textarea id="cm-ai-nl" placeholder="A valid IBAN for Saudi Arabia (SA followed by 22 digits)"></textarea>
+              <div class="ai-panel-actions">
+                <button type="button" id="cm-ai-go" onclick="runRegexAi()">Generate</button>
+                <button type="button" class="alt" onclick="toggleRegexAi()">Cancel</button>
+                <span class="api" id="cm-ai-status"></span>
+              </div>
+              <div id="cm-ai-result"></div>
+            </div>
+            <div id="cm-regex-tester" class="regex-tester" style="display:none">
+              <label>Try the regex against sample values <span class="api">(one per line — tested in your browser, JS regex engine)</span></label>
+              <textarea id="cm-regex-samples" placeholder="alice@example.com&#10;not-an-email&#10;bob.smith@corp.co" oninput="syncRegexTester()"></textarea>
+              <div class="rt-results" id="cm-regex-results"></div>
+            </div>
           </div>
           <label>Applies to semantic types (leave empty = any)</label>
           <div class="row" style="gap:6px;flex-wrap:wrap">
@@ -1086,32 +1148,28 @@ async function deleteCurrentConnection(){
 }
 
 async function testConnectionDraft(){
-  // Test-before-save flow: save the row, run /test, soft-delete if the
-  // test fails. We don't have a "test draft" endpoint that takes
-  // unsaved credentials — saving and reusing /test is the path that
-  // mirrors how the connector actually validates at scan time.
   const {body, error}=_connModalBody();
   if(error){toast(error,false);return}
-  $('conn-result').innerHTML='<div class="api" style="padding:8px">Saving + testing…</div>';
+  $('conn-result').innerHTML='<div class="api" style="padding:8px">Testing…</div>';
   try{
-    const created=await api('POST','/api/v1/products/data-quality/connections/',body);
-    const id=created.connection.id;
-    const result=await api('POST',`/api/v1/products/data-quality/connections/${id}/test`);
+    const result=await api('POST','/api/v1/products/data-quality/connections/test-draft',body);
     if(result.success){
-      $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--ok)">✓ Connection succeeded — row id <span class="mono">${id}</span> already saved.</div>`;
-      // The save already landed; close + refresh so the user sees it.
-      setTimeout(async ()=>{
-        closeConnectionModal();
-        await loadConnections();
-        $('conn').value=id; loadTables();
-      }, 1200);
+      $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--ok)">✓ Connection succeeded. Click <strong>Save</strong> to save it.</div>`;
     }else{
-      $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--err)">✗ Test failed: ${escapeHtml(result.error||'(no detail)')}<br>Row was saved (id <span class="mono">${id}</span>) — fix and edit it, or delete the row.</div>`;
-      await loadConnections();
+      const hint=_connHint(result.error);
+      $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--err)">✗ Test failed: ${escapeHtml(result.error||'(no detail)')}${hint}</div>`;
     }
   }catch(e){
     $('conn-result').innerHTML=`<div class="api" style="padding:8px;color:var(--err)">${escapeHtml(e.message)}</div>`;
   }
+}
+
+function _connHint(err){
+  if(!err) return '';
+  if(/Name or service not known|nodename nor servname|getaddrinfo/i.test(err)){
+    return `<br><br><strong>Tip:</strong> If your database is on this machine, <span class="mono">localhost</span> won't work inside Docker — use <span class="mono">host.docker.internal</span> (Docker Desktop) or your LAN IP instead. <a href="#" onclick="event.preventDefault();$('conn-host').value='host.docker.internal';syncHostWarning()" style="color:var(--blue)">Use host.docker.internal →</a>`;
+  }
+  return '';
 }
 
 let _tableItems=[];  // last-loaded raw items, used by the filter/batch-scan
@@ -1125,8 +1183,10 @@ async function loadTables(){
     const resp=await api('GET','/api/v1/products/data-quality/tables/connections/'+cid);
     _connMeta={db_type:resp.db_type, default_schema:resp.default_schema};
     _tableItems=resp.items||[];
-    $('meta').innerHTML=`Connection type: <strong>${resp.db_type}</strong> · default schema: <strong class="mono">${resp.default_schema}</strong>`+
-      (resp.source_error?` · <span style="color:var(--err)">source error: ${resp.source_error}</span>`:'');
+    const errHtml=resp.source_error
+      ? ` · <span style="color:var(--err)">source error: ${escapeHtml(resp.source_error)}${/Name or service not known|nodename nor servname|getaddrinfo/i.test(resp.source_error)?' — if your DB is on this machine, edit the connection and use <span class="mono">host.docker.internal</span> instead of <span class="mono">localhost</span>':''}</span>`
+      : '';
+    $('meta').innerHTML=`Connection type: <strong>${resp.db_type}</strong> · default schema: <strong class="mono">${resp.default_schema}</strong>`+errHtml;
     applyTableFilter();
   }catch(e){
     _tableItems=[];
@@ -1600,10 +1660,17 @@ function _dimPill(dim){
   return `<span class="${cls}">${escapeHtml(dim)}</span>`;
 }
 
+const _expandedConcepts = new Set();
+function toggleConceptExpand(id){
+  if(_expandedConcepts.has(id)) _expandedConcepts.delete(id);
+  else _expandedConcepts.add(id);
+  renderDictTable();
+}
+
 function renderDictTable(){
   const items=_filteredConcepts();
   const total=_concepts.length;
-  const rows=items.length?items.map(c=>{
+  const rows=items.length?items.flatMap(c=>{
     const syns=(c.synonyms||[]).slice(0,6).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
     const more=(c.synonyms||[]).length>6?`<span class="chip">+${(c.synonyms||[]).length-6}</span>`:'';
     const at=Array.isArray(c.applies_to_types)&&c.applies_to_types.length
@@ -1613,19 +1680,22 @@ function renderDictTable(){
     const stat=c.enabled?'':'<span class="pill pill-disabled" style="margin-left:6px">disabled</span>';
     const seedMark=c.is_seed?'<span class="seed-mark" title="Came from the seed defaults">seed</span>':'';
     const param=paramSummary(c.rule_type, c.parameter);
-    return `<tr>
-      <td>${_dimPill(c.dimension)}</td>
+    const expanded=_expandedConcepts.has(c.id);
+    const chev=`<span class="dict-chevron${expanded?' expanded':''}">▶</span>`;
+    const main=`<tr class="dict-row${expanded?' expanded':''}" onclick="toggleConceptExpand(${c.id})">
+      <td>${chev}${_dimPill(c.dimension)}</td>
       <td class="mono">${escapeHtml(c.concept)}${seedMark}${stat}</td>
       <td>${syns}${more}</td>
       <td class="mono">${c.rule_type}</td>
       <td class="cell-mute">${param}</td>
       <td>${sevPill}</td>
       <td>${at}</td>
-      <td style="width:120px;white-space:nowrap">
+      <td style="width:120px;white-space:nowrap" onclick="event.stopPropagation()">
         <button class="tiny" onclick="openConceptModal(${c.id})">Edit</button>
         <button class="tiny" onclick="deleteConcept(${c.id},'${c.concept.replace(/'/g,"\\'")}')">Del</button>
       </td>
     </tr>`;
+    return expanded ? [main, _conceptDetailRow(c)] : [main];
   }).join('') : `<tr><td class="empty" colspan="8">No concepts match the current filter.</td></tr>`;
   $('dict-list').innerHTML=`
     <div class="card" style="padding:10px 14px;margin-bottom:10px;display:flex;align-items:center">
@@ -1655,10 +1725,76 @@ function paramSummary(ruleType, p){
   return '—';
 }
 
+function _explainRule(ruleType, p){
+  p = p||{};
+  switch(ruleType){
+    case 'format_regex':
+      return {
+        what: p.pattern
+          ? 'A value PASSES if it matches the regular expression below; otherwise it is a violation.'
+          : 'A regex rule, but no pattern is stored. Click Edit to add one.',
+        pattern: p.pattern||null,
+      };
+    case 'not_null':
+      return {what: 'A value PASSES if it is not NULL. NULL is a violation.', pattern: null};
+    case 'max_null_rate':
+      return {
+        what: p.threshold!=null
+          ? `The column PASSES if no more than ${(p.threshold*100).toFixed(1)}% of values are NULL.`
+          : 'The column PASSES if its NULL rate is below the configured threshold.',
+        pattern: null,
+      };
+    case 'no_pseudo_nulls':
+      return {what: 'A value PASSES if it is not a pseudo-null like "N/A", "NULL", "-", "none", or whitespace-only.', pattern: null};
+    case 'unique':
+      return {what: 'A value PASSES if it appears exactly once in the column. Duplicates are violations.', pattern: null};
+    default:
+      return {what: 'Unknown rule type.', pattern: null};
+  }
+}
+
+function _conceptDetailRow(c){
+  const ex=_explainRule(c.rule_type, c.parameter);
+  const notes=c.notes
+    ? escapeHtml(c.notes)
+    : '<span class="cell-mute">(no notes yet — add some in Edit to help others understand this rule)</span>';
+  const patternBlock=ex.pattern?`
+    <div class="k">Pattern</div>
+    <div class="v regex-box">${escapeHtml(ex.pattern)}</div>`:'';
+  const editLabel = c.rule_type==='format_regex' ? 'Edit & test regex' : 'Edit this rule';
+  return `<tr class="dict-detail-row"><td colspan="8">
+    <div class="dict-detail">
+      <div class="k">How it works</div>
+      <div class="v">${escapeHtml(ex.what)}</div>
+      ${patternBlock}
+      <div class="k">Explanation</div>
+      <div class="v">${notes}</div>
+      <div class="k"></div>
+      <div class="v"><button class="tiny" onclick="openConceptModal(${c.id})">${editLabel}</button></div>
+    </div>
+  </td></tr>`;
+}
+
 async function seedDefaults(){
   try{
     const r=await api('POST','/api/v1/products/data-quality/concepts/seed-defaults');
     toast(`${r.inserted} new concept(s) seeded (${r.total_after} total)`);
+    loadConcepts();
+  }catch(e){toast(e.message,false)}
+}
+
+async function refreshSeeded(){
+  if(!confirm(
+    'Refresh all seeded concepts from the current seed file?\n\n'+
+    'This OVERWRITES synonyms, rule type, parameter (regex pattern), severity, '+
+    'applies-to, and notes on every concept marked "seed" — to match the latest '+
+    'defaults in concept_seed.py. Use this to backfill empty regex patterns.\n\n'+
+    'Custom concepts (anything you have edited or created) are NOT touched.'
+  )) return;
+  try{
+    const r=await api('POST','/api/v1/products/data-quality/concepts/refresh-seeded');
+    toast(`Refreshed — ${r.updated} seeded updated, ${r.inserted} inserted, ${r.skipped_custom} custom skipped`);
+    _expandedConcepts.clear();
     loadConcepts();
   }catch(e){toast(e.message,false)}
 }
@@ -1669,7 +1805,13 @@ async function deleteConcept(id, name){
     await api('DELETE','/api/v1/products/data-quality/concepts/'+id);
     toast('Deleted');
     loadConcepts();
-  }catch(e){toast(e.message,false)}
+  }catch(e){
+    // Long blocker messages (e.g. "Cannot delete — referenced by N issues
+    // across M profiles…") don't fit in the toast. Surface via alert so the
+    // user can read the full guidance.
+    if(/cannot delete/i.test(e.message)) alert(e.message);
+    else toast(e.message,false);
+  }
 }
 
 function openConceptModal(id){
@@ -1707,6 +1849,14 @@ function openConceptModal(id){
     $('cm-enabled').checked=true;
     document.querySelectorAll('.cm-applies').forEach(cb=>cb.checked=false);
   }
+  const samples=$('cm-regex-samples'); if(samples) samples.value='';
+  // Reset the Ask-AI panel so a draft from a previous concept doesn't leak.
+  const aiPanel=$('cm-ai-panel'); if(aiPanel) aiPanel.style.display='none';
+  const aiBtn=$('cm-ai-toggle'); if(aiBtn) aiBtn.classList.remove('active');
+  const aiNl=$('cm-ai-nl'); if(aiNl) aiNl.value='';
+  const aiOut=$('cm-ai-result'); if(aiOut) aiOut.innerHTML='';
+  const aiStat=$('cm-ai-status'); if(aiStat) aiStat.textContent='';
+  window._lastRegexDraft=null;
   syncParameterField();
   m.classList.add('show');
 }
@@ -2089,20 +2239,120 @@ function syncParameterField(){
   const lbl=$('cm-param-label');
   const inp=$('cm-parameter');
   const hint=$('cm-param-hint');
+  const tester=$('cm-regex-tester');
+  const aiBtn=$('cm-ai-toggle');
+  const aiPanel=$('cm-ai-panel');
   if(rt==='format_regex'){
     wrap.style.display='';
     lbl.textContent='Regex pattern';
     inp.placeholder='^[A-Z]{2}[0-9]{2}.*$';
     hint.textContent='Matched values pass; unmatched values are violations.';
+    if(tester){ tester.style.display=''; syncRegexTester(); }
+    if(aiBtn) aiBtn.style.display='';
   }else if(rt==='max_null_rate'){
     wrap.style.display='';
     lbl.textContent='Max null rate (0–1)';
     inp.placeholder='0.05';
     hint.textContent='Maximum allowed null fraction. e.g. 0.05 means up to 5% nulls is acceptable.';
+    if(tester) tester.style.display='none';
+    if(aiBtn) aiBtn.style.display='none';
+    if(aiPanel) aiPanel.style.display='none';
   }else{
     wrap.style.display='none';
     inp.value='';
+    if(tester) tester.style.display='none';
+    if(aiBtn) aiBtn.style.display='none';
+    if(aiPanel) aiPanel.style.display='none';
   }
+}
+
+function toggleRegexAi(){
+  const panel=$('cm-ai-panel');
+  const btn=$('cm-ai-toggle');
+  const open = panel.style.display==='none';
+  panel.style.display = open ? '' : 'none';
+  btn.classList.toggle('active', open);
+  if(open){ $('cm-ai-nl').focus(); }
+  else { $('cm-ai-result').innerHTML=''; $('cm-ai-status').textContent=''; }
+}
+
+async function runRegexAi(){
+  const nl=$('cm-ai-nl').value.trim();
+  if(!nl){ toast('Describe what should match first',false); return; }
+  const btn=$('cm-ai-go');
+  const status=$('cm-ai-status');
+  const out=$('cm-ai-result');
+  btn.disabled=true; btn.textContent='Generating…';
+  status.textContent='Calling LLM — this can take 30–60s on the first call…';
+  out.innerHTML='';
+  try{
+    const body={
+      nl_text: nl,
+      concept_name: $('cm-concept').value || null,
+      current_pattern: $('cm-parameter').value || null,
+    };
+    const resp=await api('POST','/api/v1/products/data-quality/concepts/draft-regex', body);
+    btn.disabled=false; btn.textContent='Generate';
+    if(resp.status!=='ok'){
+      status.textContent='';
+      out.innerHTML=`<div class="ai-result" style="color:var(--err)">
+        <strong>${escapeHtml(resp.status)}</strong> — ${escapeHtml(resp.error||'')}</div>`;
+      return;
+    }
+    const d=resp.draft;
+    window._lastRegexDraft=d;
+    status.textContent=`${resp.latency_ms||'?'} ms · ${resp.input_tokens||'?'}/${resp.output_tokens||'?'} tokens · ${d.confidence||'MEDIUM'}`;
+    const pass=(d.examples_pass||[]).map(e=>escapeHtml(e)).join('<br>')||'<span class="api">(none)</span>';
+    const fail=(d.examples_fail||[]).map(e=>escapeHtml(e)).join('<br>')||'<span class="api">(none)</span>';
+    out.innerHTML=`<div class="ai-result">
+      <div class="ai-explain">${escapeHtml(d.explanation||'')}</div>
+      <div class="ai-pattern">${escapeHtml(d.pattern)}</div>
+      <div class="ai-examples">
+        <div class="ai-pass"><div class="ai-ex-head">Should match</div>${pass}</div>
+        <div class="ai-fail"><div class="ai-ex-head">Should NOT match</div>${fail}</div>
+      </div>
+      <button type="button" class="ai-use-btn" onclick="useRegexDraft()">Use this regex</button>
+    </div>`;
+  }catch(e){
+    btn.disabled=false; btn.textContent='Generate';
+    status.textContent='';
+    out.innerHTML=`<div class="ai-result" style="color:var(--err)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function useRegexDraft(){
+  const d=window._lastRegexDraft;
+  if(!d){ toast('No draft to use',false); return; }
+  $('cm-parameter').value=d.pattern;
+  // Seed the live tester with the LLM's examples so the user can immediately
+  // see green/red and tweak if needed.
+  const samples=[...(d.examples_pass||[]), ...(d.examples_fail||[])].join('\n');
+  if(samples) $('cm-regex-samples').value=samples;
+  syncRegexTester();
+  toggleRegexAi();          // collapse the AI panel
+  toast('Regex applied — review the tester below before saving');
+}
+
+function syncRegexTester(){
+  if($('cm-rule-type').value!=='format_regex') return;
+  const out=$('cm-regex-results');
+  if(!out) return;
+  const pat=$('cm-parameter').value.trim();
+  const samplesText=$('cm-regex-samples').value;
+  if(!pat){ out.innerHTML='<div class="rt-line empty"><span class="rt-mark">·</span>Type a regex above to start testing.</div>'; return; }
+  let rx;
+  try { rx = new RegExp(pat); }
+  catch(e){ out.innerHTML=`<div class="rt-line fail"><span class="rt-mark">✕</span><span class="rt-text">Invalid regex: ${escapeHtml(e.message)}</span></div>`; return; }
+  if(samplesText.trim()===''){
+    out.innerHTML='<div class="rt-line empty"><span class="rt-mark">·</span>Paste sample values above to test them.</div>';
+    return;
+  }
+  const lines = samplesText.split('\n');
+  out.innerHTML = lines.map(line=>{
+    if(line==='') return '<div class="rt-line empty"><span class="rt-mark">·</span><span class="rt-text">(empty line)</span></div>';
+    const ok = rx.test(line);
+    return `<div class="rt-line ${ok?'pass':'fail'}"><span class="rt-mark">${ok?'✓':'✕'}</span><span class="rt-text">${escapeHtml(line)}</span></div>`;
+  }).join('');
 }
 
 // ---------- Profiles ----------

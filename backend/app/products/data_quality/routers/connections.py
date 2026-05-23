@@ -154,6 +154,27 @@ async def delete_dq_connection(
     }
 
 
+@router.post("/test-draft")
+async def test_dq_connection_draft(
+    body: CreateConnectionBody,
+    auth_user: AuthUser = Depends(get_current_user),
+):
+    """Test connection credentials without persisting a row.
+    Accepts the same payload as create, opens a transient connection,
+    returns {success, error}. Nothing is written to the database."""
+    require(can_use_dq(auth_user), "Data Quality is not available for this account")
+    gateway = DbConnectorGateway(
+        db_type=body.db_type, username=body.username,
+        password=body.password, host=body.host,
+        port=str(body.port), database=body.database or "",
+    )
+    try:
+        result = await gateway.test_connection()
+        return {"success": result.success, "error": result.error}
+    finally:
+        await gateway.close()
+
+
 @router.post("/{connection_id}/test")
 async def test_dq_connection(
     connection_id: UUID,

@@ -21,6 +21,12 @@ class DraftFromNlBody(BaseModel):
     dimension_hint: str | None = None  # completeness | validity | uniqueness
 
 
+class DraftRegexBody(BaseModel):
+    nl_text: str = Field(min_length=1, max_length=2000)
+    concept_name: str | None = None
+    current_pattern: str | None = None
+
+
 @router.post("/draft-from-nl")
 async def draft_concept_from_nl(
     body: DraftFromNlBody,
@@ -36,5 +42,25 @@ async def draft_concept_from_nl(
     return await service.draft(
         nl_text=body.nl_text,
         dimension_hint=body.dimension_hint,
+        auth_user=auth_user,
+    )
+
+
+@router.post("/draft-regex")
+async def draft_regex_from_nl(
+    body: DraftRegexBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ConceptDraftService = Depends(get_concept_draft_service),
+):
+    """Generate just a regex pattern from a natural-language description.
+
+    Used by the Edit-concept modal's 'Ask AI' button. Returns
+    ``{status, draft: {pattern, explanation, examples_pass, examples_fail,
+    confidence}, latency_ms, ...}``. The frontend fills the Regex pattern
+    field with ``draft.pattern`` and seeds the live tester with the examples."""
+    return await service.draft_regex(
+        nl_text=body.nl_text,
+        concept_name=body.concept_name,
+        current_pattern=body.current_pattern,
         auth_user=auth_user,
     )

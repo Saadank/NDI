@@ -106,6 +106,25 @@ class ConceptDraftResponse(_Base):
         return v
 
 
+# ----- regex_draft (NL → regex pattern + examples for a single concept) -----
+
+class RegexDraftResponse(_Base):
+    pattern: str = Field(min_length=1, max_length=500)
+    explanation: str = ""
+    examples_pass: list[str] = Field(default_factory=list, max_length=5)
+    examples_fail: list[str] = Field(default_factory=list, max_length=5)
+    confidence: Confidence = "MEDIUM"
+
+    @field_validator("examples_pass", "examples_fail", mode="before")
+    @classmethod
+    def _coerce_list(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
+
+
 # ----- synonym_expansion -----
 
 class SynonymExpansionResponse(_Base):
@@ -130,6 +149,7 @@ _SCHEMA_BY_PURPOSE: dict[str, type[_Base]] = {
     "column_match":       ColumnMatchResponse,
     "sql_generation":     SqlGenerationResponse,
     "concept_draft":      ConceptDraftResponse,
+    "regex_draft":        RegexDraftResponse,
     "synonym_expansion":  SynonymExpansionResponse,
 }
 
