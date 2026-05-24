@@ -595,6 +595,9 @@ class ProfilerService:
 
             row_count = await self._fetch_row_count(gateway, qtable)
 
+            # Collected as we go so the entity-key heuristic (below) can
+            # propose candidates from in-memory stats without a re-fetch.
+            scanned_profiles: list[dict] = []
             for ordinal, col in enumerate(columns, start=1):
                 profile = await self._profile_column(
                     gateway=gateway, db_type=conn["db_type"], qtable=qtable,
@@ -612,6 +615,72 @@ class ProfilerService:
                     schema_name=scan["schema_name"], table_name=scan["table_name"],
                     profile=profile,
                 )
+                scanned_profiles.append(profile)
+
+            # Detect the table's entity key (declared PK) once per scan and
+            # persist it onto the profile. The uniqueness validator reads
+            # this to choose between "column must be globally unique" and
+            # "column must be unique per business entity" semantics. A scan
+            # without a profile row (transient mode) skips persistence; the
+            # validator then falls back to the legacy behaviour.
+            if scan.get("profile_id"):
+                try:
+                    # Honour the lock — if the user has explicitly set the
+                    # entity key via the /entity-key endpoint, never let a
+                    # scan overwrite it. Heuristic candidates (Phase 2)
+                    # would otherwise drift the value between scans.
+                    profile_row = await self.profile_asset_repo.find_by_id(
+                        scan["profile_id"], tenant_id,
+                    )
+                    locked = bool((profile_row or {}).get("entity_key_locked"))
+                    if locked:
+                        logger.info(
+                            "Scan %s: entity_key_columns locked by user on %s.%s; skipping auto-update.",
+                            scan_id, scan["schema_name"], scan["table_name"],
+                        )
+                    else:
+                        from app.products.data_quality.services.entity_key_detector import (
+                            detect_entity_key_columns, propose_candidate_columns,
+                        )
+                        detected = await detect_entity_key_columns(
+                            gateway=gateway, db_type=conn["db_type"],
+                            schema_name=scan["schema_name"], table_name=scan["table_name"],
+                        )
+                        source = "declared PK"
+                        # Phase 2 fallback: when no declared PK exists,
+                        # nominate a single-column candidate from the
+                        # column-profile stats we just collected. This
+                        # populates entity_key_columns for tables whose
+                        # source DB never had constraints declared (the
+                        # common case for warehouse / staging dumps).
+                        if not detected:
+                            detected = propose_candidate_columns(
+                                scanned_profiles, declared_pk=[],
+                            )
+                            if detected:
+                                source = "heuristic candidate"
+                        # Only overwrite when we found something. Leaving
+                        # the existing value alone on an empty detection
+                        # avoids clearing the previous-scan's result just
+                        # because, say, the gateway briefly lost metadata
+                        # access.
+                        if detected:
+                            await self.profile_asset_repo.update(
+                                scan["profile_id"], tenant_id,
+                                entity_key_columns=detected,
+                            )
+                            logger.info(
+                                "Scan %s set entity key on %s.%s to %s (source: %s).",
+                                scan_id, scan["schema_name"], scan["table_name"],
+                                detected, source,
+                            )
+                        else:
+                            logger.info(
+                                "Scan %s: no declared PK and no candidate match on %s.%s; entity_key_columns left as-is.",
+                                scan_id, scan["schema_name"], scan["table_name"],
+                            )
+                except Exception:  # noqa: BLE001
+                    logger.exception("entity-key detection failed for scan %s", scan_id)
 
             # Profile is done — now run the validator over any active rules
             # for this table. Issues persist whether or not any fail; an

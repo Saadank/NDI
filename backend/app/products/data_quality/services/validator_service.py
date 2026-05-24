@@ -23,6 +23,9 @@ from app.products.data_quality.repositories.active_rule_repository import (
     ActiveRuleRepository,
 )
 from app.products.data_quality.repositories.issue_repository import IssueRepository
+from app.products.data_quality.repositories.profile_repository import (
+    ProfileRepository,
+)
 from app.products.data_quality.services.profiler_service import (
     _PSEUDO_NULL_TOKENS, _qualified_table, _quote_ident, _extract_pattern,
 )
@@ -150,12 +153,55 @@ async def _eval_unique(gateway, db_type, schema_name, table_name, column_name,
                        row_count, parameter):
     qcol = _quote_ident(db_type, column_name)
     qtable = _qualified_table(db_type, schema_name, table_name)
-    # Count rows whose value isn't unique. Excludes both NULL (NULL groups
-    # vary by dialect; "uniqueness on a NULL column" is conventionally
-    # "non-null values must be unique") AND pseudo-null tokens like
-    # "N/A"/"null" — those repeating across rows are a completeness issue,
-    # not a real key-collision. Reporting them here would double-count.
+    # Exclude NULL (NULL groups vary by dialect; "uniqueness on a NULL
+    # column" is conventionally "non-null values must be unique") AND
+    # pseudo-null tokens like "N/A"/"null" — those repeating across rows
+    # are a completeness issue, not a real key-collision, and reporting
+    # them here would double-count.
     no_pseudo = _pseudo_null_exclusion(db_type, qcol)
+
+    # `__entity_key_columns` is injected by validate_scan when the profile
+    # has a configured entity key. Its presence flips the rule from
+    # "column must be globally unique" to "column must be unique across
+    # distinct business entities" — i.e. the same mobile across many
+    # claims of the same client is fine, but two clients sharing a mobile
+    # is a violation. Empty / missing → legacy behaviour.
+    entity_keys = (parameter or {}).get("__entity_key_columns") or []
+    # A column can't legitimately be checked against itself as the entity
+    # key; that collapses to the legacy check, so drop self-references.
+    entity_keys = [c for c in entity_keys if c and c != column_name]
+
+    if entity_keys:
+        qkeys = [_quote_ident(db_type, c) for c in entity_keys]
+        distinct_expr = _count_distinct_tuple(db_type, qkeys)
+        sql = (
+            f"SELECT COALESCE(SUM(c), 0) FROM ("
+            f"  SELECT {qcol} AS v, {distinct_expr} AS c FROM {qtable} "
+            f"  WHERE {qcol} IS NOT NULL AND {no_pseudo} "
+            f"  GROUP BY {qcol} "
+            f"  HAVING {distinct_expr} > 1"
+            f") dups"
+        )
+        vc, err = await _scalar_count(gateway, sql)
+        if vc is None:
+            return _error_result(err, sql)
+        rate = (vc / row_count) if row_count else None
+        status = "fail" if vc > 0 else "pass"
+        key_label = ", ".join(entity_keys)
+        diag = (
+            f"{vc} value(s) of '{column_name}' appear under more than one "
+            f"distinct ({key_label}); per-entity uniqueness violated."
+            if status == "fail"
+            else f"every non-null '{column_name}' belongs to at most one "
+                 f"distinct ({key_label})."
+        )
+        return {"row_count": row_count, "violation_count": vc,
+                "violation_rate": _round5(rate), "status": status,
+                "diagnostic_text": diag, "violation_patterns": []}
+
+    # Legacy fallback — no entity key configured for the table. The
+    # column itself must be globally unique (e.g. customers.email on a
+    # master-data table).
     sql = (
         f"SELECT COALESCE(SUM(c), 0) FROM ("
         f"  SELECT {qcol} AS v, COUNT(*) AS c FROM {qtable} "
@@ -174,6 +220,30 @@ async def _eval_unique(gateway, db_type, schema_name, table_name, column_name,
     return {"row_count": row_count, "violation_count": vc,
             "violation_rate": _round5(rate), "status": status,
             "diagnostic_text": diag, "violation_patterns": []}
+
+
+def _count_distinct_tuple(db_type: str, qcols: list[str]) -> str:
+    """Build a COUNT(DISTINCT …) expression that works across dialects.
+
+    PostgreSQL, Oracle, ClickHouse: `COUNT(DISTINCT col1, col2)` is legal.
+    MySQL / MariaDB: same syntax accepted.
+    MSSQL: only single-argument COUNT(DISTINCT) — collapse the tuple via
+    a delimiter-safe CONCAT so distinctness over the composite still
+    works. NULL would poison the concat, but entity-key columns rarely
+    carry NULL; when they do, COALESCE keeps them grouping together
+    rather than splattering into spurious distinct buckets."""
+    if not qcols:
+        # Shouldn't happen — _eval_unique already guards on empty —
+        # but degrade safely to COUNT(*).
+        return "COUNT(*)"
+    if len(qcols) == 1:
+        return f"COUNT(DISTINCT {qcols[0]})"
+    if db_type == "mssql":
+        # CONCAT_WS handles NULLs cleanly on MSSQL 2017+. The delimiter
+        # is unlikely to appear inside any business identifier.
+        parts = ", ".join(f"COALESCE(CAST({c} AS NVARCHAR(MAX)), '')" for c in qcols)
+        return f"COUNT(DISTINCT CONCAT_WS('\\x1f', {parts}))"
+    return f"COUNT(DISTINCT {', '.join(qcols)})"
 
 
 def _pseudo_null_exclusion(db_type: str, qcol: str) -> str:
@@ -271,6 +341,7 @@ class ValidatorService:
     def __init__(self) -> None:
         self.active_repo = ActiveRuleRepository()
         self.issue_repo = IssueRepository()
+        self.profile_repo = ProfileRepository()
 
     async def validate_scan(
         self, *, scan_id: int, tenant_id: int, profile_id: int,
@@ -299,6 +370,14 @@ class ValidatorService:
         # Compute row count once and reuse — every evaluator needs it.
         row_count = await _row_count(gateway, db_type, schema_name, table_name)
 
+        # Load the entity key once per scan — uniqueness rules need it to
+        # switch between "globally unique" and "unique per business entity".
+        # Other rule types ignore the field.
+        profile_row = await self.profile_repo.find_by_id(profile_id, tenant_id)
+        entity_key_columns: list[str] = list(
+            (profile_row or {}).get("entity_key_columns") or []
+        )
+
         summary = {"evaluated": 0, "fail": 0, "pass": 0, "error": 0}
         for rule in rules:
             evaluator = _EVALUATORS.get(rule["rule_type"])
@@ -309,6 +388,16 @@ class ValidatorService:
             else:
                 try:
                     parameter = _coerce_jsonb(rule["parameter"])
+                    # Thread the table-level entity key into the unique
+                    # evaluator without changing every evaluator's signature.
+                    # The `__` prefix marks this as runtime-injected, not a
+                    # user-facing parameter — it never round-trips through
+                    # the rule's persisted JSON.
+                    if rule["rule_type"] == "unique" and entity_key_columns:
+                        parameter = {
+                            **(parameter if isinstance(parameter, dict) else {}),
+                            "__entity_key_columns": entity_key_columns,
+                        }
                     result = await evaluator(
                         gateway, db_type, schema_name, table_name,
                         rule["column_name"], row_count, parameter,

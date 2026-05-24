@@ -124,6 +124,7 @@ class ProfileService:
         sampling_mode: str | None = None, sample_size: int | None = None,
         drill_down: bool | None = None, ai_enabled: bool | None = None,
         selected_columns: list[str] | None = None,
+        entity_key_columns: list[str] | None = None,
         auth_user: AuthUser,
     ) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
@@ -149,6 +150,8 @@ class ProfileService:
             self._validate_sampling(effective_mode, effective_size)
         if selected_columns is not None:
             self._validate_selected_columns(selected_columns)
+        if entity_key_columns is not None:
+            self._validate_entity_key_columns(entity_key_columns)
 
         return await self.repo.update(
             profile_id, auth_user.tenant_id,
@@ -156,6 +159,42 @@ class ProfileService:
             sampling_mode=sampling_mode, sample_size=sample_size,
             drill_down=drill_down, ai_enabled=ai_enabled,
             selected_columns=selected_columns,
+            entity_key_columns=entity_key_columns,
+        )
+
+    async def set_entity_key(
+        self, profile_id: int, entity_key_columns: list[str],
+        *, auth_user: AuthUser,
+    ) -> dict:
+        """Dedicated entrypoint for the entity-key override UI. Validates
+        the list (empty allowed = clear) and LOCKS the value so future
+        scans don't overwrite the user's choice. The unlock path is
+        clear_entity_key()."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        existing = await self.repo.find_by_id(profile_id, auth_user.tenant_id)
+        if not existing:
+            raise ResourceNotFoundException("Profile not found")
+        self._validate_entity_key_columns(entity_key_columns)
+        return await self.repo.update(
+            profile_id, auth_user.tenant_id,
+            entity_key_columns=entity_key_columns,
+            entity_key_locked=True,
+        )
+
+    async def clear_entity_key(
+        self, profile_id: int, *, auth_user: AuthUser,
+    ) -> dict:
+        """Reset the entity key to auto-detect mode: clear the columns
+        AND release the lock so the next scan can re-populate from
+        declared PK / heuristics."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        existing = await self.repo.find_by_id(profile_id, auth_user.tenant_id)
+        if not existing:
+            raise ResourceNotFoundException("Profile not found")
+        return await self.repo.update(
+            profile_id, auth_user.tenant_id,
+            entity_key_columns=[],
+            entity_key_locked=False,
         )
 
     async def delete_profile(self, profile_id: int, auth_user: AuthUser) -> None:
@@ -333,6 +372,36 @@ class ProfileService:
                 raise ValidationException(
                     "selected_columns entries capped at 255 chars"
                 )
+
+    def _validate_entity_key_columns(self, cols: list[str]) -> None:
+        """Empty list is legal (clears the override; uniqueness rules
+        revert to globally-unique behaviour). Non-empty must be plain
+        column-name strings — same shape rules as selected_columns,
+        capped tighter because a composite key with more than a handful
+        of columns is almost certainly a mistake."""
+        if not isinstance(cols, list):
+            raise ValidationException("entity_key_columns must be a list of strings")
+        if len(cols) > 10:
+            raise ValidationException(
+                "entity_key_columns capped at 10 entries — a business "
+                "entity key spanning more than 10 columns is almost "
+                "certainly a modelling error."
+            )
+        seen: set[str] = set()
+        for c in cols:
+            if not isinstance(c, str) or not c.strip():
+                raise ValidationException(
+                    "entity_key_columns entries must be non-empty strings"
+                )
+            if len(c) > 255:
+                raise ValidationException(
+                    "entity_key_columns entries capped at 255 chars"
+                )
+            if c in seen:
+                raise ValidationException(
+                    f"entity_key_columns contains duplicate '{c}'"
+                )
+            seen.add(c)
 
     def _validate_sampling(self, mode: str, size: int | None) -> None:
         if mode not in _VALID_SAMPLING:

@@ -2797,6 +2797,34 @@ function pdRenderDefinition(){
       </div>
     </div>
 
+    <div class="card" style="padding:14px;margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>Entity key</span>
+        <span id="pdef-entity-key-lock-badge"></span>
+        <span class="api" style="font-weight:400">— used by uniqueness rules. Same value under one entity is fine; same value under two entities = violation.</span>
+      </div>
+      <p class="api" style="margin:0 0 8px">
+        Auto-detected from the declared primary key during each scan. Override
+        when the row PK isn't the business identifier (e.g. <span class="mono">claim_id</span> is the row PK
+        but <span class="mono">national_id</span> is what should differentiate clients). Saving locks
+        the value against future scan overwrites; use <strong>Reset to auto-detect</strong> to release.
+      </p>
+      <label>Entity key columns
+        <span class="api">— pick one or more, in order. Composite keys are supported.</span>
+      </label>
+      <div id="pdef-entity-key-chips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:30px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#f8fafc">
+        <span class="api" style="font-size:11px">Loading columns…</span>
+      </div>
+      <div class="row" style="gap:10px;margin-top:8px;align-items:center">
+        <select id="pdef-entity-key-add" onchange="pdAddEntityKey(this.value)" style="flex:1" disabled>
+          <option value="">— loading columns —</option>
+        </select>
+        <button class="alt tiny" onclick="pdClearEntityKey()" title="Remove every chip (does not save until you click Save)">Clear</button>
+        <button class="alt tiny" onclick="pdResetEntityKey()" title="Clear the value AND release the lock so the next scan auto-detects">Reset to auto-detect</button>
+        <button class="tiny" id="pdef-entity-key-save" onclick="pdSaveEntityKey()">Save entity key</button>
+      </div>
+    </div>
+
     <div class="card" style="padding:14px">
       <div style="font-weight:600;margin-bottom:10px">Profile settings</div>
       <div class="row" style="gap:10px">
@@ -2835,6 +2863,130 @@ function pdRenderDefinition(){
       // Stash the loaded value so the Save handler can detect a change.
       _pdProfile._loadedSemanticType=sel?sel.value:'';
     }).catch(()=>{});
+
+  // Seed the entity-key working list from the saved profile, then load the
+  // live column catalog so the picker can show options.
+  _pdEntityKey=Array.from(p.entity_key_columns||[]);
+  pdLoadEntityKeyColumns();
+}
+
+// ---- Entity-key picker (Definition tab) ----
+// Working list maintained as an ordered array; chips render the order so
+// composite keys read naturally. The picker dropdown reuses _pdEKLiveCols
+// (a separate cache from _pdLiveColumns so visiting the Columns tab isn't
+// a prerequisite). Save persists via the dedicated /entity-key endpoint.
+let _pdEntityKey=[];     // ordered list of selected column names
+let _pdEKLiveCols=[];    // [{name, data_type, ...}] from the preview endpoint
+
+async function pdLoadEntityKeyColumns(){
+  const p=_pdProfile;
+  if(!p)return;
+  // Reuse the Columns-tab cache when it's already populated for the same
+  // table to avoid a duplicate network round-trip.
+  if(_pdLiveColumns && _pdLiveColumns.length){
+    _pdEKLiveCols=_pdLiveColumns;
+    pdRenderEntityKey();
+    return;
+  }
+  try{
+    const url=`/api/v1/products/data-quality/tables/connections/${p.connection_id}/preview?schema_name=${encodeURIComponent(p.schema_name)}&table_name=${encodeURIComponent(p.table_name)}&limit=1`;
+    const r=await api('GET',url);
+    _pdEKLiveCols=r.columns||[];
+    pdRenderEntityKey();
+  }catch(e){
+    const chips=$('pdef-entity-key-chips');
+    if(chips){
+      chips.innerHTML=`<span class="api" style="font-size:11px;color:var(--err)">Couldn't load columns: ${escapeHtml(e.message)}</span>`;
+    }
+    const sel=$('pdef-entity-key-add');
+    if(sel){
+      sel.disabled=true;
+      sel.innerHTML='<option value="">— columns unavailable —</option>';
+    }
+  }
+}
+
+function pdRenderEntityKey(){
+  const chips=$('pdef-entity-key-chips');
+  const sel=$('pdef-entity-key-add');
+  if(!chips||!sel)return;
+  // Lock badge — tells the user whether scans will auto-update or not.
+  const badge=$('pdef-entity-key-lock-badge');
+  if(badge){
+    const locked=!!(_pdProfile && _pdProfile.entity_key_locked);
+    badge.innerHTML=locked
+      ? `<span class="pill pill-acceptable" title="User-set; scans will not overwrite. Use Reset to release.">🔒 locked</span>`
+      : `<span class="pill pill-no_rules" title="Auto-detect mode: the next scan may populate this from the declared PK.">auto-detect</span>`;
+  }
+  // Chips — ordered, each with × to remove.
+  if(!_pdEntityKey.length){
+    chips.innerHTML='<span class="api" style="font-size:11px">No entity key — uniqueness rules will use legacy globally-unique behaviour.</span>';
+  }else{
+    chips.innerHTML=_pdEntityKey.map((name,idx)=>(
+      `<span class="mono" style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:12px">`
+      +`<span class="cell-mute" style="font-size:10px">${idx+1}.</span>`
+      +`${escapeHtml(name)}`
+      +`<button onclick="pdRemoveEntityKey('${escapeHtml(name).replace(/'/g,"\\'")}')" `
+      +`style="border:0;background:transparent;cursor:pointer;color:#94a3b8;font-size:14px;line-height:1;padding:0" `
+      +`title="Remove from entity key">×</button>`
+      +`</span>`
+    )).join('');
+  }
+  // Dropdown — exclude already-selected columns so we can't add the same
+  // one twice (also matches server-side duplicate validation).
+  const taken=new Set(_pdEntityKey);
+  const opts=_pdEKLiveCols
+    .filter(c=>!taken.has(c.name))
+    .map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}${c.data_type?` <span class="cell-mute">(${escapeHtml(c.data_type)})</span>`:''}</option>`)
+    .join('');
+  sel.innerHTML=`<option value="">— add a column —</option>${opts}`;
+  sel.disabled=!_pdEKLiveCols.length;
+  sel.value='';
+}
+
+function pdAddEntityKey(name){
+  if(!name)return;
+  if(_pdEntityKey.includes(name)){
+    // Defensive — dropdown already filters these out, but a fast double-
+    // click could race.
+    return;
+  }
+  _pdEntityKey.push(name);
+  pdRenderEntityKey();
+}
+
+function pdRemoveEntityKey(name){
+  _pdEntityKey=_pdEntityKey.filter(n=>n!==name);
+  pdRenderEntityKey();
+}
+
+function pdClearEntityKey(){
+  // Local-only — empties the chips but doesn't persist. Save then writes
+  // the empty list AND locks (deliberate "no entity key" choice). Use
+  // pdResetEntityKey for the unlock path.
+  _pdEntityKey=[];
+  pdRenderEntityKey();
+}
+
+async function pdResetEntityKey(){
+  // Unlock path: clears the columns AND releases the lock so the next
+  // scan auto-populates from declared PK / heuristic candidates. Different
+  // from Clear (which is a local-only edit that still locks on Save).
+  if(!_pdProfile)return;
+  if(!confirm('Reset entity key to auto-detect? The next scan will repopulate it from the source PK.'))return;
+  try{
+    const updated=await api('DELETE',
+      '/api/v1/products/data-quality/profiles/'+_pdProfile.id+'/entity-key');
+    if(updated && updated.profile){
+      _pdProfile.entity_key_columns=updated.profile.entity_key_columns||[];
+      _pdProfile.entity_key_locked=!!updated.profile.entity_key_locked;
+      _pdEntityKey=Array.from(_pdProfile.entity_key_columns);
+      pdRenderEntityKey();
+    }
+    toast('Entity key reset — next scan will auto-detect.');
+  }catch(e){
+    toast(e.message||'Failed to reset entity key', false);
+  }
 }
 
 function pdSyncSampling(){
@@ -2959,6 +3111,37 @@ function pdMarkDirty(){
 function pdResetDirty(){
   $('pd-btn-save').disabled=true;
   $('pd-dirty-dot').classList.add('hidden');
+}
+
+// Entity-key has its own save lane (not folded into pdSaveDefinition) so the
+// override can be edited without touching anything else, and the dedicated
+// endpoint validates the list independently. Empty list = clear.
+async function pdSaveEntityKey(){
+  if(!_pdProfile)return;
+  const cols=Array.from(_pdEntityKey||[]);
+  const btn=$('pdef-entity-key-save');
+  if(btn){btn.disabled=true;btn.textContent='Saving…'}
+  try{
+    const updated=await api('PUT',
+      '/api/v1/products/data-quality/profiles/'+_pdProfile.id+'/entity-key',
+      {entity_key_columns:cols});
+    if(updated && updated.profile){
+      _pdProfile.entity_key_columns=updated.profile.entity_key_columns||[];
+      // Re-sync lock state too — the badge flips to "locked" after save.
+      _pdProfile.entity_key_locked=!!updated.profile.entity_key_locked;
+      // Re-sync the working list so subsequent edits start from the
+      // persisted truth (server may normalize/strip on save).
+      _pdEntityKey=Array.from(_pdProfile.entity_key_columns||[]);
+      pdRenderEntityKey();
+    }
+    toast(cols.length
+      ? 'Entity key saved and locked: '+cols.join(', ')
+      : 'Entity key locked-empty — uniqueness rules use legacy behaviour.');
+  }catch(e){
+    toast(e.message||'Failed to save entity key', false);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Save entity key'}
+  }
 }
 
 async function pdSaveDefinition(){

@@ -47,6 +47,18 @@ class UpdateProfileBody(BaseModel):
     # currently re-create the profile or we add a `clear_selected_columns`
     # flag later.
     selected_columns: list[str] | None = None
+    # Same patch semantics as selected_columns. Auto-populated at scan
+    # time from declared PK metadata; users override here when the
+    # declared PK doesn't match the business entity (e.g. claim_id is
+    # the row PK but national_id is what should be checked against).
+    entity_key_columns: list[str] | None = None
+
+
+class EntityKeyBody(BaseModel):
+    """Body for the dedicated entity-key PUT endpoint. Always a list
+    (possibly empty to clear). Empty list = revert to legacy globally-
+    unique behaviour for uniqueness rules on this profile."""
+    entity_key_columns: list[str] = Field(default_factory=list)
 
 
 class CloneProfileBody(BaseModel):
@@ -106,9 +118,40 @@ async def update_profile(
         sample_size=body.sample_size, drill_down=body.drill_down,
         ai_enabled=body.ai_enabled,
         selected_columns=body.selected_columns,
+        entity_key_columns=body.entity_key_columns,
         auth_user=auth_user,
     )
     return {"detail": "Profile updated", "profile": row}
+
+
+@router.put("/{profile_id}/entity-key")
+async def set_entity_key(
+    profile_id: int, body: EntityKeyBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    """Override the table's entity key for uniqueness rules and LOCK the
+    value against scan-time auto-update. Pass an empty list to lock-empty
+    (uniqueness rules will use globally-unique behaviour and the scan
+    will not try to re-populate). To reset to auto-detect mode, use
+    DELETE /entity-key instead."""
+    row = await service.set_entity_key(
+        profile_id, body.entity_key_columns, auth_user=auth_user,
+    )
+    return {"detail": "Entity key updated and locked", "profile": row}
+
+
+@router.delete("/{profile_id}/entity-key")
+async def clear_entity_key(
+    profile_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfileService = Depends(get_profile_service),
+):
+    """Reset entity key to auto-detect mode: clears the columns AND
+    releases the lock so the next scan can re-populate from declared
+    PK / heuristic candidates."""
+    row = await service.clear_entity_key(profile_id, auth_user=auth_user)
+    return {"detail": "Entity key reset to auto-detect", "profile": row}
 
 
 @router.delete("/{profile_id}")
