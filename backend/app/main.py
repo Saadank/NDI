@@ -43,13 +43,25 @@ from app.products.data_quality.ai.routers import (
     proposals as dq_proposals,
 )
 
-# Product: NDMO Compliance
-from app.products.ndmo_compliance.dependencies import require_ndmo_compliance
-from app.products.ndmo_compliance.routers import (
-    documents as ndmo_documents,
-    webhooks as ndmo_webhooks,
-    assessments as ndmo_assessments,
-)
+# Product: NDMO Compliance — optional. Pulls in heavy ML deps (openai,
+# paddleocr, qdrant, fastembed). When the `ndmo` uv extra isn't installed
+# (e.g. DQ-only dev environment), skip registering its routes rather than
+# crashing the whole API at import time.
+try:
+    from app.products.ndmo_compliance.dependencies import require_ndmo_compliance
+    from app.products.ndmo_compliance.routers import (
+        documents as ndmo_documents,
+        webhooks as ndmo_webhooks,
+        assessments as ndmo_assessments,
+    )
+    _NDMO_AVAILABLE = True
+except ModuleNotFoundError as _ndmo_err:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "NDMO Compliance routes disabled — missing dependency: %s. "
+        "Install with: uv sync --extra ndmo", _ndmo_err.name,
+    )
+    _NDMO_AVAILABLE = False
 
 
 @asynccontextmanager
@@ -123,20 +135,21 @@ for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
 # Product: NDMO Compliance — /api/v1/products/ndmo-compliance/...
 # Backend slug stays 'ndmo' (t_products.slug); URL is /ndmo-compliance per spec.
 # Same product-gating pattern as Data Sharing / Data Quality.
-for r in [ndmo_documents, ndmo_assessments]:
-    app.include_router(
-        r.router,
-        prefix="/api/v1/products/ndmo-compliance",
-        dependencies=[Depends(require_ndmo_compliance)],
-    )
+if _NDMO_AVAILABLE:
+    for r in [ndmo_documents, ndmo_assessments]:
+        app.include_router(
+            r.router,
+            prefix="/api/v1/products/ndmo-compliance",
+            dependencies=[Depends(require_ndmo_compliance)],
+        )
 
-# Webhook from MinIO's bucket-notify — intentionally NOT gated by the
-# product dependency (callers are MinIO, not authenticated users; the
-# webhook validates tenant_id by parsing the object key + DB lookup).
-app.include_router(
-    ndmo_webhooks.router,
-    prefix="/api/v1/products/ndmo-compliance",
-)
+    # Webhook from MinIO's bucket-notify — intentionally NOT gated by the
+    # product dependency (callers are MinIO, not authenticated users; the
+    # webhook validates tenant_id by parsing the object key + DB lookup).
+    app.include_router(
+        ndmo_webhooks.router,
+        prefix="/api/v1/products/ndmo-compliance",
+    )
 
 
 @app.get("/health")

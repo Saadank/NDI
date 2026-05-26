@@ -4,7 +4,10 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# Use `npm install` (not `npm ci`) so the build self-heals when the lockfile
+# drifts from package.json — common during active feature work. CI/prod can
+# tighten back to `npm ci` once the lockfile is stable.
+RUN npm install --no-audit --no-fund
 
 COPY . .
 

@@ -23,6 +23,7 @@ dependencies = [
     "httpx>=0.28.0",
     "tzdata>=2024.1",
     "anthropic>=0.40.0",
+    "openpyxl>=3.1.0",          # Excel parsing — IDQP Step 6 imports (Tables 11–13)
 ]
 
 [project.optional-dependencies]
