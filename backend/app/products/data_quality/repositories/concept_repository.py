@@ -19,7 +19,7 @@ class ConceptRepository(PostgresqlAsyncRepository):
             clauses.append("enabled = TRUE")
         return await self._fetch_all(
             f"""SELECT id, tenant_id, dimension, concept, synonyms, rule_type,
-                       parameter, severity, applies_to_types, notes, enabled,
+                       parameter, severity, notes, enabled,
                        is_seed, created_at, updated_at, created_by
                   FROM dq.t_dq_concepts
                  WHERE {' AND '.join(clauses)}
@@ -36,25 +36,25 @@ class ConceptRepository(PostgresqlAsyncRepository):
     async def insert(
         self, *, tenant_id: int, dimension: str, concept: str,
         synonyms: list[str], rule_type: str, parameter: dict, severity: str,
-        applies_to_types: list[str] | None, notes: str | None,
+        notes: str | None,
         enabled: bool, is_seed: bool, created_by: int | None,
     ) -> dict:
         return await self._fetch_row(
             """INSERT INTO dq.t_dq_concepts
                   (tenant_id, dimension, concept, synonyms, rule_type, parameter,
-                   severity, applies_to_types, notes, enabled, is_seed, created_by)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+                   severity, notes, enabled, is_seed, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
                RETURNING *""",
             (tenant_id, dimension, concept, synonyms, rule_type,
              json.dumps(parameter or {}), severity,
-             applies_to_types, notes, enabled, is_seed, created_by),
+             notes, enabled, is_seed, created_by),
         )
 
     async def update(
         self, concept_id: int, tenant_id: int, *,
         synonyms: list[str] | None = None, rule_type: str | None = None,
         parameter: dict | None = None, severity: str | None = None,
-        applies_to_types: list[str] | None = None, notes: str | None = None,
+        notes: str | None = None,
         enabled: bool | None = None,
     ) -> dict:
         # Patch update: each non-None param contributes a SET clause. is_seed
@@ -69,9 +69,6 @@ class ConceptRepository(PostgresqlAsyncRepository):
             args.append(json.dumps(parameter));     sets.append(f"parameter = ${len(args)}::jsonb")
         if severity is not None:
             args.append(severity);                  sets.append(f"severity = ${len(args)}")
-        if applies_to_types is not None:
-            # An empty list normalizes to SQL NULL ("any semantic type").
-            args.append(applies_to_types or None);  sets.append(f"applies_to_types = ${len(args)}")
         if notes is not None:
             args.append(notes);                     sets.append(f"notes = ${len(args)}")
         if enabled is not None:
@@ -113,45 +110,42 @@ class ConceptRepository(PostgresqlAsyncRepository):
     async def upsert_seed(
         self, *, tenant_id: int, dimension: str, concept: str,
         synonyms: list[str], rule_type: str, parameter: dict, severity: str,
-        applies_to_types: list[str] | None, notes: str | None,
+        notes: str | None,
     ) -> str:
         """Insert if missing, do NOTHING if it already exists. Used by the
         seed endpoint — never overwrites a tenant's customized concept."""
         return await self._execute(
             """INSERT INTO dq.t_dq_concepts
                   (tenant_id, dimension, concept, synonyms, rule_type, parameter,
-                   severity, applies_to_types, notes, enabled, is_seed)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, TRUE, TRUE)
+                   severity, notes, enabled, is_seed)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, TRUE, TRUE)
                ON CONFLICT (tenant_id, dimension, concept) DO NOTHING""",
             (tenant_id, dimension, concept, synonyms, rule_type,
-             json.dumps(parameter or {}), severity,
-             applies_to_types, notes),
+             json.dumps(parameter or {}), severity, notes),
         )
 
     async def refresh_seed(
         self, *, tenant_id: int, dimension: str, concept: str,
         synonyms: list[str], rule_type: str, parameter: dict, severity: str,
-        applies_to_types: list[str] | None, notes: str | None,
+        notes: str | None,
     ) -> str:
         """Insert if missing; if it exists AND is still is_seed=TRUE, overwrite
-        synonyms/rule_type/parameter/severity/applies_to_types/notes from the
-        seed. The WHERE on the DO UPDATE protects user-customized rows
-        (is_seed=FALSE), which become no-ops."""
+        synonyms/rule_type/parameter/severity/notes from the seed. The WHERE
+        on the DO UPDATE protects user-customized rows (is_seed=FALSE), which
+        become no-ops."""
         return await self._execute(
             """INSERT INTO dq.t_dq_concepts
                   (tenant_id, dimension, concept, synonyms, rule_type, parameter,
-                   severity, applies_to_types, notes, enabled, is_seed)
-               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, TRUE, TRUE)
+                   severity, notes, enabled, is_seed)
+               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, TRUE, TRUE)
                ON CONFLICT (tenant_id, dimension, concept) DO UPDATE
                   SET synonyms         = EXCLUDED.synonyms,
                       rule_type        = EXCLUDED.rule_type,
                       parameter        = EXCLUDED.parameter,
                       severity         = EXCLUDED.severity,
-                      applies_to_types = EXCLUDED.applies_to_types,
                       notes            = EXCLUDED.notes,
                       updated_at       = CURRENT_TIMESTAMP
                 WHERE dq.t_dq_concepts.is_seed = TRUE""",
             (tenant_id, dimension, concept, synonyms, rule_type,
-             json.dumps(parameter or {}), severity,
-             applies_to_types, notes),
+             json.dumps(parameter or {}), severity, notes),
         )

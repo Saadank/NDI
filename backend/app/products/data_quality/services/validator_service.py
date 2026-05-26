@@ -26,6 +26,9 @@ from app.products.data_quality.repositories.issue_repository import IssueReposit
 from app.products.data_quality.repositories.profile_repository import (
     ProfileRepository,
 )
+from app.products.data_quality.repositories.reference_repository import (
+    ReferenceRepository,
+)
 from app.products.data_quality.services.profiler_service import (
     _PSEUDO_NULL_TOKENS, _qualified_table, _quote_ident, _extract_pattern,
 )
@@ -105,25 +108,6 @@ async def _eval_not_null(gateway, db_type, schema_name, table_name, column_name,
     diag = (f"{vc} of {row_count} rows have NULL"
             if status == "fail" else "no NULL rows")
     return {"row_count": row_count, "violation_count": vc,
-            "violation_rate": _round5(rate), "status": status,
-            "diagnostic_text": diag, "violation_patterns": []}
-
-
-async def _eval_max_null_rate(gateway, db_type, schema_name, table_name, column_name,
-                              row_count, parameter):
-    threshold = float((parameter or {}).get("threshold", 0.0))
-    qcol = _quote_ident(db_type, column_name)
-    qtable = _qualified_table(db_type, schema_name, table_name)
-    sql = f"SELECT COUNT(*) FROM {qtable} WHERE {qcol} IS NULL"
-    nulls, err = await _scalar_count(gateway, sql)
-    if nulls is None:
-        return _error_result(err, sql)
-    rate = (nulls / row_count) if row_count else 0.0
-    status = "fail" if rate > threshold else "pass"
-    diag = (f"null_rate={rate:.4f} exceeds threshold {threshold:.4f}"
-            if status == "fail"
-            else f"null_rate={rate:.4f} within threshold {threshold:.4f}")
-    return {"row_count": row_count, "violation_count": nulls,
             "violation_rate": _round5(rate), "status": status,
             "diagnostic_text": diag, "violation_patterns": []}
 
@@ -272,9 +256,9 @@ async def _eval_format_regex(gateway, db_type, schema_name, table_name, column_n
         return _error_result(f"format_regex unsupported on {db_type}", "")
 
     # Count violators (NOT match), excluding both real NULL and pseudo-null
-    # tokens. Both are completeness's job: NULL via not_null/max_null_rate,
-    # "N/A"/"null"/"-" via no_pseudo_nulls. Reporting them here would
-    # double-count the same root cause.
+    # tokens. Both are completeness's job: NULL via not_null, "N/A"/"null"/"-"
+    # via no_pseudo_nulls. Reporting them here would double-count the same
+    # root cause.
     no_pseudo = _pseudo_null_exclusion(db_type, qcol)
     sql = (f"SELECT COUNT(*) FROM {qtable} "
            f"WHERE {qcol} IS NOT NULL AND {no_pseudo} AND NOT ({pred})")
@@ -310,12 +294,127 @@ async def _eval_format_regex(gateway, db_type, schema_name, table_name, column_n
             "diagnostic_text": diag, "violation_patterns": patterns}
 
 
+async def _eval_dictionary_match(gateway, db_type, schema_name, table_name, column_name,
+                                 row_count, parameter):
+    """Values in the column must appear in a named reference list (e.g.
+    "Saudi Banks", "GCC Countries"). The concept's parameter points at the
+    reference by id: ``{"reference_id": 42}``; the validator fetches the
+    actual values from t_dq_reference_values at scan time.
+
+    Like ``format_regex``, this excludes NULL and pseudo-null tokens — those
+    are reported by completeness rules, not as validity violations.
+
+    The reference (and its values + case_sensitive flag) come from a
+    per-scan cache that ``validate_scan`` populates in ``parameter`` under
+    the ``__reference`` key — avoids re-querying the same reference once
+    per rule when many columns point at the same list."""
+    cached = (parameter or {}).get("__reference")
+    if not cached or not isinstance(cached, dict):
+        return _error_result(
+            "dictionary_match rule has no resolvable reference "
+            "(reference_id missing or reference deleted)", "",
+        )
+    raw_values = cached.get("values") or []
+    case_sensitive = bool(cached.get("case_sensitive", False))
+    ref_name = cached.get("name") or f"reference#{cached.get('id')}"
+    if not raw_values:
+        return _error_result(
+            f"reference '{ref_name}' is empty — add values or disable the concept",
+            "",
+        )
+
+    # Normalize values up-front. Drop blanks; for case-insensitive, lower +
+    # trim so the SQL comparison can do the same on the column side.
+    values: list[str] = []
+    for v in raw_values:
+        if v is None:
+            continue
+        s = str(v)
+        s = s if case_sensitive else s.strip().lower()
+        if s == "":
+            continue
+        if len(s) > 200:
+            return _error_result(
+                f"reference value exceeds 200 chars (got {len(s)})", "",
+            )
+        values.append(s)
+    if not values:
+        return _error_result(
+            f"reference '{ref_name}' has no usable values after normalization",
+            "",
+        )
+    values = list(dict.fromkeys(values))
+
+    qcol = _quote_ident(db_type, column_name)
+    qtable = _qualified_table(db_type, schema_name, table_name)
+    no_pseudo = _pseudo_null_exclusion(db_type, qcol)
+
+    # Cast column to text for comparison so integer-typed columns
+    # (e.g. a currency_code stored as smallint) still work. The exact
+    # cast spelling differs by dialect.
+    cast_target = "TEXT" if db_type == "postgresql" else (
+        "NVARCHAR(MAX)" if db_type == "mssql" else "CHAR")
+    col_expr = f"CAST({qcol} AS {cast_target})"
+    if not case_sensitive:
+        col_expr = f"LOWER(TRIM({col_expr}))"
+
+    # Single-quote each value, escaping embedded apostrophes for SQL literal
+    # safety. Values themselves are not user-typed at scan-time — they were
+    # vetted by sql_safety.check_parameter at save time — but we still
+    # double-quote defensively.
+    in_list = ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+
+    sql = (
+        f"SELECT COUNT(*) FROM {qtable} "
+        f"WHERE {qcol} IS NOT NULL AND {no_pseudo} "
+        f"AND {col_expr} NOT IN ({in_list})"
+    )
+    vc, err = await _scalar_count(gateway, sql)
+    if vc is None:
+        return _error_result(err, sql)
+
+    # Sample violators and bucket them by raw value (truncated). Counts
+    # only — like format_regex pattern signatures, never the raw rows.
+    patterns: list[dict] = []
+    if vc > 0:
+        sample_sql = (
+            f"SELECT {qcol} FROM {qtable} "
+            f"WHERE {qcol} IS NOT NULL AND {no_pseudo} "
+            f"AND {col_expr} NOT IN ({in_list}) "
+            f"LIMIT {_VIOLATION_PATTERN_SAMPLE}"
+        )
+        sr = await gateway.execute_query(sample_sql)
+        if sr.success and sr.data:
+            counts: dict[str, int] = {}
+            for row in sr.data["rows"]:
+                v = row[0]
+                if v is None:
+                    continue
+                key = str(v)[:80]
+                counts[key] = counts.get(key, 0) + 1
+            ranked = sorted(counts.items(), key=lambda kv: -kv[1])[:_TOP_VIOLATION_PATTERNS_LIMIT]
+            patterns = [{"pattern": p, "count": c} for p, c in ranked]
+
+    rate = (vc / row_count) if row_count else None
+    status = "fail" if vc > 0 else "pass"
+    if status == "fail":
+        sample_str = ", ".join(p["pattern"] for p in patterns[:3])
+        diag = (f"{vc} rows have a value not in reference '{ref_name}' "
+                f"({len(values)} entries; sample: {sample_str})")
+    else:
+        diag = (f"every non-null row matches reference '{ref_name}' "
+                f"({len(values)} entries)")
+    return {"row_count": row_count, "violation_count": vc,
+            "violation_rate": _round5(rate), "status": status,
+            "diagnostic_text": diag, "violation_patterns": patterns}
+
+
 _EVALUATORS = {
     "not_null": _eval_not_null,
-    "max_null_rate": _eval_max_null_rate,
     "no_pseudo_nulls": _eval_no_pseudo_nulls,
     "unique": _eval_unique,
     "format_regex": _eval_format_regex,
+    "dictionary_match": _eval_dictionary_match,
 }
 
 
@@ -342,6 +441,7 @@ class ValidatorService:
         self.active_repo = ActiveRuleRepository()
         self.issue_repo = IssueRepository()
         self.profile_repo = ProfileRepository()
+        self.reference_repo = ReferenceRepository()
 
     async def validate_scan(
         self, *, scan_id: int, tenant_id: int, profile_id: int,
@@ -378,6 +478,31 @@ class ValidatorService:
             (profile_row or {}).get("entity_key_columns") or []
         )
 
+        # Resolve every dictionary_match rule's referenced list up-front.
+        # Many columns can point at the same reference (one Saudi-banks list
+        # powers rules on bank_name, issuing_bank, payee_bank, …), so we
+        # cache by reference_id and reuse across rules in this scan.
+        reference_cache: dict[int, dict] = {}
+        for r in rules:
+            if r["rule_type"] != "dictionary_match":
+                continue
+            param = _coerce_jsonb(r["parameter"])
+            ref_id = (param or {}).get("reference_id") if isinstance(param, dict) else None
+            if not isinstance(ref_id, int) or ref_id in reference_cache:
+                continue
+            ref_row = await self.reference_repo.find_by_id(ref_id, tenant_id)
+            if not ref_row:
+                # Mark as resolved-but-missing so the per-rule evaluator can
+                # emit a clean error instead of crashing.
+                reference_cache[ref_id] = {"id": ref_id, "name": None,
+                                            "case_sensitive": False, "values": []}
+                continue
+            values = await self.reference_repo.list_values_for_validator(ref_id)
+            reference_cache[ref_id] = {
+                "id": ref_id, "name": ref_row["name"],
+                "case_sensitive": ref_row["case_sensitive"], "values": values,
+            }
+
         summary = {"evaluated": 0, "fail": 0, "pass": 0, "error": 0}
         for rule in rules:
             evaluator = _EVALUATORS.get(rule["rule_type"])
@@ -397,6 +522,18 @@ class ValidatorService:
                         parameter = {
                             **(parameter if isinstance(parameter, dict) else {}),
                             "__entity_key_columns": entity_key_columns,
+                        }
+                    if rule["rule_type"] == "dictionary_match":
+                        # Thread the resolved reference (values + case flag)
+                        # into the evaluator without re-querying. Missing or
+                        # non-int reference_id → cache lookup returns None
+                        # and the evaluator emits a clean error.
+                        ref_id = (parameter or {}).get("reference_id") \
+                            if isinstance(parameter, dict) else None
+                        cached = reference_cache.get(ref_id) if isinstance(ref_id, int) else None
+                        parameter = {
+                            **(parameter if isinstance(parameter, dict) else {}),
+                            "__reference": cached,
                         }
                     result = await evaluator(
                         gateway, db_type, schema_name, table_name,

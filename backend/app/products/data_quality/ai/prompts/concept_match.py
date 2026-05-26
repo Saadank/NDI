@@ -23,9 +23,7 @@ Each dictionary concept declares:
 - dimension: completeness | validity | uniqueness
 - concept: short stable identifier
 - synonyms: column-name patterns this concept answers to
-- rule_type: not_null | max_null_rate | no_pseudo_nulls | unique | format_regex
-- applies_to_types: which table semantic types this concept applies on \
-(empty list = applies to any semantic type)
+- rule_type: not_null | no_pseudo_nulls | unique | format_regex
 - notes: free-form context
 
 Confidence levels:
@@ -38,8 +36,6 @@ an email column) but not a clear synonym. Awaits human approval.
 Rules:
 - Only return concepts that match. If nothing matches, return an empty array.
 - Only return concept_ids that exist in the supplied dictionary.
-- Ignore concepts whose applies_to_types is non-empty and does NOT include \
-the table's semantic_type.
 - Be conservative — never invent concepts.
 - A column may match multiple concepts (e.g. a primary identifier column \
 matches both a uniqueness concept AND a completeness one).
@@ -96,7 +92,6 @@ def _format_concepts(concepts: list[dict]) -> str:
             "concept": c["concept"],
             "synonyms": c.get("synonyms") or [],
             "rule_type": c["rule_type"],
-            "applies_to_types": c.get("applies_to_types") or [],
             "notes": c.get("notes") or "",
         }
         for c in concepts if c.get("enabled", True)

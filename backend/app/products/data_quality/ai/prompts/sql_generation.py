@@ -24,8 +24,6 @@ describing the parameter the deterministic rule engine should use.
 
 Supported rule types:
   not_null         — no parameter. Use null.
-  max_null_rate    — float in [0, 1]. Use the user's threshold if \
-provided, else 0.05 unless context strongly suggests otherwise.
   no_pseudo_nulls  — no parameter. Use null.
   unique           — no parameter. Use null.
   format_regex     — a regex string. Anchor with ^...$. Escape literal \
@@ -33,6 +31,10 @@ characters. Examples:
                        email   -> ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$
                        Saudi ID -> ^[12][0-9]{9}$
                        ISO date -> ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+- For closed enumerable lists (bank names, country codes, gender codes), \
+do NOT enumerate them yourself — return rule_type=null with \
+error_reason="needs a Reference; user attaches in the UI" and let the \
+user pick a reference in the References tab.
 
 Rules:
 - Return JSON only. No commentary, no markdown fences.
@@ -46,7 +48,7 @@ you're guessing.
 
 Return JSON with this exact shape:
 {
-  "rule_type": "format_regex|not_null|max_null_rate|no_pseudo_nulls|unique" | null,
+  "rule_type": "format_regex|not_null|no_pseudo_nulls|unique" | null,
   "parameter": "<value>" or null,
   "confidence": "HIGH|MEDIUM|LOW" or null,
   "reasoning": "<one short sentence>",

@@ -639,7 +639,6 @@ class BusinessRuleIngestService:
             "parameter": parameter,
             "severity": severity,
             "synonyms": synonyms,
-            "applies_to_types": [],
             "_source_rule_name": rule_name,
             "_target_table": table,
             "_target_column": column,

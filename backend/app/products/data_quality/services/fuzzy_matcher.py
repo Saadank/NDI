@@ -125,17 +125,12 @@ def match_column_against_synonyms(
 
 def match_column_against_concepts(
     column_name: str, concepts: list[dict],
-    *, semantic_type: str | None = None,
 ) -> list[dict]:
     """For one column, evaluate every concept and return the (potentially
-    multi-concept) fuzzy matches. Concepts whose `applies_to_types` excludes
-    the table's semantic type are skipped early."""
+    multi-concept) fuzzy matches."""
     matches: list[dict] = []
     for c in concepts:
         if not c.get("enabled", True):
-            continue
-        applies = c.get("applies_to_types")
-        if applies and semantic_type and semantic_type not in applies:
             continue
         score, conf = match_column_against_synonyms(column_name, c.get("synonyms") or [])
         if conf is None:

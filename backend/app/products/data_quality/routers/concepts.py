@@ -18,7 +18,6 @@ class CreateConceptBody(BaseModel):
     rule_type: str
     parameter: dict = Field(default_factory=dict)
     severity: str = "medium"
-    applies_to_types: list[str] | None = None
     notes: str | None = None
     enabled: bool = True
 
@@ -28,7 +27,6 @@ class UpdateConceptBody(BaseModel):
     rule_type: str | None = None
     parameter: dict | None = None
     severity: str | None = None
-    applies_to_types: list[str] | None = None
     notes: str | None = None
     enabled: bool | None = None
 
@@ -56,7 +54,7 @@ async def create_concept(
         dimension=body.dimension, concept=body.concept,
         synonyms=body.synonyms, rule_type=body.rule_type,
         parameter=body.parameter, severity=body.severity,
-        applies_to_types=body.applies_to_types, notes=body.notes,
+        notes=body.notes,
         enabled=body.enabled, auth_user=auth_user,
     )
     return {"detail": "Concept created", "concept": row}
@@ -82,7 +80,7 @@ async def update_concept(
         concept_id,
         synonyms=body.synonyms, rule_type=body.rule_type,
         parameter=body.parameter, severity=body.severity,
-        applies_to_types=body.applies_to_types, notes=body.notes,
+        notes=body.notes,
         enabled=body.enabled, auth_user=auth_user,
     )
     return {"detail": "Concept updated", "concept": row}

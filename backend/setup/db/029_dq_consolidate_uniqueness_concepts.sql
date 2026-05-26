@@ -27,13 +27,10 @@
 --    three legacy concepts (enabled OR disabled — a previous botched run
 --    may have disabled them already, but we still need to migrate their
 --    rule attachments). ON CONFLICT keeps the operation idempotent.
---
---    `applies_to_types` is VARCHAR(50)[] — bare NULL gets inferred as
---    TEXT and the implicit cast rejects, so we type the NULL explicitly.
 -- ---------------------------------------------------------------------------
 INSERT INTO dq.t_dq_concepts (
     tenant_id, dimension, concept, synonyms,
-    rule_type, parameter, severity, applies_to_types,
+    rule_type, parameter, severity,
     notes, enabled, is_seed
 )
 SELECT DISTINCT
@@ -51,7 +48,6 @@ SELECT DISTINCT
     'unique',
     '{}'::JSONB,
     'high',
-    NULL::VARCHAR(50)[],
     'Column values must be unique. When the table has an entity_key_columns configured, ' ||
     'uniqueness is checked across distinct entity keys (one client repeating the same mobile ' ||
     'across many claims is fine; two clients sharing a mobile is a violation). When no entity ' ||

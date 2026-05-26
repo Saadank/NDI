@@ -33,6 +33,7 @@ from app.products.data_quality.routers import (
     profiles as dq_profiles,
     scores as dq_scores,
     exceptions as dq_exceptions,
+    references as dq_references,
 )
 # LLM-touching DQ routes — same product gate, separate import to keep
 # the boundary in main.py mirror what's in the source tree.
@@ -104,7 +105,7 @@ app.include_router(pickup.router, prefix="/api/v1")
 # the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
 for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
           dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions,
-          dq_concepts_ai, dq_imports, dq_proposals]:
+          dq_references, dq_concepts_ai, dq_imports, dq_proposals]:
     app.include_router(
         r.router,
         prefix="/api/v1/products/data-quality",

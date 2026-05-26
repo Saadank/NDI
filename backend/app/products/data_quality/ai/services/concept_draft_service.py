@@ -20,6 +20,7 @@ import re
 
 from app.products.data_quality.ai.client import get_llm_client
 from app.products.data_quality.ai.prompts import concept_draft as prompt
+from app.products.data_quality.ai.prompts import dictionary_draft as dict_prompt
 from app.products.data_quality.ai.prompts import regex_draft as regex_prompt
 from app.products.data_quality.ai.repositories.llm_call_repository import (
     LlmCallRepository,
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 _PURPOSE = "concept_draft"
 _PURPOSE_REGEX = "regex_draft"
+_PURPOSE_DICT = "dictionary_draft"
 _VALID_DIMENSIONS = {"completeness", "validity", "uniqueness"}
 
 
@@ -224,6 +226,86 @@ class ConceptDraftService:
                           prompt_hash=prompt_hash, response_hash=response_hash,
                           purpose=_PURPOSE_REGEX,
                           prompt_version=regex_prompt.PROMPT_VERSION)
+        return {
+            "status": "ok",
+            "draft": model.model_dump(),
+            "latency_ms": result.latency_ms,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+        }
+
+    async def draft_dictionary(
+        self, *, nl_text: str, concept_name: str | None,
+        current_values: list[str] | None, auth_user: AuthUser,
+    ) -> dict:
+        """Generate a list of allowed values from a NL description.
+        Used by the Edit-concept modal's 'Ask AI to draft values' button
+        for dictionary_match concepts."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        if not nl_text or not nl_text.strip():
+            raise ValidationException("nl_text is required")
+        if len(nl_text) > 2000:
+            raise ValidationException("nl_text too long (max 2000 chars)")
+
+        client = get_llm_client()
+        if client is None:
+            return {
+                "status": "llm_unavailable",
+                "error": "DQ_LLM_PROVIDER not configured or LLM unreachable",
+            }
+
+        safe_text = pii_anonymizer.anonymize_text(nl_text)
+        system = dict_prompt.system_prompt()
+        user = dict_prompt.user_prompt(safe_text, concept_name, current_values)
+
+        # Bigger token cap than regex — value lists can run a few hundred
+        # entries (country codes + transliterations etc.).
+        result = await client.call(
+            system=system, user=user,
+            json_mode=True, max_tokens=2048, temperature=0.2,
+        )
+
+        prompt_hash = hashlib.sha256(
+            (system + "\n---\n" + user).encode("utf-8")
+        ).hexdigest()
+        response_hash = (
+            hashlib.sha256(result.text.encode("utf-8")).hexdigest()
+            if result.text else None
+        )
+
+        if not result.success:
+            await self._audit(auth_user, result, status="api_error",
+                              prompt_hash=prompt_hash, response_hash=response_hash,
+                              purpose=_PURPOSE_DICT,
+                              prompt_version=dict_prompt.PROMPT_VERSION)
+            return {"status": "llm_error", "error": result.error,
+                    "latency_ms": result.latency_ms}
+
+        model, err = validate_response(_PURPOSE_DICT, result.parsed_json)
+        if err is not None or model is None:
+            await self._audit(auth_user, result, status="validator_failed",
+                              error=err, prompt_hash=prompt_hash,
+                              response_hash=response_hash,
+                              purpose=_PURPOSE_DICT,
+                              prompt_version=dict_prompt.PROMPT_VERSION)
+            return {"status": "invalid_response", "error": err,
+                    "raw": result.text[:400], "latency_ms": result.latency_ms}
+
+        if not model.values:
+            await self._audit(auth_user, result, status="validator_failed",
+                              error="LLM returned an empty values list",
+                              prompt_hash=prompt_hash,
+                              response_hash=response_hash,
+                              purpose=_PURPOSE_DICT,
+                              prompt_version=dict_prompt.PROMPT_VERSION)
+            return {"status": "invalid_response",
+                    "error": "LLM returned an empty values list",
+                    "latency_ms": result.latency_ms}
+
+        await self._audit(auth_user, result, status="ok",
+                          prompt_hash=prompt_hash, response_hash=response_hash,
+                          purpose=_PURPOSE_DICT,
+                          prompt_version=dict_prompt.PROMPT_VERSION)
         return {
             "status": "ok",
             "draft": model.model_dump(),

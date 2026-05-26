@@ -2,10 +2,10 @@
 
 User types something like "Email column must always be present and look
 like an email", optionally picks a dimension hint, and the LLM drafts a
-full concept (name, dimension, rule_type, parameter, severity, synonyms,
-applies_to_types). The reviewer is the user themselves, in real-time, via
-the Dictionary 'Draft with AI' modal — so this path doesn't go through
-``t_dq_proposals``; the user edits and saves immediately.
+full concept (name, dimension, rule_type, parameter, severity, synonyms).
+The reviewer is the user themselves, in real-time, via the Dictionary
+'Draft with AI' modal — so this path doesn't go through ``t_dq_proposals``;
+the user edits and saves immediately.
 
 Audited via ``t_dq_llm_calls`` like every other LLM purpose.
 """
@@ -23,21 +23,23 @@ A concept declares:
 - name: short stable identifier (snake_case, e.g. "is_email" or \
 "national_id_format"). 1-120 chars, letters/digits/underscores only.
 - dimension: one of "completeness", "validity", "uniqueness".
-- rule_type: one of "not_null", "max_null_rate", "no_pseudo_nulls", \
-"unique", "format_regex". Pick the type that best matches the user's intent:
+- rule_type: one of "not_null", "no_pseudo_nulls", "unique", \
+"format_regex". Pick the type that best matches the user's intent:
   * not_null         — column must never be NULL (no parameter)
-  * max_null_rate    — allow up to N% NULLs (parameter is a float 0-1)
   * no_pseudo_nulls  — disallow "N/A", "?", "tbd" sentinels (no parameter)
   * unique           — column values must be unique (no parameter)
   * format_regex     — values must match a regex (parameter is the regex)
-- parameter: depends on rule_type (see above). Use null when not applicable.
+- If the user describes an enumerable list of allowed values (bank names, \
+country codes, gender codes, etc.), do NOT invent the list yourself — \
+return rule_type=null with error_reason="dictionary_match needs a \
+reference; user should create one in the References tab and attach it \
+manually". The user picks the reference in the UI.
+- parameter: depends on rule_type (regex string for format_regex; null \
+for the other three).
 - severity: "critical" | "high" | "medium" | "low".
 - synonyms: short list of column-name patterns this concept answers to \
 (e.g. ["email", "user_email", "contact_email"]). May include other languages \
 (Arabic, transliterations) when the user mentions multilingual data.
-- applies_to_types: which table semantic types this applies to. Use \
-empty list when it applies to any table. Values: "master_data", \
-"transaction", "event_log", "reference", "staging", "snapshot".
 - confidence: "HIGH" | "MEDIUM" | "LOW" — how confident YOU are that this \
 draft captures the user's intent.
 - reasoning: one short sentence explaining your choice.
@@ -54,11 +56,10 @@ Return JSON only, with this exact shape:
 {
   "name": "<snake_case_identifier>",
   "dimension": "completeness|validity|uniqueness",
-  "rule_type": "not_null|max_null_rate|no_pseudo_nulls|unique|format_regex",
+  "rule_type": "not_null|no_pseudo_nulls|unique|format_regex",
   "parameter": "<value>" or null,
   "severity": "critical|high|medium|low",
   "synonyms": ["<lowercase>", ...],
-  "applies_to_types": ["<semantic_type>", ...],
   "confidence": "HIGH|MEDIUM|LOW",
   "reasoning": "<one short sentence>"
 }

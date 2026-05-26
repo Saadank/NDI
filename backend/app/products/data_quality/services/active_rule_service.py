@@ -253,7 +253,7 @@ class ActiveRuleService:
 
         fuzzy_results: list[list[dict]] = [
             fuzzy_matcher.match_column_against_concepts(
-                col["column_name"], concepts, semantic_type=semantic_type,
+                col["column_name"], concepts,
             )
             for col in columns
         ]

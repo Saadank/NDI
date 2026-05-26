@@ -13,10 +13,10 @@ from __future__ import annotations
 # implemented in services/validator_service.py before they can ride.
 RULE_TYPE_WHITELIST: frozenset[str] = frozenset({
     "not_null",
-    "max_null_rate",
     "no_pseudo_nulls",
     "unique",
     "format_regex",
+    "dictionary_match",
 })
 
 

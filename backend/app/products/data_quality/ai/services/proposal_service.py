@@ -9,10 +9,10 @@ What "approve a proposal" means today (kind=new_concept only — other
 kinds land in Steps 6.4/6.6 and aren't yet generated):
 
   1. Read payload {name, dimension, rule_type, parameter, severity,
-     synonyms, applies_to_types, _target_table, _target_column}.
+     synonyms, _target_table, _target_column}.
   2. Look up or insert the concept at (tenant_id, dimension, name).
      Parameter is shaped per rule_type (format_regex -> {"pattern": ...},
-     max_null_rate -> {"threshold": ...}, others -> {}).
+     others -> {}).
   3. If _target_table is set AND a profile exists for that table in
      the tenant, upsert an active_rule binding with matched_by=manual,
      confidence=high, approval_status=auto_applied. Picks the first
@@ -83,11 +83,21 @@ def _shape_parameter(rule_type: str, raw: str | None) -> dict:
         return {}
     if rule_type == "format_regex":
         return {"pattern": raw}
-    if rule_type == "max_null_rate":
+    if rule_type == "dictionary_match":
+        # raw is either a bare integer ("42") or a JSON object
+        # {"reference_id": 42}. Either way it has to resolve to a positive
+        # int — concept_service._validate_parameter checks again on save.
+        s = raw.strip()
+        if s.isdigit():
+            return {"reference_id": int(s)}
+        import json as _json
         try:
-            return {"threshold": float(raw)}
-        except (TypeError, ValueError):
-            return {"threshold": 0.05}
+            decoded = _json.loads(s)
+        except _json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict) and isinstance(decoded.get("reference_id"), int):
+            return {"reference_id": decoded["reference_id"]}
+        return {}
     # not_null / no_pseudo_nulls / unique take no parameter.
     return {}
 
@@ -230,7 +240,6 @@ class ProposalService:
         parameter_raw = payload.get("parameter")
         severity = payload.get("severity") or "medium"
         synonyms = payload.get("synonyms") or []
-        applies_to = payload.get("applies_to_types") or []
         target_table = payload.get("_target_table")
         target_column = payload.get("_target_column")
 
@@ -256,7 +265,6 @@ class ProposalService:
                 rule_type=rule_type,
                 parameter=_shape_parameter(rule_type, parameter_raw),
                 severity=severity,
-                applies_to_types=applies_to,
                 enabled=True,
             )
         else:
@@ -266,7 +274,6 @@ class ProposalService:
                 synonyms=synonyms, rule_type=rule_type,
                 parameter=_shape_parameter(rule_type, parameter_raw),
                 severity=severity,
-                applies_to_types=(applies_to or None),
                 notes=None, enabled=True, is_seed=False,
                 created_by=auth_user.user_id,
             )

@@ -28,110 +28,186 @@ _RE_CCY_ISO4217 = r"^[A-Z]{3}$"
 
 
 # ---------------------------------------------------------------------------
+# Reference data seeds — reusable named value lists installed alongside the
+# concept dictionary. Each reference can be pointed at by one or more
+# ``dictionary_match`` concepts (see VALIDITY below). Tenants edit these in
+# the References tab; concepts pick them via a dropdown.
+# ---------------------------------------------------------------------------
+REFERENCES: list[dict] = [
+    {
+        "name": "Common Currencies (ISO 4217)",
+        "description": "Top ~50 ISO 4217 currency codes — covers ~99% of real-world flows.",
+        "case_sensitive": True,
+        "values": [
+            "USD","EUR","GBP","JPY","CNY","CHF","CAD","AUD","NZD","SEK","NOK","DKK",
+            "SGD","HKD","KRW","INR","BRL","MXN","ZAR","TRY","RUB","PLN","CZK","HUF",
+            "ILS","THB","MYR","IDR","PHP","VND","TWD","SAR","AED","KWD","BHD","OMR",
+            "QAR","JOD","EGP","LBP","IQD","SYP","YER","DZD","TND","MAD","NGN","KES",
+            "GHS","UAH",
+        ],
+    },
+    {
+        "name": "GCC Countries (ISO alpha-2)",
+        "description": "GCC member-state alpha-2 codes.",
+        "case_sensitive": True,
+        "values": ["SA","AE","KW","QA","BH","OM"],
+    },
+    {
+        "name": "Saudi Banks",
+        "description": "Common short names of Saudi commercial banks — review and "
+                       "edit to match your tenant's approved list before relying on it.",
+        "case_sensitive": False,
+        "values": [
+            "Saudi National Bank", "Al Rajhi Bank", "Riyad Bank",
+            "Banque Saudi Fransi", "Arab National Bank", "Bank AlBilad",
+            "Bank Aljazira", "The Saudi Investment Bank", "Alinma Bank",
+            "Emirates NBD", "Gulf International Bank",
+        ],
+    },
+    {
+        "name": "Gender Codes",
+        "description": "Common gender categories — case-insensitive.",
+        "case_sensitive": False,
+        "values": ["male", "female", "other", "prefer not to say"],
+    },
+]
+
+
+def all_seed_references() -> list[dict]:
+    """Return the seed reference list. Kept as a function so callers don't
+    accidentally mutate the module-level constant."""
+    # Shallow-copy each dict so callers can normalize values without
+    # poisoning the seed for the next tenant.
+    return [
+        {**r, "values": list(r["values"])}
+        for r in REFERENCES
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Validity (10) — does the value match a known shape?
 # ---------------------------------------------------------------------------
 VALIDITY: list[dict] = [
     {"concept": "email",
      "synonyms": ["email", "e_mail", "user_email", "contact_email", "email_addr", "email_address", "mail"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_EMAIL},
-     "severity": "high", "applies_to_types": None,
+     "severity": "high",
      "notes": "Standard RFC-ish email shape."},
 
     {"concept": "phone",
      "synonyms": ["phone", "mobile", "tel", "telephone", "contact_number", "phone_number", "cell", "msisdn"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_PHONE},
-     "severity": "medium", "applies_to_types": None,
+     "severity": "medium",
      "notes": "Loose phone — digits with optional + and separators."},
 
     {"concept": "iban",
      "synonyms": ["iban", "bank_account", "account_iban"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_IBAN},
-     "severity": "high", "applies_to_types": None,
+     "severity": "high",
      "notes": "ISO 13616 IBAN — country letters + check digits + alphanumerics."},
 
     {"concept": "national_id",
      "synonyms": ["national_id", "ssn", "citizen_id", "id_number", "government_id", "tax_id"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_NATIONAL_ID},
-     "severity": "critical", "applies_to_types": None,
+     "severity": "critical",
      "notes": "Generic 9–15 digit national identifier. Tighten per locale."},
 
     {"concept": "url",
      "synonyms": ["url", "website", "homepage", "link", "site"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_URL},
-     "severity": "low", "applies_to_types": None,
+     "severity": "low",
      "notes": "http/https URL."},
 
     {"concept": "uuid",
      "synonyms": ["uuid", "guid"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_UUID},
-     "severity": "medium", "applies_to_types": None,
+     "severity": "medium",
      "notes": "UUID/GUID 8-4-4-4-12."},
 
     {"concept": "iso_date_string",
      "synonyms": ["date", "event_date", "transaction_date", "value_date"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_ISO_DATE},
-     "severity": "medium", "applies_to_types": None,
+     "severity": "medium",
      "notes": "Use only for columns stored as strings; native DATE/TIMESTAMP types are validated by the DB."},
 
     {"concept": "ipv4",
      "synonyms": ["ip", "ip_address", "ipv4", "client_ip", "remote_ip"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_IPV4},
-     "severity": "low", "applies_to_types": None,
+     "severity": "low",
      "notes": "Dotted-quad IPv4."},
 
     {"concept": "postal_code",
      "synonyms": ["postal_code", "zip", "zip_code", "postcode"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_POSTAL_CODE},
-     "severity": "low", "applies_to_types": None,
+     "severity": "low",
      "notes": "Loose postal-code shape; tighten per locale (e.g. Saudi 5-digit, US 5+4)."},
 
     {"concept": "currency_code",
      "synonyms": ["currency", "currency_code", "ccy", "iso_currency"],
      "rule_type": "format_regex", "parameter": {"pattern": _RE_CCY_ISO4217},
-     "severity": "medium", "applies_to_types": None,
+     "severity": "medium",
      "notes": "ISO 4217 — three uppercase letters."},
+
+    # ---- dictionary_match seeds (reference-based) ----
+    # These point at seed References installed alongside the dictionary.
+    # The ``_seed_reference_name`` placeholder is resolved to a real
+    # ``reference_id`` per tenant by ConceptService at install time.
+    {"concept": "currency_code_enum",
+     "synonyms": ["currency_iso", "iso_4217", "ccy_iso", "currency_enum"],
+     "rule_type": "dictionary_match",
+     "parameter": {"_seed_reference_name": "Common Currencies (ISO 4217)"},
+     "severity": "medium",
+     "notes": "Currency code must be one of the entries in the 'Common "
+              "Currencies (ISO 4217)' reference. Stricter than the regex "
+              "concept — rejects three-letter strings that aren't real "
+              "currencies. Edit the reference to add niche codes."},
+
+    {"concept": "gcc_country_code",
+     "synonyms": ["country_code", "country", "iso_country", "country_iso"],
+     "rule_type": "dictionary_match",
+     "parameter": {"_seed_reference_name": "GCC Countries (ISO alpha-2)"},
+     "severity": "high",
+     "notes": "Country code must be one of the GCC member states. "
+              "Re-point at a wider reference for global tenants."},
+
+    {"concept": "gender_code",
+     "synonyms": ["gender", "sex", "gender_code"],
+     "rule_type": "dictionary_match",
+     "parameter": {"_seed_reference_name": "Gender Codes"},
+     "severity": "low",
+     "notes": "Gender must be one of the entries in the 'Gender Codes' "
+              "reference. Edit per HR/clinical policy."},
+
+    {"concept": "bank_name_enum_example",
+     "synonyms": ["bank_name", "bank", "issuing_bank", "payee_bank"],
+     "rule_type": "dictionary_match",
+     "parameter": {"_seed_reference_name": "Saudi Banks"},
+     "severity": "medium",
+     "notes": "Bank name must be one of the entries in the 'Saudi Banks' "
+              "reference. Review and edit that reference to match your "
+              "tenant's approved list before enabling."},
 ]
 
 
 # ---------------------------------------------------------------------------
-# Completeness (6) — should the column be filled?
+# Completeness (2) — should the column be filled?
+#
+# Single rule type: not_null. Any row with a null in a matched column is a
+# violation. Users can add more not_null concepts via the editor and attach
+# them to any column they want.
 # ---------------------------------------------------------------------------
 COMPLETENESS: list[dict] = [
     {"concept": "primary_identifier_required",
      "synonyms": ["id", "uuid", "guid", "key", "primary_key", "pk"],
      "rule_type": "not_null", "parameter": {},
-     "severity": "critical", "applies_to_types": None,
+     "severity": "critical",
      "notes": "Primary identifier-shaped columns must be present on every row. Real PK columns are already enforced by the DB; this fires for *de-facto* identifier columns without a PK constraint."},
 
     {"concept": "creation_timestamp_required",
      "synonyms": ["created_at", "creation_date", "date_created", "inserted_at", "insert_ts", "created_on"],
      "rule_type": "not_null", "parameter": {},
-     "severity": "high", "applies_to_types": None,
+     "severity": "high",
      "notes": "Every row should know when it was created."},
-
-    {"concept": "email_required",
-     "synonyms": ["email", "e_mail", "user_email", "contact_email", "email_addr", "email_address"],
-     "rule_type": "max_null_rate", "parameter": {"threshold": 0.0},
-     "severity": "high", "applies_to_types": ["master_data"],
-     "notes": "Master-data records (customers, users) must carry an email."},
-
-    {"concept": "foreign_key_required",
-     "synonyms": ["customer_id", "account_id", "user_id", "owner_id", "parent_id", "tenant_id"],
-     "rule_type": "max_null_rate", "parameter": {"threshold": 0.05},
-     "severity": "medium", "applies_to_types": ["transaction", "event_log"],
-     "notes": "Foreign-key-shaped columns on transactional/event tables shouldn't be missing for more than 5% of rows."},
-
-    {"concept": "status_required",
-     "synonyms": ["status", "state", "lifecycle_status", "stage"],
-     "rule_type": "max_null_rate", "parameter": {"threshold": 0.01},
-     "severity": "medium", "applies_to_types": None,
-     "notes": "Lifecycle columns should be populated."},
-
-    {"concept": "name_required",
-     "synonyms": ["name", "full_name", "display_name", "title", "first_name", "last_name"],
-     "rule_type": "max_null_rate", "parameter": {"threshold": 0.02},
-     "severity": "medium", "applies_to_types": ["master_data"],
-     "notes": "Identity columns on master-data records should rarely be missing."},
 ]
 
 
@@ -163,7 +239,7 @@ UNIQUENESS: list[dict] = [
          "email", "username", "login", "handle",
      ],
      "rule_type": "unique", "parameter": {},
-     "severity": "high", "applies_to_types": None,
+     "severity": "high",
      "notes": (
          "Column values must be unique. When the table has an entity key "
          "configured (Definition tab), uniqueness is checked across distinct "

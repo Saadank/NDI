@@ -10,16 +10,36 @@ need to nail the required shape.
 """
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _coerce_parameter_to_str(v: Any) -> str | None:
+    """Normalize an LLM-returned ``parameter`` field to a single JSON-safe
+    string.
+
+    The parameter field is shared across rule types: a regex string for
+    format_regex, ``null`` for not_null/unique/no_pseudo_nulls, a JSON list
+    or object for dictionary_match. Storing it as ``str | None`` keeps the
+    schema simple, but ``str([...])`` would emit Python-repr (single quotes)
+    which downstream consumers can't parse as JSON — hence ``json.dumps``
+    for non-scalar values."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
 
 # Confidence labels — match the active-rule applier's HIGH/MEDIUM/LOW.
 Confidence = Literal["HIGH", "MEDIUM", "LOW"]
 
 # Rule-type whitelist — mirrors the deterministic validator's set.
 RuleType = Literal[
-    "not_null", "max_null_rate", "no_pseudo_nulls", "unique", "format_regex",
+    "not_null", "no_pseudo_nulls", "unique", "format_regex", "dictionary_match",
 ]
 
 # DQ dimensions — mirrors enums/dq_dimension.py.
@@ -63,7 +83,7 @@ class SqlGenerationResponse(_Base):
     """LLM may decline to produce a rule (returns rule_type=None) — that's
     a valid response and becomes a ``unsupported_logic`` proposal."""
     rule_type: RuleType | None = None
-    parameter: str | None = None  # regex string, threshold string, etc.
+    parameter: str | None = None  # regex string, JSON-list string, etc.
     confidence: Confidence | None = None
     reasoning: str = ""
     error_reason: str | None = None  # when rule_type is null
@@ -71,9 +91,7 @@ class SqlGenerationResponse(_Base):
     @field_validator("parameter", mode="before")
     @classmethod
     def _coerce_parameter(cls, v):
-        # Numeric thresholds come back as floats sometimes; we always
-        # persist them as strings to keep the parameter column type-stable.
-        return None if v is None else str(v)
+        return _coerce_parameter_to_str(v)
 
 
 # ----- concept_draft (NL → full concept) -----
@@ -85,16 +103,15 @@ class ConceptDraftResponse(_Base):
     parameter: str | None = None
     severity: Severity = "medium"
     synonyms: list[str] = Field(default_factory=list)
-    applies_to_types: list[str] = Field(default_factory=list)
     confidence: Confidence = "MEDIUM"
     reasoning: str = ""
 
     @field_validator("parameter", mode="before")
     @classmethod
     def _coerce_parameter(cls, v):
-        return None if v is None else str(v)
+        return _coerce_parameter_to_str(v)
 
-    @field_validator("synonyms", "applies_to_types", mode="before")
+    @field_validator("synonyms", mode="before")
     @classmethod
     def _coerce_list(cls, v):
         """Small models sometimes return ``"a,b,c"`` for list fields.
@@ -125,6 +142,35 @@ class RegexDraftResponse(_Base):
         return v
 
 
+# ----- dictionary_draft (NL → list of allowed values for a dictionary_match concept) -----
+
+class DictionaryDraftResponse(_Base):
+    values: list[str] = Field(default_factory=list, max_length=200)
+    case_sensitive: bool = False
+    explanation: str = ""
+    confidence: Confidence = "MEDIUM"
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _coerce_values(cls, v):
+        # Small models sometimes return ``"USD,EUR,SAR"`` for list fields,
+        # or a list with int/float entries. Normalize to a clean str list
+        # while preserving order; per-value sanitisation happens in
+        # sql_safety + concept_service.
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        out: list[str] = []
+        for entry in v:
+            if entry is None:
+                continue
+            s = str(entry).strip()
+            if s:
+                out.append(s)
+        return out
+
+
 # ----- synonym_expansion -----
 
 class SynonymExpansionResponse(_Base):
@@ -150,6 +196,7 @@ _SCHEMA_BY_PURPOSE: dict[str, type[_Base]] = {
     "sql_generation":     SqlGenerationResponse,
     "concept_draft":      ConceptDraftResponse,
     "regex_draft":        RegexDraftResponse,
+    "dictionary_draft":   DictionaryDraftResponse,
     "synonym_expansion":  SynonymExpansionResponse,
 }
 

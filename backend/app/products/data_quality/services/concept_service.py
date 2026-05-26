@@ -6,7 +6,12 @@ import re
 
 from app.products.data_quality.permissions import can_use_dq, require
 from app.products.data_quality.repositories.concept_repository import ConceptRepository
-from app.products.data_quality.services.concept_seed import all_seed_concepts
+from app.products.data_quality.repositories.reference_repository import (
+    ReferenceRepository,
+)
+from app.products.data_quality.services.concept_seed import (
+    all_seed_concepts, all_seed_references,
+)
 from app.structures.auth_user import AuthUser
 from app.utils.exceptions import ConflictException, ResourceNotFoundException, ValidationException
 
@@ -31,10 +36,8 @@ def _coerce_concept(row: dict | None) -> dict | None:
     return row
 
 _VALID_DIMENSIONS = {"completeness", "validity", "uniqueness"}
-_VALID_RULE_TYPES = {"not_null", "max_null_rate", "no_pseudo_nulls", "unique", "format_regex"}
+_VALID_RULE_TYPES = {"not_null", "no_pseudo_nulls", "unique", "format_regex", "dictionary_match"}
 _VALID_SEVERITIES = {"critical", "high", "medium", "low"}
-_VALID_SEMANTIC_TYPES = {"master_data", "transaction", "event_log",
-                        "reference", "staging", "snapshot"}
 
 
 def _normalize_synonyms(syns: list[str] | None) -> list[str]:
@@ -66,12 +69,25 @@ def _validate_parameter(rule_type: str, parameter: dict) -> dict:
             re.compile(pattern)
         except re.error as e:
             raise ValidationException(f"Invalid regex pattern: {e}") from e
-    elif rule_type == "max_null_rate":
-        thr = parameter.get("threshold")
-        if thr is None or not isinstance(thr, (int, float)) or not (0 <= thr <= 1):
+    elif rule_type == "dictionary_match":
+        # Parameter points at a row in t_dq_references; the actual value
+        # list and case-sensitivity live on that reference, not here.
+        ref_id = parameter.get("reference_id")
+        if isinstance(ref_id, str) and ref_id.strip().isdigit():
+            ref_id = int(ref_id.strip())
+        if not isinstance(ref_id, int) or ref_id <= 0:
             raise ValidationException(
-                "max_null_rate requires parameter.threshold in [0, 1]"
+                "dictionary_match requires parameter.reference_id (positive integer). "
+                "Create or pick a reference in the References tab first."
             )
+        # Reject the legacy inline-values shape with a clear message — anyone
+        # carrying the old form should re-create the rule against a reference.
+        if "values" in parameter:
+            raise ValidationException(
+                "dictionary_match no longer accepts inline 'values'. "
+                "Move the list into a Reference and use parameter.reference_id."
+            )
+        parameter = {"reference_id": ref_id}
     # not_null / unique / no_pseudo_nulls take no parameters; ignore extras.
     return parameter
 
@@ -80,6 +96,46 @@ class ConceptService:
 
     def __init__(self) -> None:
         self.repo = ConceptRepository()
+        self.reference_repo = ReferenceRepository()
+
+    async def _install_seed_references(self, tenant_id: int) -> dict[str, int]:
+        """Upsert every seed reference for the tenant and return a
+        name→id map. Used by seed_defaults / refresh_seeded to resolve the
+        ``_seed_reference_name`` placeholder on dictionary_match concepts."""
+        name_to_id: dict[str, int] = {}
+        for ref in all_seed_references():
+            existing = await self.reference_repo.find_by_name(tenant_id, ref["name"])
+            if existing:
+                ref_id = existing["id"]
+            else:
+                row = await self.reference_repo.insert(
+                    tenant_id=tenant_id, name=ref["name"],
+                    description=ref.get("description"),
+                    case_sensitive=bool(ref.get("case_sensitive", False)),
+                    is_seed=True, created_by=None,
+                )
+                ref_id = row["id"]
+                if ref["values"]:
+                    await self.reference_repo.replace_values(ref_id, ref["values"])
+            name_to_id[ref["name"]] = ref_id
+        return name_to_id
+
+    def _resolve_seed_parameter(
+        self, parameter: dict, ref_name_to_id: dict[str, int],
+    ) -> dict | None:
+        """Substitute the ``_seed_reference_name`` placeholder with a real
+        ``reference_id``. Returns None when the reference can't be resolved
+        (e.g. seed file references a list that wasn't installed) so the
+        caller can skip that concept rather than write a broken row."""
+        if not isinstance(parameter, dict):
+            return parameter
+        if "_seed_reference_name" in parameter:
+            name = parameter["_seed_reference_name"]
+            ref_id = ref_name_to_id.get(name)
+            if not ref_id:
+                return None
+            return {"reference_id": ref_id}
+        return parameter
 
     async def list_concepts(
         self, auth_user: AuthUser, *, dimension: str | None = None,
@@ -103,24 +159,23 @@ class ConceptService:
     async def create_concept(self, *, dimension: str, concept: str,
                              synonyms: list[str], rule_type: str,
                              parameter: dict, severity: str,
-                             applies_to_types: list[str] | None,
                              notes: str | None, enabled: bool,
                              auth_user: AuthUser) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
-        self._validate_inputs(dimension, concept, rule_type, severity, applies_to_types)
+        self._validate_inputs(dimension, concept, rule_type, severity)
         parameter = _validate_parameter(rule_type, parameter)
         row = await self.repo.insert(
             tenant_id=auth_user.tenant_id, dimension=dimension,
             concept=concept.strip(), synonyms=_normalize_synonyms(synonyms),
             rule_type=rule_type, parameter=parameter, severity=severity,
-            applies_to_types=applies_to_types or None, notes=notes,
+            notes=notes,
             enabled=enabled, is_seed=False, created_by=auth_user.user_id,
         )
         return _coerce_concept(row)
 
     async def update_concept(self, concept_id: int, *, synonyms: list[str] | None,
                              rule_type: str | None, parameter: dict | None,
-                             severity: str | None, applies_to_types: list[str] | None,
+                             severity: str | None,
                              notes: str | None, enabled: bool | None,
                              auth_user: AuthUser) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
@@ -135,8 +190,6 @@ class ConceptService:
             raise ValidationException(f"Invalid rule_type: {rule_type}")
         if severity is not None and severity not in _VALID_SEVERITIES:
             raise ValidationException(f"Invalid severity: {severity}")
-        if applies_to_types is not None:
-            self._validate_semantic_types(applies_to_types)
 
         # Parameter validation needs both new and existing rule_type.
         effective_rule_type = rule_type or existing["rule_type"]
@@ -147,7 +200,7 @@ class ConceptService:
             concept_id, auth_user.tenant_id,
             synonyms=_normalize_synonyms(synonyms) if synonyms is not None else None,
             rule_type=rule_type, parameter=parameter, severity=severity,
-            applies_to_types=applies_to_types, notes=notes, enabled=enabled,
+            notes=notes, enabled=enabled,
         )
         return _coerce_concept(row)
 
@@ -174,10 +227,11 @@ class ConceptService:
         await self.repo.delete(concept_id, auth_user.tenant_id)
 
     async def seed_defaults(self, auth_user: AuthUser) -> dict:
-        """Idempotent: inserts seed concepts that don't already exist for the
-        caller's tenant. Existing concepts (including user-edited ones) are
-        untouched."""
+        """Idempotent: inserts seed references AND seed concepts that don't
+        already exist for the caller's tenant. Existing rows (including
+        user-edited ones) are untouched."""
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        ref_name_to_id = await self._install_seed_references(auth_user.tenant_id)
         existing_before = await self.repo.find_by_tenant(auth_user.tenant_id)
         existing_keys = {(c["dimension"], c["concept"]) for c in existing_before}
 
@@ -185,29 +239,36 @@ class ConceptService:
         for dimension, c in all_seed_concepts():
             if (dimension, c["concept"]) in existing_keys:
                 continue
+            param = self._resolve_seed_parameter(c.get("parameter", {}), ref_name_to_id)
+            if param is None:
+                # Seed file points at a reference that didn't install — skip
+                # rather than persist a broken row.
+                continue
             await self.repo.upsert_seed(
                 tenant_id=auth_user.tenant_id,
                 dimension=dimension,
                 concept=c["concept"],
                 synonyms=_normalize_synonyms(c["synonyms"]),
                 rule_type=c["rule_type"],
-                parameter=c.get("parameter", {}),
+                parameter=param,
                 severity=c.get("severity", "medium"),
-                applies_to_types=c.get("applies_to_types"),
                 notes=c.get("notes"),
             )
             inserted += 1
 
-        return {"inserted": inserted, "total_after": len(existing_before) + inserted}
+        return {
+            "inserted": inserted,
+            "references_installed": len(ref_name_to_id),
+            "total_after": len(existing_before) + inserted,
+        }
 
     async def refresh_seeded(self, auth_user: AuthUser) -> dict:
-        """Re-apply the current seed file to every is_seed=TRUE concept for
-        the caller's tenant. Missing concepts are inserted; existing seeded
-        rows have their synonyms/rule/parameter/severity/notes overwritten
-        from the seed file. User-customized rows (is_seed=FALSE) are left
-        untouched. Use this to backfill fields that were added to the seed
-        after the original install (e.g. regex patterns)."""
+        """Re-apply the current seed file to every is_seed=TRUE concept and
+        reference for the caller's tenant. Missing rows are inserted;
+        existing seeded rows have their fields overwritten from the seed
+        file. User-customized rows (is_seed=FALSE) are left untouched."""
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        ref_name_to_id = await self._install_seed_references(auth_user.tenant_id)
         existing_before = await self.repo.find_by_tenant(auth_user.tenant_id)
         by_key = {(c["dimension"], c["concept"]): c for c in existing_before}
 
@@ -220,16 +281,19 @@ class ConceptService:
                 updated += 1
             else:
                 skipped_custom += 1
-                continue  # don't call refresh_seed — DO UPDATE would no-op anyway
+                continue
+            param = self._resolve_seed_parameter(c.get("parameter", {}), ref_name_to_id)
+            if param is None:
+                # Reference not installed — skip rather than write a broken row.
+                continue
             await self.repo.refresh_seed(
                 tenant_id=auth_user.tenant_id,
                 dimension=dimension,
                 concept=c["concept"],
                 synonyms=_normalize_synonyms(c["synonyms"]),
                 rule_type=c["rule_type"],
-                parameter=c.get("parameter", {}),
+                parameter=param,
                 severity=c.get("severity", "medium"),
-                applies_to_types=c.get("applies_to_types"),
                 notes=c.get("notes"),
             )
 
@@ -237,6 +301,7 @@ class ConceptService:
             "inserted": inserted,
             "updated": updated,
             "skipped_custom": skipped_custom,
+            "references_installed": len(ref_name_to_id),
             "total_after": len(existing_before) + inserted,
         }
 
@@ -244,7 +309,6 @@ class ConceptService:
 
     def _validate_inputs(
         self, dimension: str, concept: str, rule_type: str, severity: str,
-        applies_to_types: list[str] | None,
     ) -> None:
         if dimension not in _VALID_DIMENSIONS:
             raise ValidationException(f"Invalid dimension: {dimension}")
@@ -254,15 +318,6 @@ class ConceptService:
             raise ValidationException(f"Invalid rule_type: {rule_type}")
         if severity not in _VALID_SEVERITIES:
             raise ValidationException(f"Invalid severity: {severity}")
-        if applies_to_types:
-            self._validate_semantic_types(applies_to_types)
-
-    def _validate_semantic_types(self, types: list[str]) -> None:
-        bad = [t for t in types if t not in _VALID_SEMANTIC_TYPES]
-        if bad:
-            raise ValidationException(
-                f"Unknown semantic types: {bad}. Allowed: {sorted(_VALID_SEMANTIC_TYPES)}"
-            )
 
 
 def get_concept_service() -> ConceptService:

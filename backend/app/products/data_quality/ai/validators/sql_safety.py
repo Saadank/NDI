@@ -39,11 +39,7 @@ _DANGEROUS_TOKENS = re.compile(r"(;|--|/\*|\*/)")
 
 
 def check_parameter(rule_type: str, parameter: str | None) -> str | None:
-    """Return an error message if the parameter is unsafe, else ``None``.
-
-    ``rule_type`` is used to skip checks that don't apply — e.g.
-    ``max_null_rate`` parameters are floats, not SQL fragments.
-    """
+    """Return an error message if the parameter is unsafe, else ``None``."""
     if parameter is None or parameter == "":
         return None
 
@@ -61,14 +57,23 @@ def check_parameter(rule_type: str, parameter: str | None) -> str | None:
             return f"parameter is not a valid regex: {e}"
         return None
 
-    if rule_type == "max_null_rate":
-        # Float in [0, 1].
+    if rule_type == "dictionary_match":
+        # Parameter is the reference_id this concept points at — either a
+        # bare integer string ("42") or a JSON object {"reference_id": 42}.
+        # The list itself lives in t_dq_reference_values and is fetched by
+        # the validator at scan time, so there's nothing to sanitise here
+        # beyond shape.
+        s = parameter.strip()
+        if s.isdigit():
+            return None
+        import json
         try:
-            v = float(parameter)
-        except (TypeError, ValueError):
-            return "max_null_rate parameter must be a number in [0, 1]"
-        if not (0.0 <= v <= 1.0):
-            return "max_null_rate parameter must be in [0, 1]"
+            decoded = json.loads(s)
+        except json.JSONDecodeError as e:
+            return f"dictionary_match parameter is not a reference_id integer or JSON: {e}"
+        ref_id = decoded.get("reference_id") if isinstance(decoded, dict) else None
+        if not isinstance(ref_id, int) or ref_id <= 0:
+            return "dictionary_match parameter must be {\"reference_id\": <positive int>}"
         return None
 
     # Other rule_types (not_null, no_pseudo_nulls, unique) take no parameter

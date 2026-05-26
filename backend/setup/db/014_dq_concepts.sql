@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS dq.t_dq_concepts (
     -- What rule fires when a column matches this concept.
     rule_type        VARCHAR(40) NOT NULL
                      CHECK (rule_type IN
-                            ('not_null','max_null_rate','no_pseudo_nulls',
-                             'unique','format_regex')),
+                            ('not_null','no_pseudo_nulls',
+                             'unique','format_regex','dictionary_match')),
 
     -- Rule-specific knob: regex string, threshold value, etc. Schema-less so
     -- adding rule_types in Step 3c doesn't require another migration.
@@ -44,10 +44,6 @@ CREATE TABLE IF NOT EXISTS dq.t_dq_concepts (
 
     severity         VARCHAR(20) NOT NULL DEFAULT 'medium'
                      CHECK (severity IN ('critical','high','medium','low')),
-
-    -- NULL = applies to columns of any semantic type. Otherwise the matcher
-    -- only proposes this concept when the table's semantic type is in the list.
-    applies_to_types VARCHAR(50)[],
 
     notes            TEXT,
     enabled          BOOLEAN NOT NULL DEFAULT TRUE,
@@ -82,7 +78,6 @@ CREATE TABLE IF NOT EXISTS dq.t_dq_concepts_hist (
     rule_type        VARCHAR(40),
     parameter        JSONB,
     severity         VARCHAR(20),
-    applies_to_types VARCHAR(50)[],
     notes            TEXT,
     enabled          BOOLEAN,
     is_seed          BOOLEAN,
@@ -96,11 +91,11 @@ CREATE OR REPLACE FUNCTION dq.fn_dq_concepts_hist() RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO dq.t_dq_concepts_hist (
         id, tenant_id, dimension, concept, synonyms, rule_type, parameter,
-        severity, applies_to_types, notes, enabled, is_seed,
+        severity, notes, enabled, is_seed,
         created_at, created_by, changed_by
     ) VALUES (
         OLD.id, OLD.tenant_id, OLD.dimension, OLD.concept, OLD.synonyms,
-        OLD.rule_type, OLD.parameter, OLD.severity, OLD.applies_to_types,
+        OLD.rule_type, OLD.parameter, OLD.severity,
         OLD.notes, OLD.enabled, OLD.is_seed,
         OLD.created_at, OLD.created_by, current_user
     );
