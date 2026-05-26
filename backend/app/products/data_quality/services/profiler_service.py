@@ -38,7 +38,7 @@ from app.products.data_sharing.repositories.connection_repository import (
     ConnectionRepository,
 )
 from app.structures.auth_user import AuthUser
-from app.utils.exceptions import ResourceNotFoundException
+from app.utils.exceptions import ResourceNotFoundException, ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,24 @@ def _stddev_func(db_type: str) -> str:
     return "STDDEV"
 
 
+def _percentile_expr(db_type: str, qcol: str, p: float) -> str | None:
+    """Per-dialect SQL fragment that yields the p-th percentile of qcol
+    (p in [0,1]). Returns None when the dialect lacks a clean built-in;
+    caller should skip percentile collection in that case rather than
+    fall back to client-side sort (which would re-introduce the
+    raw-row-leak risk migration 013 was about).
+
+    - PostgreSQL/Oracle/MSSQL → percentile_cont(p) WITHIN GROUP (ORDER BY col)
+    - ClickHouse              → quantile(p)(col)
+    - MySQL/MariaDB           → no native function; return None
+    """
+    if db_type in ("postgresql", "postgres", "oracle", "mssql"):
+        return f"percentile_cont({p}) WITHIN GROUP (ORDER BY {qcol})"
+    if db_type == "clickhouse":
+        return f"quantile({p})({qcol})"
+    return None
+
+
 def _length_func(db_type: str) -> str:
     # All target dialects accept LENGTH; MSSQL prefers LEN but accepts LENGTH
     # only via wrappers. Use LEN for MSSQL.
@@ -200,6 +218,19 @@ def _stringify_for_pattern(value: Any) -> str:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return ""
     return str(value)
+
+
+def _stringify_min_max(value: Any) -> str | None:
+    """ISO-stringify a MIN/MAX result for persistence into min_text/max_text.
+    Returns None for null inputs so the column distinguishes "no data" from
+    "empty string". Capped at 200 chars to avoid pathologically long rows."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return None
+    return str(value)[:200]
 
 
 def _tokenize_pattern(s: str) -> str:
@@ -439,6 +470,31 @@ class ProfilerService:
             raise ResourceNotFoundException("Scan not found")
         return scan
 
+    async def delete_scan(self, scan_id: int, auth_user: AuthUser) -> dict:
+        """Hard-delete a scan and all of its derived data. CASCADES via
+        FK ON DELETE CASCADE to ``t_dq_column_profiles`` (per-column
+        descriptive stats), ``t_dq_issues`` (validator output), and
+        ``t_dq_score_history`` (per-dimension scoring rows).
+
+        Refuses with a clear error when the scan is still running so a
+        background-task race can't leave half-written child rows
+        orphaned. Otherwise no preflight — the user explicitly asked
+        for the scan's history to be gone."""
+        require(can_use_dq(auth_user), "Data Quality is not available for this account")
+        scan = await self.scan_repo.find_by_id(scan_id, auth_user.tenant_id)
+        if not scan:
+            raise ResourceNotFoundException("Scan not found")
+        if scan["status"] in ("pending", "running"):
+            raise ValidationException(
+                f"Cannot delete a scan in status {scan['status']!r}. "
+                f"Wait for it to finish or fail, then retry."
+            )
+        await self.scan_repo.delete_by_id(scan_id, auth_user.tenant_id)
+        return {
+            "detail": "Scan deleted (cascade: column_profiles + issues + score_history)",
+            "scan_id": scan_id,
+        }
+
     async def list_scans(
         self, auth_user: AuthUser, *, profile_id: int | None = None,
         connection_id: UUID | None = None,
@@ -498,6 +554,32 @@ class ProfilerService:
                     f"No columns found for {scan['schema_name']}.{scan['table_name']}"
                 )
 
+            # Per-profile column-subset filter (migration 026). NULL = scan
+            # everything (current default for legacy profiles). Empty list =
+            # explicit "scan nothing" — error rather than silently no-op.
+            # Non-empty list = intersect with the live information_schema
+            # list, so a column the user picked but that no longer exists in
+            # the source is silently skipped.
+            selected = (asset or {}).get("selected_columns")
+            if selected is not None:
+                if not selected:
+                    raise RuntimeError(
+                        "Profile has selected_columns=[] (zero columns picked). "
+                        "Edit the Columns tab and pick at least one column."
+                    )
+                wanted = {c for c in selected}
+                before = len(columns)
+                columns = [c for c in columns if c["name"] in wanted]
+                logger.info(
+                    "Scan %s column subset: %d/%d columns kept (profile.selected_columns)",
+                    scan_id, len(columns), before,
+                )
+                if not columns:
+                    raise RuntimeError(
+                        "Profile's selected_columns matches no live source columns. "
+                        "The source schema may have changed — review the Columns tab."
+                    )
+
             # Build the FROM-clause expression once. With sampling, every
             # aggregate operates on the same LIMIT-bounded subquery — within
             # a single column's queries the sample is consistent, and across
@@ -513,6 +595,9 @@ class ProfilerService:
 
             row_count = await self._fetch_row_count(gateway, qtable)
 
+            # Collected as we go so the entity-key heuristic (below) can
+            # propose candidates from in-memory stats without a re-fetch.
+            scanned_profiles: list[dict] = []
             for ordinal, col in enumerate(columns, start=1):
                 profile = await self._profile_column(
                     gateway=gateway, db_type=conn["db_type"], qtable=qtable,
@@ -530,6 +615,72 @@ class ProfilerService:
                     schema_name=scan["schema_name"], table_name=scan["table_name"],
                     profile=profile,
                 )
+                scanned_profiles.append(profile)
+
+            # Detect the table's entity key (declared PK) once per scan and
+            # persist it onto the profile. The uniqueness validator reads
+            # this to choose between "column must be globally unique" and
+            # "column must be unique per business entity" semantics. A scan
+            # without a profile row (transient mode) skips persistence; the
+            # validator then falls back to the legacy behaviour.
+            if scan.get("profile_id"):
+                try:
+                    # Honour the lock — if the user has explicitly set the
+                    # entity key via the /entity-key endpoint, never let a
+                    # scan overwrite it. Heuristic candidates (Phase 2)
+                    # would otherwise drift the value between scans.
+                    profile_row = await self.profile_asset_repo.find_by_id(
+                        scan["profile_id"], tenant_id,
+                    )
+                    locked = bool((profile_row or {}).get("entity_key_locked"))
+                    if locked:
+                        logger.info(
+                            "Scan %s: entity_key_columns locked by user on %s.%s; skipping auto-update.",
+                            scan_id, scan["schema_name"], scan["table_name"],
+                        )
+                    else:
+                        from app.products.data_quality.services.entity_key_detector import (
+                            detect_entity_key_columns, propose_candidate_columns,
+                        )
+                        detected = await detect_entity_key_columns(
+                            gateway=gateway, db_type=conn["db_type"],
+                            schema_name=scan["schema_name"], table_name=scan["table_name"],
+                        )
+                        source = "declared PK"
+                        # Phase 2 fallback: when no declared PK exists,
+                        # nominate a single-column candidate from the
+                        # column-profile stats we just collected. This
+                        # populates entity_key_columns for tables whose
+                        # source DB never had constraints declared (the
+                        # common case for warehouse / staging dumps).
+                        if not detected:
+                            detected = propose_candidate_columns(
+                                scanned_profiles, declared_pk=[],
+                            )
+                            if detected:
+                                source = "heuristic candidate"
+                        # Only overwrite when we found something. Leaving
+                        # the existing value alone on an empty detection
+                        # avoids clearing the previous-scan's result just
+                        # because, say, the gateway briefly lost metadata
+                        # access.
+                        if detected:
+                            await self.profile_asset_repo.update(
+                                scan["profile_id"], tenant_id,
+                                entity_key_columns=detected,
+                            )
+                            logger.info(
+                                "Scan %s set entity key on %s.%s to %s (source: %s).",
+                                scan_id, scan["schema_name"], scan["table_name"],
+                                detected, source,
+                            )
+                        else:
+                            logger.info(
+                                "Scan %s: no declared PK and no candidate match on %s.%s; entity_key_columns left as-is.",
+                                scan_id, scan["schema_name"], scan["table_name"],
+                            )
+                except Exception:  # noqa: BLE001
+                    logger.exception("entity-key detection failed for scan %s", scan_id)
 
             # Profile is done — now run the validator over any active rules
             # for this table. Issues persist whether or not any fail; an
@@ -686,6 +837,8 @@ class ProfilerService:
             # tokenizes each, persists ONLY the resulting signatures + counts.
             # Raw values are discarded when this function returns.
             await self._compute_pattern_signature(gateway, profile, qcol, qtable)
+        elif category == "datetime":
+            await self._compute_text_min_max(gateway, profile, qcol, qtable)
 
         profile["inferred_column_type"] = _infer_column_type(profile)
         return profile
@@ -718,23 +871,56 @@ class ProfilerService:
     async def _compute_numeric_extras(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,
     ) -> None:
+        """Numeric distribution stats. Two SQL roundtrips:
+
+        1. Mean / stddev / min / max — one aggregate query, all dialects.
+        2. Median + p25/p75/p95 — only if the dialect supports a percentile
+           function. Skipped silently otherwise; UI shows "—" for those tiles.
+
+        min_value / max_value are persisted (see migration 023 header for the
+        privacy trade-off this represents)."""
+        # ---- mean, stddev, min, max ------------------------------------
         sql = (
-            f"SELECT AVG({qcol}) AS av, {_stddev_func(db_type)}({qcol}) AS sd "
+            f"SELECT AVG({qcol}) AS av, {_stddev_func(db_type)}({qcol}) AS sd, "
+            f"MIN({qcol}) AS mn, MAX({qcol}) AS mx "
             f"FROM {qtable}"
         )
         result = await gateway.execute_query(sql)
         if not result.success or not result.data or not result.data["rows"]:
             logger.debug("numeric extras failed for %s: %s", qcol, result.error)
             return
-        av, sd = (result.data["rows"][0] + [None, None])[:2]
-        try:
-            profile["mean_value"] = float(av) if av is not None else None
-        except (TypeError, ValueError):
-            profile["mean_value"] = None
-        try:
-            profile["stddev_value"] = float(sd) if sd is not None else None
-        except (TypeError, ValueError):
-            profile["stddev_value"] = None
+        av, sd, mn, mx = (result.data["rows"][0] + [None, None, None, None])[:4]
+        for key, val in (("mean_value", av), ("stddev_value", sd),
+                         ("min_value", mn), ("max_value", mx)):
+            try:
+                profile[key] = float(val) if val is not None else None
+            except (TypeError, ValueError):
+                profile[key] = None
+
+        # ---- percentiles (median, p25, p75, p95) -----------------------
+        # Built per-dialect; MySQL/MariaDB get None across the board.
+        parts = []
+        keys: list[str] = []
+        for label, p in (("median_value", 0.5), ("p25_value", 0.25),
+                         ("p75_value", 0.75), ("p95_value", 0.95)):
+            expr = _percentile_expr(db_type, qcol, p)
+            if expr is None:
+                continue
+            parts.append(f"{expr} AS {label}")
+            keys.append(label)
+        if not parts:
+            return
+        sql_p = f"SELECT {', '.join(parts)} FROM {qtable}"
+        result_p = await gateway.execute_query(sql_p)
+        if not result_p.success or not result_p.data or not result_p.data["rows"]:
+            logger.debug("percentiles failed for %s: %s", qcol, result_p.error)
+            return
+        row = (result_p.data["rows"][0] + [None] * len(keys))[:len(keys)]
+        for key, val in zip(keys, row):
+            try:
+                profile[key] = float(val) if val is not None else None
+            except (TypeError, ValueError):
+                profile[key] = None
 
     async def _compute_string_extras(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,
@@ -762,6 +948,25 @@ class ProfilerService:
             profile["avg_length"] = float(lavg) if lavg is not None else None
         except (TypeError, ValueError):
             profile["avg_length"] = None
+
+        # Alphabetical min/max — same single-row leak class as numeric min/max
+        # (see migration 025 header). Stored in min_text / max_text.
+        await self._compute_text_min_max(gateway, profile, qcol, qtable)
+
+    async def _compute_text_min_max(
+        self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str,
+    ) -> None:
+        """MIN/MAX for non-numeric columns. For dates the DB returns a
+        datetime/date object; ISO-stringify so a single TEXT column fits all
+        types. Persisted into min_text / max_text (migration 025)."""
+        sql = f"SELECT MIN({qcol}) AS mn, MAX({qcol}) AS mx FROM {qtable}"
+        result = await gateway.execute_query(sql)
+        if not result.success or not result.data or not result.data["rows"]:
+            logger.debug("text min/max failed for %s: %s", qcol, result.error)
+            return
+        mn, mx = (result.data["rows"][0] + [None, None])[:2]
+        profile["min_text"] = _stringify_min_max(mn)
+        profile["max_text"] = _stringify_min_max(mx)
 
     async def _compute_pseudo_null(
         self, gateway: DbConnectorGateway, profile: dict, qcol: str, qtable: str, db_type: str,

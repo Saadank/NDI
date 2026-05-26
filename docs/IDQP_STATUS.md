@@ -10,7 +10,15 @@
 
 The Intelligent Data Quality Platform is a sibling product to Data Sharing inside the `DataSharing-1st` monorepo. After Phase 1.5 (the Informatica-inspired restructure), the unit of work is the **Profile Asset** — a named, saveable, owner-bound entity that bundles a source binding (connection + schema + table), profiling configuration (sampling, drill-down, AI on/off), and history (scans, active rules, issues).
 
-**Live demo path:** `http://localhost:8000/dq` → log in → see the Profiles list → click a profile → walk Definition / Rules / Scans / Issues sub-tabs.
+**Snapshot — 2026-05-14:**
+
+- Phase 1 + 1.5 foundations: ✅ done
+- Step 4 (scoring) / Step 4.5 (dense dashboard) / Step 5 (exceptions) / Step 5.5 (tile redesign): ✅ done
+- **Step 6 (Excel + LLM pipeline, 9 sub-steps): ✅ done** — qwen2.5-coder:7b on local Ollama, full 3-entry-point flow into the proposal queue, applier creates concepts + active_rule bindings, strict rollback safety net
+- Remaining Phase 1 work: Step 7 (dashboard), Step 8 (scheduler), Step 9 (hardening)
+- Local commits ahead of `origin/dev`: **11** (not yet pushed)
+
+**Live demo path:** `http://localhost:8000/dq` → log in → walk Profiles / Sources / All scans / Dictionary / **Imports** tabs.
 
 **API surface:** all endpoints under `/api/v1/products/data-quality/` are gated by the tenant having `data_quality` enabled in `t_tenant_products`.
 
@@ -112,12 +120,43 @@ docker exec -i datasharing-1st-postgres-1 \
 | **5.e** | UI: new **Exceptions** sub-tab on profile detail. Suppress button on failing rules in the Metrics tab opens a modal (reason / explanation / ceiling / days). Donuts show governed score; raw line appears only when raw ≠ governed. Suppressed rule rows get a violet badge. |
 | **5.f** | Read-time expiry: rows with `status='active' AND expires_at > now()` are the only ones honored by scoring or list-active. Rows past expiry get a "past expiry" pill in the UI. The Step 8 sweeper will eventually flip them to `status='expired'` for cleanliness. |
 
-### Step 4.5 — Dense column dashboard (all complete — 2026-05-01)
+### Step 4.5 — Dense column dashboard (superseded by Step 5.5 — see below)
 
 | Step | What landed |
 |---|---|
 | **4.5.a** | Profiler now captures `character_maximum_length` (Postgres/MySQL/MSSQL) / `data_length` (Oracle) per column and stashes it on `raw_metrics.declared_length`. No migration — JSONB. |
-| **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag when `declared >= 20 && max*4 <= declared`, and per-column rule-status dots (green/red/grey) keyed off the latest issue per active rule. |
+| **4.5.b** | Frontend Scans → per-column profile view gains a **Classic ↔ Dense** toggle. Dense mode shows: a horizontal `null / distinct / repeated` distribution bar per column, length cell `max / declared` with an **over-allocated** flag, and per-column rule-status dots. **Replaced 2026-05-09:** the Classic / Dense toggle was removed and the views replaced with **Table / Tiles** (see Step 5.5). The `raw_metrics.declared_length` capture from 4.5.a stays — it just isn't surfaced in the new views. |
+
+### Step 6 — Excel + LLM SQL generation (all complete — 2026-05-13)
+
+The biggest single step in Phase 1. Eight sub-commits landed end-to-end:
+
+| Step | What landed |
+|---|---|
+| **6.0** | Refactor: created `data_quality/ai/` subpackage, moved `llm_matcher.py` → `ai/matchers/concept_matcher.py`, swapped the LLM provider from Anthropic to local Ollama. New `LlmClient` abstraction (single `call()` entrypoint, provider-neutral `LlmCallResult` shape). `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL` / `DQ_LLM_TIMEOUT_S` env vars; default `host.docker.internal:11434`. |
+| **6.1** | Migration 024: `t_dq_imports` (state machine), `t_dq_glossary_terms`, `t_dq_proposals`, `t_dq_llm_calls` (audit). Four `ai/repositories/` modules. Anthropic-specific `cache_*_tokens` columns kept nullable for future provider swap. |
+| **6.2** | Validators (`response_schema.py` per-purpose pydantic; `rule_type_whitelist.py`; `sql_safety.py` with sqlglot deep check + cheap deny-list). PII anonymizer pass-through stub with one-shot warning. `sqlglot` + `openpyxl` added to pyproject + uv.lock. |
+| **6.3** | Approach 2 E2E: `concept_draft` prompt, `concept_draft_service`, `POST /concepts/draft-from-nl`. Dictionary tab gets **Draft with AI** button + result-preview modal that pre-fills the create-concept form. Audited via `t_dq_llm_calls`. |
+| **6.4** | Excel glossary ingest (BRD Table 11). Generic `excel_parser` with per-row error collection. `GlossaryIngestService` two-phase pipeline. `POST /imports` + `GET /imports` + `GET /imports/template/glossary` + `GET /imports/{id}`. Unified "Upload Excel" modal in Dictionary tab. No LLM calls. |
+| **6.5** | Excel column-rules ingest (BRD Table 13). Adds `sql_generation` LLM purpose for blank-parameter `format_regex` rows. Each row → `new_concept` proposal with HIGH confidence (easy path) or LLM-drafted confidence (hard path). Validator failures land as `rejected_by_validator`. |
+| **6.6** | Excel business-rules ingest (BRD Table 12). Adds `column_match` LLM purpose for blank-column rows. Two-LLM-call chain per hard-path row (column_match → top candidate → sql_generation). Ranked candidates stored on `proposals.candidates` for reviewer override. Tenant glossary fed as context to `column_match`. Cross-table rules / no-profile tables → `unsupported_logic`. |
+| **6.7** | Proposal review UI + applier. `ProposalService` is the single boundary-crossing service in `ai/` (imports `ConceptRepository`, `ActiveRuleRepository`, `ProfileRepository`). Approve/reject/bulk-approve endpoints. Approve creates/upserts the concept and, when the target table resolves to a profile, also creates an `active_rule` binding with `matched_by='manual'`, `approval_status='auto_applied'`. New top-level **Imports tab** with per-import drill-in. Bulk-approve hard-locked to HIGH for safety. |
+| **6.8** | Rollback. `POST /imports/{id}/rollback` walks approved proposals in reverse insertion order. Strict, all-or-nothing: preflight counts `t_dq_issues` rows referencing each applied `active_rule` (CASCADE-free DELETE protection); any non-zero count refuses the whole rollback with `ok=false` + precise `blockers` list. Successful rollback deletes active_rules, marks proposals `rolled_back`, flips the import row to `rolled_back`. Concepts kept (cleanup via Dictionary tab). Idempotent on re-rollback. |
+
+**LLM model**: `qwen2.5-coder:7b` (swapped from `llama3:latest` mid-Step-6 — ~2× faster, materially better regex). Cold-start ~30 s; warm calls 5-22 s on RTX 2080.
+
+### Step 5.5 — Scan-results tile redesign (all complete — 2026-05-09)
+
+Per stakeholder review, the per-column profile view was rebuilt around the
+8 metrics shown in the design mock: max value, min value, mean / median /
+percentiles, pattern, null, min / max length, stddev, most-frequent values.
+
+| Step | What landed |
+|---|---|
+| **5.5.a** | Migration 023: adds `min_value`, `max_value`, `p25_value`, `p75_value`, `p95_value` to `t_dq_column_profiles`. **Partially reverses 013** — header documents the privacy trade-off (min/max is a single-row leak; persisting them was the explicit ask). Top values stay live-only. |
+| **5.5.b** | `ProfilerService._compute_numeric_extras` now collects min/max + median + p25/p75/p95. Percentiles use `percentile_cont` (Postgres / Oracle / MSSQL) or `quantile()` (ClickHouse); MySQL/MariaDB get null tiles since neither dialect has a clean built-in. |
+| **5.5.c** | New endpoint `GET /profiles/{id}/columns/{col}/sample-stats?top_limit=N`. Live-fetches the top-N most-frequent non-null values via the existing connector. **Nothing persisted.** Backs the "Top values" tile / cell. Cached client-side per `(profile_id, column_name)` so toggling Table↔Tiles doesn't re-fetch. |
+| **5.5.d** | Frontend: Classic view and Dense view both removed. New **Table** view = trimmed columns matching the picture (#, Column, Null, Length, Min·Max, Mean, Median, StdDev, Pattern, Top values button). New **Tiles** view = one card per column with a 3-col CSS-grid of 8 tiles arranged like the mock (Max / Min / [Mean·Median·percentiles tall tile] · Pattern / Null / [continued] · StdDev / Top values / Length). Top-values tile/cell is on-demand via a `Show` button. |
 
 ### First-run UX rework (all complete — 2026-04-29)
 
@@ -163,7 +202,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 ## Key architectural decisions (do NOT re-litigate without checking)
 
 1. **Schema isolation in `dq.*`** — every DQ table lives in its own Postgres schema. Cross-schema FKs to `public.t_tenants` / `public.t_users` / `public.t_connections`.
-2. **Metadata-only storage** — never store raw row values from the source. Pattern signatures replace raw `top_values` / `sample_values`. Live-peek endpoint deferred.
+2. **Metadata-only storage (with one explicit exception)** — pattern signatures replace raw `top_values` / `sample_values`. Migration 023 re-introduced `min_value` and `max_value` as a deliberate trade-off (see that migration's header) — they're single-row leaks, but persisting them lets the redesigned scan-results tiles render without a per-column live query. **Top values are still never persisted** — the live-peek endpoint `/profiles/{id}/columns/{col}/sample-stats` covers them.
 3. **Three dimensions only (Phase 1)** — completeness, validity, uniqueness. Consistency / timeliness / accuracy come back when their rule libraries are designed.
 4. **Dictionary-driven, not column-binding** — instead of binding one rule to N columns one-by-one (Informatica's pattern), the matcher reads each column's name and proposes concepts whose synonyms match. PK `not_null` is *not* a rule — the database already enforces it.
 5. **Two-tier matcher (permanent, not temporary)** — fuzzy first (free, deterministic, fast) → LLM Haiku 4.5 only when fuzzy fails (semantic, handles abbreviations / non-English). Per-call dictionary cached via Anthropic prompt caching.
@@ -171,7 +210,7 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 7. **Per-scan immutable issues** — `UNIQUE(scan_id, active_rule_id)`. History = the table itself; trends are computed via window functions over time, not separate tables.
 8. **Profile Assets are the unit of work** (Phase 1.5) — a named entity that owns scans, rules, and history. Source binding (connection / schema / table) is immutable post-create — clone if you want a variant.
 9. **Profiler may sample, validator never does** — descriptive stats can be approximated; violation counts must be honest.
-10. **Anthropic Haiku 4.5 for matcher** — `claude-haiku-4-5-20251001`. Configurable via `DQ_LLM_MODEL` env var. No key in `.env.dev` → matcher gracefully falls back to fuzzy-only.
+10. **Local Ollama for LLM features** (was Anthropic Haiku 4.5 through Step 5). Default model `qwen2.5-coder:7b` — purpose-built for code/SQL/JSON, ~16s warm calls on RTX 2080. Configurable via `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL`. When the provider is unreachable, matcher falls back to fuzzy-only and AI endpoints return `llm_unavailable`.
 
 ## What we explicitly REJECTED from Informatica
 
@@ -204,6 +243,8 @@ After reviewing Informatica Cloud Data Quality / CLAIRE screenshots, we restruct
 | 020 | `dq_score_history.sql` | `t_dq_score_history` — per-(scan, dimension) pass-rate, tier, raw/governed/weighted scores (Step 4) |
 | 021 | `dq_score_thresholds.sql` | `t_dq_score_thresholds` — per-tenant tier bands + severity-weighting toggle (Step 4) |
 | 022 | `dq_exceptions.sql` | `t_dq_exceptions` + history trigger — governed exceptions with reason, ceiling, expiry (Step 5) |
+| 023 | `dq_column_profile_extended_stats.sql` | adds `min_value`, `max_value`, `p25_value`, `p75_value`, `p95_value` to `t_dq_column_profiles`. **Partially reverses 013** — min/max are now persisted (header documents the privacy trade-off). Top values remain live-only. Backs the redesigned scan-results Tiles view. |
+| 024 | `dq_imports_proposals_llm_calls.sql` | Step 6 data model — `t_dq_imports` (Excel upload state machine), `t_dq_glossary_terms` (BRD Table 11), `t_dq_llm_calls` (audit), `t_dq_proposals` (human-review queue). |
 
 ### Backend (`backend/app/products/data_quality/`)
 
@@ -256,10 +297,10 @@ data_quality/
 
 ### Config
 
-- `backend/app/core/config.py` — added `ANTHROPIC_API_KEY`, `DQ_LLM_MODEL`, `DQ_LLM_MAX_OUTPUT_TOKENS`.
-- `backend/pyproject.toml` — added `anthropic>=0.40.0`.
-- `.env.dev` — `ANTHROPIC_API_KEY=` (empty → fuzzy-only mode).
-- `backend/app/main.py` — registers DQ routers under `/api/v1/products/data-quality/` with `require_data_quality` gate.
+- `backend/app/core/config.py` — `DQ_LLM_PROVIDER` / `DQ_LLM_BASE_URL` / `DQ_LLM_MODEL` / `DQ_LLM_TIMEOUT_S` / `DQ_LLM_MAX_OUTPUT_TOKENS`. Anthropic key removed.
+- `backend/pyproject.toml` — `anthropic` (unused but kept in lock for future swap-back), `sqlglot`, `openpyxl`, `httpx`.
+- `.env.dev` — `DQ_LLM_PROVIDER=ollama` / `DQ_LLM_BASE_URL=http://host.docker.internal:11434` / `DQ_LLM_MODEL=qwen2.5-coder:7b`.
+- `backend/app/main.py` — registers DQ routers under `/api/v1/products/data-quality/` with `require_data_quality` gate. AI routers (`concepts_ai`, `imports`, `proposals`) included in the same loop.
 
 ### Documentation
 
@@ -270,30 +311,9 @@ data_quality/
 
 ## Next steps
 
-### Step 4.5 — Dense column dashboard (Informatica's "Results" pic 5)
-
-**Goal:** replace today's per-column profile view with the horizontal value-distribution + all-stats grid.
-
-- Compute `value_distribution` = `(null_count, distinct_count, non_distinct_count)` ratio — already have all three.
-- Compute documented-vs-detected type gap: `declared_data_type` length vs detected `max_length`. Flag when `actual << declared` (over-allocated columns).
-- Reshape Results UI into the dense grid with color bars + rule-icon indicator per column.
-
-### Step 5 — Governed exception engine (BRD §4.8 / FR-EXC)
-
-- `dq.t_dq_exceptions(issue_signature, reason_category, explanation, owner, expires_at, status)`.
-- Exception expiry worker reactivates expired exceptions.
-- Scoring engine consults active exceptions to compute **governed score** alongside raw score.
-
-### Step 6 — Excel upload pipeline + LLM SQL generation (biggest single step)
-
-**Detailed plan: [`docs/IDQP_STEP6_PLAN.md`](IDQP_STEP6_PLAN.md)** — file layout, migration 023 schema, 5 LLM prompt purposes, validators, API surface, UI plan, and 9 sub-steps (6.0 → 6.8).
-
-Summary of what changes vs the original outline:
-- **Three entry points**, not one: Excel uploads (BRD Tables 11–13) **plus** an interactive `POST /concepts/draft-from-nl` that lets users author a concept by typing natural language in the Dictionary tab.
-- **`data_quality/ai/` subpackage** quarantines all LLM-touching code. The deterministic rule engine never imports from `ai/`; only the proposal service crosses the boundary, at approval time.
-- **Easy path / hard path** in Table 12: rows that name `table` + `column` skip column-matching and only call `sql_generation`. Rows without a column run `column_match` first, then `sql_generation` per matched column.
-- **Multilingual matching** (e.g. business term "Arabic name" → `A_name` / `name_ar` / `الاسم`) handled by `column_match` returning ranked candidates with confidence; reviewer picks.
-- **Requires** ANTHROPIC_API_KEY provisioned.
+> Steps 4.5 / 5 / 5.5 / 6 are **all complete** — the chronological log
+> for each is above under "What we built". The remaining Phase 1 work
+> is Steps 7 → 9.
 
 ### Step 7 — Dashboard / Insights
 

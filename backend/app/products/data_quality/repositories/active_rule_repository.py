@@ -134,6 +134,16 @@ class ActiveRuleRepository(PostgresqlAsyncRepository):
             (rule_id, tenant_id, approval_status, approved_by, blocked_reason),
         )
 
+    async def delete_by_id(self, rule_id: int, tenant_id: int) -> str:
+        """Hard-delete a single active_rule. Caller MUST first verify
+        there are no t_dq_issues referencing it — the FK is ON DELETE
+        CASCADE, which would silently destroy validator output."""
+        return await self._execute(
+            """DELETE FROM dq.t_dq_active_rules
+                WHERE id = $1 AND tenant_id = $2""",
+            (rule_id, tenant_id),
+        )
+
     async def delete_stale_proposals(
         self, *, tenant_id: int, connection_id: UUID, schema_name: str,
         table_name: str, keep_concept_ids: list[int],

@@ -296,6 +296,7 @@
       <div class="tab" id="tab-tables" onclick="switchTab('tables')">Sources</div>
       <div class="tab" id="tab-scans" onclick="switchTab('scans')">All scans</div>
       <div class="tab" id="tab-dictionary" onclick="switchTab('dictionary')">Dictionary</div>
+      <div class="tab" id="tab-references" onclick="switchTab('references')">References</div>
       <div class="tab" id="tab-imports" onclick="switchTab('imports')">Imports</div>
     </div>
 
@@ -460,6 +461,25 @@
       </div>
       <div id="dict-toolbar" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
       <div id="dict-list"></div>
+    </div>
+
+    <!-- REFERENCES TAB — reusable value lists for dictionary_match validity rules -->
+    <div id="panel-references" class="hidden">
+      <div class="card" style="padding:12px 14px;margin-bottom:14px">
+        <div class="row">
+          <div style="flex:1">
+            <strong>References</strong> — reusable named lists of allowed values (e.g. Saudi Banks, GCC Countries).
+            <span class="api">Build one here, then attach it to as many validity rules as you like (rule_type=dictionary_match).</span>
+          </div>
+          <div style="flex:0">
+            <button class="alt" onclick="loadReferences()">Refresh</button>
+          </div>
+          <div style="flex:0">
+            <button onclick="openReferenceModal()">+ New reference</button>
+          </div>
+        </div>
+      </div>
+      <div id="references-list"></div>
     </div>
 
     <!-- IMPORTS TAB (Step 6.7) -->
@@ -876,6 +896,7 @@
         </div>
         <div class="modal-body">
           <input type="hidden" id="cm-id">
+          <input type="hidden" id="cm-pending-ref-id">
           <div class="row" style="gap:10px">
             <div style="flex:1">
               <label>Dimension</label>
@@ -897,10 +918,10 @@
               <label>Rule type</label>
               <select id="cm-rule-type" onchange="syncParameterField()">
                 <option value="not_null">not_null</option>
-                <option value="max_null_rate">max_null_rate</option>
                 <option value="no_pseudo_nulls">no_pseudo_nulls</option>
                 <option value="unique">unique</option>
                 <option value="format_regex">format_regex</option>
+                <option value="dictionary_match">dictionary_match</option>
               </select>
             </div>
             <div style="flex:1">
@@ -936,14 +957,13 @@
               <div class="rt-results" id="cm-regex-results"></div>
             </div>
           </div>
-          <label>Applies to semantic types (leave empty = any)</label>
-          <div class="row" style="gap:6px;flex-wrap:wrap">
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="master_data"> master_data</label>
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="transaction"> transaction</label>
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="event_log"> event_log</label>
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="reference"> reference</label>
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="staging"> staging</label>
-            <label style="font-size:12px;color:var(--ink);display:inline-flex;align-items:center;gap:4px;margin:0"><input type="checkbox" class="cm-applies" value="snapshot"> snapshot</label>
+          <div id="cm-ref-wrap" style="display:none">
+            <label>Reference <span class="api">(values come from this list — manage in the References tab)</span></label>
+            <div class="row" style="gap:8px;align-items:center">
+              <select id="cm-reference-id" style="flex:1" onchange="onConceptReferenceChange()"></select>
+              <button type="button" class="alt" onclick="switchTab('references')">Manage references</button>
+            </div>
+            <div class="api" id="cm-reference-hint" style="margin-top:4px"></div>
           </div>
           <label>Notes (free text — also used as LLM context)</label>
           <textarea id="cm-notes"></textarea>
@@ -952,6 +972,49 @@
         <div class="modal-foot">
           <button class="alt" onclick="closeConceptModal()">Cancel</button>
           <button onclick="saveConcept()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- REFERENCE EDITOR MODAL -->
+    <div class="modal-overlay" id="reference-modal" onclick="if(event.target===this)closeReferenceModal()">
+      <div class="modal" style="width:720px">
+        <div class="modal-head">
+          <strong id="reference-modal-title">New reference</strong>
+          <button class="alt tiny" style="margin-left:auto" onclick="closeReferenceModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rm-id">
+          <label>Name</label>
+          <input type="text" id="rm-name" placeholder="e.g. Saudi Banks">
+          <label>Description <span class="api">(optional)</span></label>
+          <input type="text" id="rm-description" placeholder="What this list represents">
+          <div class="ai-label-row" style="margin-top:10px">
+            <label style="margin:0">Values <span class="api">(one per line — values not in this list become validity violations)</span></label>
+            <button type="button" id="rm-ai-toggle" class="ai-toggle-btn" onclick="toggleRefAi()">✨ Ask AI to draft values</button>
+          </div>
+          <textarea id="rm-values" rows="10" placeholder="Saudi National Bank&#10;Al Rajhi Bank&#10;Riyad Bank" oninput="syncRefSummary()"></textarea>
+          <div class="api" style="display:flex;align-items:center;gap:14px;margin-top:4px">
+            <label style="display:inline-flex;align-items:center;gap:6px;margin:0">
+              <input type="checkbox" id="rm-case-sensitive" onchange="syncRefSummary()"> Case-sensitive match
+            </label>
+            <span class="api">(off = "Riyadh" and "riyadh" both pass)</span>
+            <span class="api" id="rm-summary" style="margin-left:auto"></span>
+          </div>
+          <div id="rm-ai-panel" class="ai-panel" style="display:none">
+            <label style="margin:0 0 4px">Describe the set of allowed values <span class="api">(e.g. "GCC country codes — ISO alpha-2")</span></label>
+            <textarea id="rm-ai-nl" placeholder="ISO 4217 currency codes most commonly used in trade"></textarea>
+            <div class="ai-panel-actions">
+              <button type="button" id="rm-ai-go" onclick="runRefAi()">Generate</button>
+              <button type="button" class="alt" onclick="toggleRefAi()">Cancel</button>
+              <span class="api" id="rm-ai-status"></span>
+            </div>
+            <div id="rm-ai-result"></div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="alt" onclick="closeReferenceModal()">Cancel</button>
+          <button onclick="saveReference()">Save</button>
         </div>
       </div>
     </div>
@@ -1278,13 +1341,14 @@ function tpCreateProfile(){
 }
 
 function switchTab(name){
-  ['profiles','tables','scans','dictionary','imports'].forEach(n=>{
+  ['profiles','tables','scans','dictionary','references','imports'].forEach(n=>{
     $('tab-'+n).classList.toggle('active', n===name);
     $('panel-'+n).classList.toggle('hidden', n!==name);
   });
   if(name==='profiles') loadProfiles();
   if(name==='scans') loadScans();
   if(name==='dictionary') loadConcepts();
+  if(name==='references') loadReferences();
   if(name==='imports') loadImports();
 }
 
@@ -1561,16 +1625,24 @@ function closeProfile(){$('profile-card').classList.add('hidden')}
 // ---------- Dictionary ----------
 const DIMENSIONS=['completeness','validity','uniqueness'];
 const SEMANTIC_TYPES_FULL=['master_data','transaction','event_log','reference','staging','snapshot'];
-const RULE_TYPES=['not_null','max_null_rate','no_pseudo_nulls','unique','format_regex'];
+const RULE_TYPES=['not_null','no_pseudo_nulls','unique','format_regex','dictionary_match'];
 let _concepts=[];
+let _references=[];     // cached for paramSummary / _explainRule / concept dropdown
 
 // Filter state for the unified Dictionary list. Persisted across re-renders.
 const _dictFilter={ dim:'all', rule:'all', source:'all', enabled:'all', q:'' };
 
 async function loadConcepts(){
   try{
-    const resp=await api('GET','/api/v1/products/data-quality/concepts');
+    // Pull references alongside concepts so dictionary_match rows can resolve
+    // their reference_id → name/value_count in paramSummary without an
+    // extra round-trip per row.
+    const [resp, refResp] = await Promise.all([
+      api('GET','/api/v1/products/data-quality/concepts'),
+      api('GET','/api/v1/products/data-quality/references'),
+    ]);
     _concepts=resp.items||[];
+    _references=refResp.items||[];
     renderDictionary();
   }catch(e){toast(e.message,false)}
 }
@@ -1673,9 +1745,6 @@ function renderDictTable(){
   const rows=items.length?items.flatMap(c=>{
     const syns=(c.synonyms||[]).slice(0,6).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
     const more=(c.synonyms||[]).length>6?`<span class="chip">+${(c.synonyms||[]).length-6}</span>`:'';
-    const at=Array.isArray(c.applies_to_types)&&c.applies_to_types.length
-      ?c.applies_to_types.map(t=>`<span class="chip">${escapeHtml(t)}</span>`).join('')
-      :'<span class="cell-mute">any</span>';
     const sevPill=`<span class="pill pill-${c.severity}">${c.severity}</span>`;
     const stat=c.enabled?'':'<span class="pill pill-disabled" style="margin-left:6px">disabled</span>';
     const seedMark=c.is_seed?'<span class="seed-mark" title="Came from the seed defaults">seed</span>':'';
@@ -1689,14 +1758,13 @@ function renderDictTable(){
       <td class="mono">${c.rule_type}</td>
       <td class="cell-mute">${param}</td>
       <td>${sevPill}</td>
-      <td>${at}</td>
       <td style="width:120px;white-space:nowrap" onclick="event.stopPropagation()">
         <button class="tiny" onclick="openConceptModal(${c.id})">Edit</button>
         <button class="tiny" onclick="deleteConcept(${c.id},'${c.concept.replace(/'/g,"\\'")}')">Del</button>
       </td>
     </tr>`;
     return expanded ? [main, _conceptDetailRow(c)] : [main];
-  }).join('') : `<tr><td class="empty" colspan="8">No concepts match the current filter.</td></tr>`;
+  }).join('') : `<tr><td class="empty" colspan="7">No concepts match the current filter.</td></tr>`;
   $('dict-list').innerHTML=`
     <div class="card" style="padding:10px 14px;margin-bottom:10px;display:flex;align-items:center">
       <span class="api">Showing <strong>${items.length}</strong> of ${total} concept${total!==1?'s':''}.</span>
@@ -1710,7 +1778,6 @@ function renderDictTable(){
           <th style="width:130px">Rule</th>
           <th style="width:180px">Parameter</th>
           <th style="width:90px">Severity</th>
-          <th style="width:180px">Applies to</th>
           <th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -1721,7 +1788,13 @@ function renderDictTable(){
 function paramSummary(ruleType, p){
   if(!p)return '—';
   if(ruleType==='format_regex')return p.pattern?`<span class="mono" title="${(p.pattern||'').replace(/"/g,'&quot;')}">${trunc(p.pattern,28)}</span>`:'—';
-  if(ruleType==='max_null_rate')return p.threshold!=null?`threshold ≤ ${(p.threshold*100).toFixed(1)}%`:'—';
+  if(ruleType==='dictionary_match'){
+    const rid=p.reference_id;
+    if(!rid) return '<span class="cell-mute">no reference</span>';
+    const r=(_references||[]).find(x=>x.id===rid);
+    if(!r) return `<span class="cell-mute">ref #${rid} (missing)</span>`;
+    return `<span class="mono" title="${escapeHtml(r.name)}">→ ${escapeHtml(trunc(r.name,22))} · ${r.value_count||0}</span>`;
+  }
   return '—';
 }
 
@@ -1735,15 +1808,24 @@ function _explainRule(ruleType, p){
           : 'A regex rule, but no pattern is stored. Click Edit to add one.',
         pattern: p.pattern||null,
       };
+    case 'dictionary_match': {
+      const rid=p.reference_id;
+      const ref=rid?((_references||[]).find(x=>x.id===rid)):null;
+      if(!ref){
+        return {
+          what: 'A dictionary-match rule, but no reference is attached. Click Edit and pick one.',
+          pattern: null, reference: null,
+        };
+      }
+      const ci=ref.case_sensitive?'case-sensitive':'case-insensitive (whitespace trimmed)';
+      return {
+        what: `A value PASSES if it appears in the reference "${ref.name}" (${ref.value_count||0} value(s); ${ci}). NULL and pseudo-nulls are ignored by this rule (reported by completeness).`,
+        pattern: null,
+        reference: ref,
+      };
+    }
     case 'not_null':
       return {what: 'A value PASSES if it is not NULL. NULL is a violation.', pattern: null};
-    case 'max_null_rate':
-      return {
-        what: p.threshold!=null
-          ? `The column PASSES if no more than ${(p.threshold*100).toFixed(1)}% of values are NULL.`
-          : 'The column PASSES if its NULL rate is below the configured threshold.',
-        pattern: null,
-      };
     case 'no_pseudo_nulls':
       return {what: 'A value PASSES if it is not a pseudo-null like "N/A", "NULL", "-", "none", or whitespace-only.', pattern: null};
     case 'unique':
@@ -1761,18 +1843,219 @@ function _conceptDetailRow(c){
   const patternBlock=ex.pattern?`
     <div class="k">Pattern</div>
     <div class="v regex-box">${escapeHtml(ex.pattern)}</div>`:'';
-  const editLabel = c.rule_type==='format_regex' ? 'Edit & test regex' : 'Edit this rule';
-  return `<tr class="dict-detail-row"><td colspan="8">
+  // For dictionary_match, show the attached reference name + a preview
+  // of its values so the user can glance the contents inline.
+  let valuesBlock='';
+  if(c.rule_type==='dictionary_match' && ex.reference){
+    const r=ex.reference;
+    const vs=Array.isArray(r.value_preview)?r.value_preview:[];
+    const preview=vs.slice(0,12).map(v=>`<span class="chip">${escapeHtml(String(v))}</span>`).join(' ');
+    const more=(r.value_count||0)>vs.length?` <span class="api">+ ${(r.value_count||0)-vs.length} more</span>`:'';
+    valuesBlock=`
+      <div class="k">Reference</div>
+      <div class="v"><strong>${escapeHtml(r.name)}</strong> · ${r.value_count||0} value(s) ${preview?'<div style="margin-top:4px">'+preview+more+'</div>':''}
+        <div style="margin-top:6px"><button class="tiny alt" onclick="openReferenceModal(${r.id})">Edit reference</button></div>
+      </div>`;
+  }
+  const editLabel = c.rule_type==='format_regex' ? 'Edit & test regex'
+                  : c.rule_type==='dictionary_match' ? 'Edit rule'
+                  : 'Edit this rule';
+  return `<tr class="dict-detail-row"><td colspan="7">
     <div class="dict-detail">
       <div class="k">How it works</div>
       <div class="v">${escapeHtml(ex.what)}</div>
       ${patternBlock}
+      ${valuesBlock}
       <div class="k">Explanation</div>
       <div class="v">${notes}</div>
       <div class="k"></div>
       <div class="v"><button class="tiny" onclick="openConceptModal(${c.id})">${editLabel}</button></div>
     </div>
   </td></tr>`;
+}
+
+// ---------- References tab ----------
+
+async function loadReferences(){
+  try{
+    const r=await api('GET','/api/v1/products/data-quality/references');
+    _references=r.items||[];
+    renderReferences();
+  }catch(e){toast(e.message,false)}
+}
+
+function renderReferences(){
+  const root=$('references-list');
+  if(!_references.length){
+    root.innerHTML=`<div class="card" style="padding:18px"><p class="api" style="margin:0">
+      No references yet. Click <strong>+ New reference</strong> to create one (e.g. "Saudi Banks").
+      Then attach it to a validity concept by setting rule_type = dictionary_match.</p></div>`;
+    return;
+  }
+  const rows=_references.map(r=>{
+    const ci=r.case_sensitive?'case-sensitive':'case-insensitive';
+    const desc=r.description?escapeHtml(trunc(r.description,80)):'<span class="cell-mute">—</span>';
+    return `<tr>
+      <td><strong>${escapeHtml(r.name)}</strong></td>
+      <td class="mono">${r.value_count||0}</td>
+      <td class="api">${ci}</td>
+      <td>${desc}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="tiny alt" onclick="openReferenceModal(${r.id})">Edit</button>
+        <button class="tiny alt" onclick="deleteReference(${r.id}, ${JSON.stringify(r.name)})" style="margin-left:4px">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+  root.innerHTML=`<div class="card" style="padding:0">
+    <table>
+      <thead><tr>
+        <th>Name</th>
+        <th style="width:90px">Values</th>
+        <th style="width:160px">Match</th>
+        <th>Description</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+async function openReferenceModal(id){
+  const m=$('reference-modal');
+  $('rm-id').value=id||'';
+  $('reference-modal-title').textContent=id?'Edit reference':'New reference';
+  // Reset.
+  $('rm-name').value=''; $('rm-description').value='';
+  $('rm-values').value=''; $('rm-case-sensitive').checked=false;
+  $('rm-ai-panel').style.display='none';
+  $('rm-ai-nl').value=''; $('rm-ai-result').innerHTML=''; $('rm-ai-status').textContent='';
+  window._lastRefDraft=null;
+
+  if(id){
+    try{
+      const r=await api('GET','/api/v1/products/data-quality/references/'+id);
+      $('rm-name').value=r.name||'';
+      $('rm-description').value=r.description||'';
+      $('rm-case-sensitive').checked=!!r.case_sensitive;
+      $('rm-values').value=(r.values||[]).map(v=>v.value).join('\n');
+    }catch(e){toast(e.message,false);return}
+  }
+  syncRefSummary();
+  m.classList.add('show');
+}
+
+function closeReferenceModal(){$('reference-modal').classList.remove('show')}
+
+function syncRefSummary(){
+  const t=$('rm-values');
+  const s=$('rm-summary');
+  if(!t||!s) return;
+  const lines=t.value.split('\n').map(x=>x.trim()).filter(Boolean);
+  const seen=new Set();
+  const ci=!$('rm-case-sensitive').checked;
+  for(const v of lines) seen.add(ci?v.toLowerCase():v);
+  s.textContent = lines.length
+    ? `${seen.size} unique value${seen.size===1?'':'s'} (${lines.length} line${lines.length===1?'':'s'})`
+    : '';
+}
+
+async function saveReference(){
+  const id=$('rm-id').value;
+  const name=$('rm-name').value.trim();
+  if(!name){toast('Name is required',false);return}
+  const values=$('rm-values').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const body={
+    name,
+    description: $('rm-description').value.trim() || null,
+    case_sensitive: $('rm-case-sensitive').checked,
+    values,
+  };
+  try{
+    if(id){
+      await api('PUT','/api/v1/products/data-quality/references/'+id, body);
+      toast('Reference updated');
+    }else{
+      await api('POST','/api/v1/products/data-quality/references', body);
+      toast('Reference created');
+    }
+    closeReferenceModal();
+    loadReferences();
+  }catch(e){toast(e.message,false)}
+}
+
+async function deleteReference(id, name){
+  if(!confirm(`Delete reference "${name}"?\n\nThis is refused if any concept still points at it — re-point those concepts first.`))return;
+  try{
+    await api('DELETE','/api/v1/products/data-quality/references/'+id);
+    toast('Reference deleted');
+    loadReferences();
+  }catch(e){
+    if(/cannot delete/i.test(e.message)) alert(e.message);
+    else toast(e.message,false);
+  }
+}
+
+function toggleRefAi(){
+  const panel=$('rm-ai-panel');
+  const btn=$('rm-ai-toggle');
+  const open = panel.style.display==='none';
+  panel.style.display = open ? '' : 'none';
+  if(btn) btn.classList.toggle('active', open);
+  if(open){ $('rm-ai-nl').focus(); }
+  else { $('rm-ai-result').innerHTML=''; $('rm-ai-status').textContent=''; }
+}
+
+async function runRefAi(){
+  const nl=$('rm-ai-nl').value.trim();
+  if(!nl){ toast('Describe the set of allowed values first',false); return; }
+  const btn=$('rm-ai-go');
+  const status=$('rm-ai-status');
+  const out=$('rm-ai-result');
+  btn.disabled=true; btn.textContent='Generating…';
+  status.textContent='Calling LLM — this can take 30–60s on the first call…';
+  out.innerHTML='';
+  try{
+    const currentValues=$('rm-values').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    const body={
+      nl_text: nl,
+      reference_name: $('rm-name').value || null,
+      current_values: currentValues.length?currentValues:null,
+    };
+    const resp=await api('POST','/api/v1/products/data-quality/references/draft-values', body);
+    btn.disabled=false; btn.textContent='Generate';
+    if(resp.status!=='ok'){
+      status.textContent='';
+      out.innerHTML=`<div class="ai-result" style="color:var(--err)">
+        <strong>${escapeHtml(resp.status)}</strong> — ${escapeHtml(resp.error||'')}</div>`;
+      return;
+    }
+    const d=resp.draft;
+    window._lastRefDraft=d;
+    status.textContent=`${resp.latency_ms||'?'} ms · ${resp.input_tokens||'?'}/${resp.output_tokens||'?'} tokens · ${d.confidence||'MEDIUM'}`;
+    const preview=(d.values||[]).slice(0,12).map(v=>`<span class="chip">${escapeHtml(String(v))}</span>`).join(' ');
+    const more=(d.values||[]).length>12?` <span class="api">+ ${d.values.length-12} more</span>`:'';
+    const ciTxt = d.case_sensitive ? 'case-sensitive' : 'case-insensitive';
+    out.innerHTML=`<div class="ai-result">
+      <div class="ai-explain">${escapeHtml(d.explanation||'')}</div>
+      <div class="ai-pattern">${(d.values||[]).length} value(s) · ${ciTxt}</div>
+      <div class="ai-examples"><div class="ai-pass"><div class="ai-ex-head">Preview</div>${preview}${more}</div></div>
+      <button type="button" class="ai-use-btn" onclick="useRefDraft()">Use these values</button>
+    </div>`;
+  }catch(e){
+    btn.disabled=false; btn.textContent='Generate';
+    status.textContent='';
+    out.innerHTML=`<div class="ai-result" style="color:var(--err)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function useRefDraft(){
+  const d=window._lastRefDraft;
+  if(!d||!Array.isArray(d.values)){ toast('No draft to use',false); return; }
+  $('rm-values').value=d.values.join('\n');
+  $('rm-case-sensitive').checked=!!d.case_sensitive;
+  syncRefSummary();
+  toggleRefAi();
+  toast(`${d.values.length} value(s) applied — review before saving`);
 }
 
 async function seedDefaults(){
@@ -1786,9 +2069,9 @@ async function seedDefaults(){
 async function refreshSeeded(){
   if(!confirm(
     'Refresh all seeded concepts from the current seed file?\n\n'+
-    'This OVERWRITES synonyms, rule type, parameter (regex pattern), severity, '+
-    'applies-to, and notes on every concept marked "seed" — to match the latest '+
-    'defaults in concept_seed.py. Use this to backfill empty regex patterns.\n\n'+
+    'This OVERWRITES synonyms, rule type, parameter (regex pattern or dictionary values), severity, '+
+    'and notes on every concept marked "seed" — to match the latest '+
+    'defaults in concept_seed.py. Use this to backfill empty regex patterns or refresh seeded value lists.\n\n'+
     'Custom concepts (anything you have edited or created) are NOT touched.'
   )) return;
   try{
@@ -1829,14 +2112,11 @@ function openConceptModal(id){
     $('cm-synonyms').value=(c.synonyms||[]).join(', ');
     $('cm-rule-type').value=c.rule_type;
     $('cm-severity').value=c.severity;
-    $('cm-parameter').value=c.rule_type==='format_regex'?(c.parameter?.pattern||''):
-                            c.rule_type==='max_null_rate'?(c.parameter?.threshold??''):
-                            '';
+    $('cm-parameter').value=c.rule_type==='format_regex'?(c.parameter?.pattern||''):'';
+    $('cm-pending-ref-id').value = c.rule_type==='dictionary_match'
+      ? (c.parameter?.reference_id || '') : '';
     $('cm-notes').value=c.notes||'';
     $('cm-enabled').checked=!!c.enabled;
-    document.querySelectorAll('.cm-applies').forEach(cb=>{
-      cb.checked=Array.isArray(c.applies_to_types) && c.applies_to_types.includes(cb.value);
-    });
   }else{
     $('cm-dimension').disabled=false;
     $('cm-concept').disabled=false;
@@ -1845,9 +2125,9 @@ function openConceptModal(id){
     $('cm-rule-type').value='not_null';
     $('cm-severity').value='medium';
     $('cm-parameter').value='';
+    $('cm-pending-ref-id').value='';
     $('cm-notes').value='';
     $('cm-enabled').checked=true;
-    document.querySelectorAll('.cm-applies').forEach(cb=>cb.checked=false);
   }
   const samples=$('cm-regex-samples'); if(samples) samples.value='';
   // Reset the Ask-AI panel so a draft from a previous concept doesn't leak.
@@ -1894,9 +2174,6 @@ async function runDraft(){
     }
     const d=resp.draft;
     const synList=(d.synonyms||[]).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('');
-    const appliesList=(d.applies_to_types||[]).length
-      ? (d.applies_to_types||[]).map(s=>`<span class="chip">${escapeHtml(s)}</span>`).join('')
-      : '<span class="api">(any table type)</span>';
     $('draft-result').innerHTML=`
       <div class="card" style="background:#f8fafc;padding:12px;margin:0">
         <div style="display:flex;gap:10px;align-items:baseline;margin-bottom:6px">
@@ -1909,7 +2186,6 @@ async function runDraft(){
         <div class="tile-row"><span class="k">Parameter</span><span class="v mono">${d.parameter?escapeHtml(d.parameter):'<span class="api">—</span>'}</span></div>
         <div class="tile-row"><span class="k">Severity</span><span class="v">${escapeHtml(d.severity)}</span></div>
         <div class="tile-row"><span class="k">Synonyms</span><span class="v">${synList||'<span class="api">(none)</span>'}</span></div>
-        <div class="tile-row"><span class="k">Applies to</span><span class="v">${appliesList}</span></div>
         <p class="api" style="margin-top:8px;font-style:italic">${escapeHtml(d.reasoning||'')}</p>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button onclick="useDraft()">Use this draft</button>
@@ -1936,14 +2212,11 @@ function useDraft(){
   $('cm-rule-type').value=d.rule_type;
   $('cm-severity').value=d.severity||'medium';
   $('cm-synonyms').value=(d.synonyms||[]).join(', ');
-  if(d.parameter){
+  if(d.parameter && d.rule_type==='format_regex'){
     $('cm-parameter').value=d.parameter;
   }
-  if(Array.isArray(d.applies_to_types)){
-    document.querySelectorAll('.cm-applies').forEach(cb=>{
-      cb.checked=d.applies_to_types.includes(cb.value);
-    });
-  }
+  // dictionary_match drafts now only carry rule_type; the user picks the
+  // reference in the dropdown that syncParameterField populates below.
   syncParameterField();
   toast('Draft loaded — review and Save when ready');
 }
@@ -2242,6 +2515,14 @@ function syncParameterField(){
   const tester=$('cm-regex-tester');
   const aiBtn=$('cm-ai-toggle');
   const aiPanel=$('cm-ai-panel');
+  const refWrap=$('cm-ref-wrap');
+  // Default everything off; turn on what the current rule_type needs.
+  wrap.style.display='none';
+  if(tester) tester.style.display='none';
+  if(aiBtn) aiBtn.style.display='none';
+  if(aiPanel) aiPanel.style.display='none';
+  if(refWrap) refWrap.style.display='none';
+
   if(rt==='format_regex'){
     wrap.style.display='';
     lbl.textContent='Regex pattern';
@@ -2249,20 +2530,50 @@ function syncParameterField(){
     hint.textContent='Matched values pass; unmatched values are violations.';
     if(tester){ tester.style.display=''; syncRegexTester(); }
     if(aiBtn) aiBtn.style.display='';
-  }else if(rt==='max_null_rate'){
-    wrap.style.display='';
-    lbl.textContent='Max null rate (0–1)';
-    inp.placeholder='0.05';
-    hint.textContent='Maximum allowed null fraction. e.g. 0.05 means up to 5% nulls is acceptable.';
-    if(tester) tester.style.display='none';
-    if(aiBtn) aiBtn.style.display='none';
-    if(aiPanel) aiPanel.style.display='none';
+  }else if(rt==='dictionary_match'){
+    if(refWrap) refWrap.style.display='';
+    populateReferenceDropdown();
   }else{
-    wrap.style.display='none';
     inp.value='';
-    if(tester) tester.style.display='none';
-    if(aiBtn) aiBtn.style.display='none';
-    if(aiPanel) aiPanel.style.display='none';
+  }
+}
+
+// Populate the reference <select> in the concept editor from the cached
+// _references list. If we haven't loaded references yet (user opened the
+// concept modal without visiting the References tab first), fetch them.
+async function populateReferenceDropdown(){
+  const sel=$('cm-reference-id');
+  const hint=$('cm-reference-hint');
+  if(!sel) return;
+  if(!_references || !_references.length){
+    sel.innerHTML='<option value="">(loading references…)</option>';
+    sel.disabled=true;
+    try{
+      const r=await api('GET','/api/v1/products/data-quality/references');
+      _references = r.items||[];
+    }catch(e){
+      _references = [];
+    }
+    sel.disabled=false;
+  }
+  if(!_references.length){
+    sel.innerHTML='<option value="">(no references — create one in the References tab)</option>';
+    if(hint) hint.innerHTML='<span style="color:var(--err)">No references exist. Open the References tab to create one (e.g. "Saudi Banks"), then come back here.</span>';
+    return;
+  }
+  const pending=String($('cm-pending-ref-id').value||'');
+  const opts=['<option value="">(choose a reference…)</option>']
+    .concat(_references.map(r=>{
+      const ci=r.case_sensitive?'case-sensitive':'case-insensitive';
+      const sel_=String(r.id)===pending?' selected':'';
+      return `<option value="${r.id}"${sel_}>${escapeHtml(r.name)} · ${r.value_count||0} value(s) · ${ci}</option>`;
+    }));
+  sel.innerHTML=opts.join('');
+  if(hint){
+    const cur=_references.find(r=>String(r.id)===pending);
+    hint.textContent = cur
+      ? `${cur.value_count||0} value(s) in "${cur.name}". Edit them in the References tab.`
+      : 'Pick the reference whose values this column must match.';
   }
 }
 
@@ -2318,6 +2629,18 @@ async function runRegexAi(){
     status.textContent='';
     out.innerHTML=`<div class="ai-result" style="color:var(--err)">${escapeHtml(e.message)}</div>`;
   }
+}
+
+function onConceptReferenceChange(){
+  $('cm-pending-ref-id').value = $('cm-reference-id').value || '';
+  // Re-render the hint with the freshly-picked reference.
+  const hint=$('cm-reference-hint');
+  if(!hint) return;
+  const id=parseInt($('cm-reference-id').value,10);
+  const r=(_references||[]).find(x=>x.id===id);
+  hint.textContent = r
+    ? `${r.value_count||0} value(s) in "${r.name}". Edit them in the References tab.`
+    : 'Pick the reference whose values this column must match.';
 }
 
 function useRegexDraft(){
@@ -2690,9 +3013,8 @@ async function saveProfile(){
         toast('Connection / schema / table are required',false);return;
       }
       await api('POST','/api/v1/products/data-quality/profiles', body);
-      // Persist the semantic-type tag alongside profile creation, so the
-      // matcher's applies_to_types gate uses it next time. Failure here
-      // doesn't fail profile creation — the tag can be set later.
+      // Persist the semantic-type tag alongside profile creation. Failure
+      // here doesn't fail profile creation — the tag can be set later.
       const stype=$('pe-semantic-type').value;
       if(stype){
         try{
@@ -2797,6 +3119,34 @@ function pdRenderDefinition(){
       </div>
     </div>
 
+    <div class="card" style="padding:14px;margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>Entity key</span>
+        <span id="pdef-entity-key-lock-badge"></span>
+        <span class="api" style="font-weight:400">— used by uniqueness rules. Same value under one entity is fine; same value under two entities = violation.</span>
+      </div>
+      <p class="api" style="margin:0 0 8px">
+        Auto-detected from the declared primary key during each scan. Override
+        when the row PK isn't the business identifier (e.g. <span class="mono">claim_id</span> is the row PK
+        but <span class="mono">national_id</span> is what should differentiate clients). Saving locks
+        the value against future scan overwrites; use <strong>Reset to auto-detect</strong> to release.
+      </p>
+      <label>Entity key columns
+        <span class="api">— pick one or more, in order. Composite keys are supported.</span>
+      </label>
+      <div id="pdef-entity-key-chips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:30px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#f8fafc">
+        <span class="api" style="font-size:11px">Loading columns…</span>
+      </div>
+      <div class="row" style="gap:10px;margin-top:8px;align-items:center">
+        <select id="pdef-entity-key-add" onchange="pdAddEntityKey(this.value)" style="flex:1" disabled>
+          <option value="">— loading columns —</option>
+        </select>
+        <button class="alt tiny" onclick="pdClearEntityKey()" title="Remove every chip (does not save until you click Save)">Clear</button>
+        <button class="alt tiny" onclick="pdResetEntityKey()" title="Clear the value AND release the lock so the next scan auto-detects">Reset to auto-detect</button>
+        <button class="tiny" id="pdef-entity-key-save" onclick="pdSaveEntityKey()">Save entity key</button>
+      </div>
+    </div>
+
     <div class="card" style="padding:14px">
       <div style="font-weight:600;margin-bottom:10px">Profile settings</div>
       <div class="row" style="gap:10px">
@@ -2835,6 +3185,130 @@ function pdRenderDefinition(){
       // Stash the loaded value so the Save handler can detect a change.
       _pdProfile._loadedSemanticType=sel?sel.value:'';
     }).catch(()=>{});
+
+  // Seed the entity-key working list from the saved profile, then load the
+  // live column catalog so the picker can show options.
+  _pdEntityKey=Array.from(p.entity_key_columns||[]);
+  pdLoadEntityKeyColumns();
+}
+
+// ---- Entity-key picker (Definition tab) ----
+// Working list maintained as an ordered array; chips render the order so
+// composite keys read naturally. The picker dropdown reuses _pdEKLiveCols
+// (a separate cache from _pdLiveColumns so visiting the Columns tab isn't
+// a prerequisite). Save persists via the dedicated /entity-key endpoint.
+let _pdEntityKey=[];     // ordered list of selected column names
+let _pdEKLiveCols=[];    // [{name, data_type, ...}] from the preview endpoint
+
+async function pdLoadEntityKeyColumns(){
+  const p=_pdProfile;
+  if(!p)return;
+  // Reuse the Columns-tab cache when it's already populated for the same
+  // table to avoid a duplicate network round-trip.
+  if(_pdLiveColumns && _pdLiveColumns.length){
+    _pdEKLiveCols=_pdLiveColumns;
+    pdRenderEntityKey();
+    return;
+  }
+  try{
+    const url=`/api/v1/products/data-quality/tables/connections/${p.connection_id}/preview?schema_name=${encodeURIComponent(p.schema_name)}&table_name=${encodeURIComponent(p.table_name)}&limit=1`;
+    const r=await api('GET',url);
+    _pdEKLiveCols=r.columns||[];
+    pdRenderEntityKey();
+  }catch(e){
+    const chips=$('pdef-entity-key-chips');
+    if(chips){
+      chips.innerHTML=`<span class="api" style="font-size:11px;color:var(--err)">Couldn't load columns: ${escapeHtml(e.message)}</span>`;
+    }
+    const sel=$('pdef-entity-key-add');
+    if(sel){
+      sel.disabled=true;
+      sel.innerHTML='<option value="">— columns unavailable —</option>';
+    }
+  }
+}
+
+function pdRenderEntityKey(){
+  const chips=$('pdef-entity-key-chips');
+  const sel=$('pdef-entity-key-add');
+  if(!chips||!sel)return;
+  // Lock badge — tells the user whether scans will auto-update or not.
+  const badge=$('pdef-entity-key-lock-badge');
+  if(badge){
+    const locked=!!(_pdProfile && _pdProfile.entity_key_locked);
+    badge.innerHTML=locked
+      ? `<span class="pill pill-acceptable" title="User-set; scans will not overwrite. Use Reset to release.">🔒 locked</span>`
+      : `<span class="pill pill-no_rules" title="Auto-detect mode: the next scan may populate this from the declared PK.">auto-detect</span>`;
+  }
+  // Chips — ordered, each with × to remove.
+  if(!_pdEntityKey.length){
+    chips.innerHTML='<span class="api" style="font-size:11px">No entity key — uniqueness rules will use legacy globally-unique behaviour.</span>';
+  }else{
+    chips.innerHTML=_pdEntityKey.map((name,idx)=>(
+      `<span class="mono" style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:12px">`
+      +`<span class="cell-mute" style="font-size:10px">${idx+1}.</span>`
+      +`${escapeHtml(name)}`
+      +`<button onclick="pdRemoveEntityKey('${escapeHtml(name).replace(/'/g,"\\'")}')" `
+      +`style="border:0;background:transparent;cursor:pointer;color:#94a3b8;font-size:14px;line-height:1;padding:0" `
+      +`title="Remove from entity key">×</button>`
+      +`</span>`
+    )).join('');
+  }
+  // Dropdown — exclude already-selected columns so we can't add the same
+  // one twice (also matches server-side duplicate validation).
+  const taken=new Set(_pdEntityKey);
+  const opts=_pdEKLiveCols
+    .filter(c=>!taken.has(c.name))
+    .map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}${c.data_type?` <span class="cell-mute">(${escapeHtml(c.data_type)})</span>`:''}</option>`)
+    .join('');
+  sel.innerHTML=`<option value="">— add a column —</option>${opts}`;
+  sel.disabled=!_pdEKLiveCols.length;
+  sel.value='';
+}
+
+function pdAddEntityKey(name){
+  if(!name)return;
+  if(_pdEntityKey.includes(name)){
+    // Defensive — dropdown already filters these out, but a fast double-
+    // click could race.
+    return;
+  }
+  _pdEntityKey.push(name);
+  pdRenderEntityKey();
+}
+
+function pdRemoveEntityKey(name){
+  _pdEntityKey=_pdEntityKey.filter(n=>n!==name);
+  pdRenderEntityKey();
+}
+
+function pdClearEntityKey(){
+  // Local-only — empties the chips but doesn't persist. Save then writes
+  // the empty list AND locks (deliberate "no entity key" choice). Use
+  // pdResetEntityKey for the unlock path.
+  _pdEntityKey=[];
+  pdRenderEntityKey();
+}
+
+async function pdResetEntityKey(){
+  // Unlock path: clears the columns AND releases the lock so the next
+  // scan auto-populates from declared PK / heuristic candidates. Different
+  // from Clear (which is a local-only edit that still locks on Save).
+  if(!_pdProfile)return;
+  if(!confirm('Reset entity key to auto-detect? The next scan will repopulate it from the source PK.'))return;
+  try{
+    const updated=await api('DELETE',
+      '/api/v1/products/data-quality/profiles/'+_pdProfile.id+'/entity-key');
+    if(updated && updated.profile){
+      _pdProfile.entity_key_columns=updated.profile.entity_key_columns||[];
+      _pdProfile.entity_key_locked=!!updated.profile.entity_key_locked;
+      _pdEntityKey=Array.from(_pdProfile.entity_key_columns);
+      pdRenderEntityKey();
+    }
+    toast('Entity key reset — next scan will auto-detect.');
+  }catch(e){
+    toast(e.message||'Failed to reset entity key', false);
+  }
 }
 
 function pdSyncSampling(){
@@ -2959,6 +3433,37 @@ function pdMarkDirty(){
 function pdResetDirty(){
   $('pd-btn-save').disabled=true;
   $('pd-dirty-dot').classList.add('hidden');
+}
+
+// Entity-key has its own save lane (not folded into pdSaveDefinition) so the
+// override can be edited without touching anything else, and the dedicated
+// endpoint validates the list independently. Empty list = clear.
+async function pdSaveEntityKey(){
+  if(!_pdProfile)return;
+  const cols=Array.from(_pdEntityKey||[]);
+  const btn=$('pdef-entity-key-save');
+  if(btn){btn.disabled=true;btn.textContent='Saving…'}
+  try{
+    const updated=await api('PUT',
+      '/api/v1/products/data-quality/profiles/'+_pdProfile.id+'/entity-key',
+      {entity_key_columns:cols});
+    if(updated && updated.profile){
+      _pdProfile.entity_key_columns=updated.profile.entity_key_columns||[];
+      // Re-sync lock state too — the badge flips to "locked" after save.
+      _pdProfile.entity_key_locked=!!updated.profile.entity_key_locked;
+      // Re-sync the working list so subsequent edits start from the
+      // persisted truth (server may normalize/strip on save).
+      _pdEntityKey=Array.from(_pdProfile.entity_key_columns||[]);
+      pdRenderEntityKey();
+    }
+    toast(cols.length
+      ? 'Entity key saved and locked: '+cols.join(', ')
+      : 'Entity key locked-empty — uniqueness rules use legacy behaviour.');
+  }catch(e){
+    toast(e.message||'Failed to save entity key', false);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Save entity key'}
+  }
 }
 
 async function pdSaveDefinition(){
@@ -3805,21 +4310,19 @@ async function saveConcept(){
   const id=$('cm-id').value;
   const ruleType=$('cm-rule-type').value;
   const synonyms=$('cm-synonyms').value.split(',').map(s=>s.trim()).filter(Boolean);
-  const applies=Array.from(document.querySelectorAll('.cm-applies:checked')).map(cb=>cb.value);
   let parameter={};
   if(ruleType==='format_regex'){
     const pat=$('cm-parameter').value.trim();
     if(!pat){toast('Regex pattern is required',false);return}
     parameter={pattern:pat};
-  }else if(ruleType==='max_null_rate'){
-    const thr=parseFloat($('cm-parameter').value);
-    if(isNaN(thr)||thr<0||thr>1){toast('Threshold must be between 0 and 1',false);return}
-    parameter={threshold:thr};
+  }else if(ruleType==='dictionary_match'){
+    const refId=parseInt($('cm-reference-id').value,10);
+    if(!refId){toast('Pick a reference first (or create one in the References tab)',false);return}
+    parameter={reference_id:refId};
   }
   const body={
     synonyms, rule_type:ruleType, parameter,
     severity:$('cm-severity').value,
-    applies_to_types:applies.length?applies:null,
     notes:$('cm-notes').value||null,
     enabled:$('cm-enabled').checked,
   };

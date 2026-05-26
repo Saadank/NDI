@@ -116,3 +116,16 @@ async def get_scan_profiles(
 ):
     """Per-column profile rows for the given scan."""
     return await service.get_profiles(scan_id, auth_user)
+
+
+@router.delete("/{scan_id}")
+async def delete_scan(
+    scan_id: int,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ProfilerService = Depends(get_profiler_service),
+):
+    """Hard-delete a scan. CASCADES to column profiles, issues, and
+    score history for the scan. Refuses on pending / running scans to
+    avoid orphaning rows written by the background task. UI must
+    surface the cascade scope before sending."""
+    return await service.delete_scan(scan_id, auth_user)
