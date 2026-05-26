@@ -113,17 +113,3 @@ async def unblock(
 ):
     return {"detail": "Rule unblocked",
             "rule": await service.unblock(rule_id, auth_user)}
-
-
-@router.delete("/{rule_id}")
-async def delete_active_rule(
-    rule_id: int,
-    auth_user: AuthUser = Depends(get_current_user),
-    service: ActiveRuleService = Depends(get_active_rule_service),
-):
-    """Hard-delete an active rule. CASCADE destroys every t_dq_issues
-    row referencing it (validator output for this rule across all past
-    scans) and every t_dq_exceptions row suppressing it. Caller's UI
-    should surface the cascade scope in a confirm dialog before sending
-    this request."""
-    return await service.delete_rule(rule_id, auth_user)

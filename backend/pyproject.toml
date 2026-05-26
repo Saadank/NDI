@@ -22,9 +22,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "httpx>=0.28.0",
     "tzdata>=2024.1",
-    "anthropic>=0.40.0",  # unused since Step 6.0 (Ollama swap); kept in lock for future swap-back
-    "sqlglot>=25.0.0",    # SQL safety validation for LLM-generated rule parameters (Step 6.2+)
-    "openpyxl>=3.1.0",    # Excel parsing for Step 6 imports (Tables 11-13)
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +33,28 @@ dev = [
     "httpx>=0.28.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+]
+# NDMO Compliance product — document extraction + Arabic OCR + xlsx parsing.
+# Install with: uv sync --extra ndmo
+# Note: arabic-reshaper is intentionally NOT included; see
+# app/products/ndmo_compliance/extraction/arabic_text.py for the rationale.
+ndmo = [
+    # Extraction layer (Phase 1)
+    "pymupdf>=1.25.5",
+    "python-bidi>=0.6.6",
+    "opencv-python-headless>=4.11",
+    "pdf2image>=1.17.0",
+    "openpyxl>=3.1.0",
+    "paddleocr>=3.0.0",
+    "paddlepaddle>=3.0.0",
+    # Phase 2: ingestion pipeline (ClamAV + Restate + Qdrant + BGE-M3)
+    "clamd>=1.0.2",
+    "restate-sdk>=0.4.0",
+    "qdrant-client>=1.12.0",
+    "fastembed>=0.4.0",          # BGE-M3 dense + BM25 sparse via fastembed
+    # Phase 3: assessment engine (OpenAI GPT-4o + structured outputs)
+    # OPENAI_BASE_URL env var overrides the endpoint (Azure / proxy / etc.).
+    "openai>=1.40.0",
 ]
 
 [tool.ruff]

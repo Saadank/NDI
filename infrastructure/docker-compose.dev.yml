@@ -1,0 +1,171 @@
+services:
+
+  postgres:
+    image: postgres:15-alpine
+    env_file: .env.dev
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-datasharing_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-dsplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_change_me}
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ../backend/setup/db:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    env_file: .env.dev
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_dev_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev --health-enabled=true
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: dev-file
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # -----------------------------------------------------------------------
+  # NDMO Compliance — runtime dependencies
+  # Added in NDI Phase 2.  Self-contained: zero impact on existing services.
+  # -----------------------------------------------------------------------
+  clamav:
+    image: clamav/clamav:1.3
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_dev_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 1 localhost 3310 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s   # virus-database first download is slow
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_dev_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  restate:
+    image: docker.restate.dev/restatedev/restate:1.1
+    ports:
+      - "8081:8080"   # ingress (workflow.send / workflow.call)
+      - "9070:9070"   # admin
+    volumes:
+      - restate_dev_data:/restate-data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9070' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    env_file: .env.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+      - ../frontend:/frontend:ro
+      - api_venv:/app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      # NDMO-only deps — non-blocking on first boot via service_started
+      clamav:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      restate:
+        condition: service_started
+    command: sh -c "uv sync --inexact && uv pip install --python /app/.venv/bin/python qdrant-client openai fastembed pymupdf python-bidi openpyxl clamd 2>/dev/null; uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.worker
+    env_file: .env.dev
+    volumes:
+      - ../backend:/app
+      - worker_venv:/app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: sh -c "uv sync && python -m app.workers.main"
+
+volumes:
+  postgres_dev_data:
+    external: true
+    name: ndi-dev3_postgres_dev_data
+  minio_dev_data:
+    external: true
+    name: ndi-dev3_minio_dev_data
+  api_venv:
+  worker_venv:
+  # NDMO volumes (local to this compose, no external pre-creation needed)
+  clamav_dev_data:
+  qdrant_dev_data:
+  restate_dev_data:

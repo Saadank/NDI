@@ -34,12 +34,13 @@ from app.products.data_quality.routers import (
     scores as dq_scores,
     exceptions as dq_exceptions,
 )
-# LLM-touching DQ routes — same product gate, separate import to keep
-# the boundary in main.py mirror what's in the source tree.
-from app.products.data_quality.ai.routers import (
-    concepts_ai as dq_concepts_ai,
-    imports as dq_imports,
-    proposals as dq_proposals,
+
+# Product: NDMO Compliance
+from app.products.ndmo_compliance.dependencies import require_ndmo_compliance
+from app.products.ndmo_compliance.routers import (
+    documents as ndmo_documents,
+    webhooks as ndmo_webhooks,
+    assessments as ndmo_assessments,
 )
 
 
@@ -103,13 +104,30 @@ app.include_router(pickup.router, prefix="/api/v1")
 # Same pattern as Data Sharing: every route is gated by the tenant having
 # the data_quality product enabled in t_tenant_products (FR-TYPE-01 etc.).
 for r in [dq_health, dq_connections, dq_tables, dq_scans, dq_concepts,
-          dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions,
-          dq_concepts_ai, dq_imports, dq_proposals]:
+          dq_active_rules, dq_issues, dq_profiles, dq_scores, dq_exceptions]:
     app.include_router(
         r.router,
         prefix="/api/v1/products/data-quality",
         dependencies=[Depends(require_data_quality)],
     )
+
+# Product: NDMO Compliance — /api/v1/products/ndmo-compliance/...
+# Backend slug stays 'ndmo' (t_products.slug); URL is /ndmo-compliance per spec.
+# Same product-gating pattern as Data Sharing / Data Quality.
+for r in [ndmo_documents, ndmo_assessments]:
+    app.include_router(
+        r.router,
+        prefix="/api/v1/products/ndmo-compliance",
+        dependencies=[Depends(require_ndmo_compliance)],
+    )
+
+# Webhook from MinIO's bucket-notify — intentionally NOT gated by the
+# product dependency (callers are MinIO, not authenticated users; the
+# webhook validates tenant_id by parsing the object key + DB lookup).
+app.include_router(
+    ndmo_webhooks.router,
+    prefix="/api/v1/products/ndmo-compliance",
+)
 
 
 @app.get("/health")

@@ -8,9 +8,6 @@ from fastapi import APIRouter, Depends, Query
 from app.core.security import get_current_user
 from app.products.data_quality.permissions import can_use_dq, require
 from app.products.data_quality.repositories.issue_repository import IssueRepository
-from app.products.data_quality.services.violator_examples_service import (
-    ViolatorExamplesService, get_violator_examples_service,
-)
 from app.structures.auth_user import AuthUser
 
 router = APIRouter(prefix="/issues", tags=["dq-issues"])
@@ -49,20 +46,3 @@ async def by_profile(
         latest_scan_only=latest_scan_only, limit=limit,
     )
     return {"items": items}
-
-
-@router.get("/{issue_id}/violator-examples")
-async def violator_examples(
-    issue_id: int,
-    auth_user: AuthUser = Depends(get_current_user),
-    service: ViolatorExamplesService = Depends(get_violator_examples_service),
-):
-    """Live-fetch up to a few example (target_value, entity_key_values…)
-    pairs for a failed uniqueness issue. **Nothing is persisted** — the
-    values are read on-demand from the source and returned to the caller.
-
-    Requires the profile to have drill_down enabled; privacy-conservative
-    profiles get a 422 with a clear explanation. Only available for
-    uniqueness issues; format/completeness rules use the existing
-    pattern-signature path."""
-    return await service.for_issue(issue_id, auth_user=auth_user)

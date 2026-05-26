@@ -201,10 +201,14 @@ def can_view_workflows(auth_user: AuthUser) -> bool:
     """Read-only access to workflow templates.
 
     Org Admins can view (their own write access implies read). DPOs need to
-    inspect templates to perform PDPL review against them, so they're granted
-    read access here even though they can't author workflows themselves.
+    inspect templates to perform PDPL review against them. Requesters and
+    data owners need to read templates in the new-request wizard to preview
+    the approval steps that will be applied to their submission.
     """
-    return _is_org_admin(auth_user) or _role(auth_user) == SharingRole.DPO
+    return (
+        _is_org_admin(auth_user)
+        or _role(auth_user) in (SharingRole.DPO, SharingRole.REQUESTER, SharingRole.DATA_OWNER)
+    )
 
 
 def can_manage_users(auth_user: AuthUser) -> bool:

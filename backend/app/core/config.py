@@ -61,19 +61,13 @@ class Settings(BaseSettings):
     WORKER_SLA_CHECK_INTERVAL_MINUTES: int = 30
     WORKER_NOTIFICATION_INTERVAL_MINUTES: int = 5
 
-    # IDQP — LLM client (Step 3b matcher + Step 6 Excel/NL pipeline).
-    # When DQ_LLM_PROVIDER is empty or 'none', all LLM features degrade
-    # gracefully — the fuzzy matcher still works, AI-only endpoints return
-    # 503, and the standalone UI hides the "Draft with AI" affordance.
-    #
-    # Provider was Anthropic Haiku 4.5 originally; the codebase now uses
-    # local Ollama by default. The abstraction in
-    # data_quality/ai/client.py keeps the swap surface small.
-    DQ_LLM_PROVIDER: str = "ollama"          # ollama | (future: openai/anthropic)
-    DQ_LLM_BASE_URL: str = "http://host.docker.internal:11434"
-    DQ_LLM_MODEL: str = "qwen2.5-coder:7b"
+    # IDQP — LLM-augmented concept matcher (Step 3b).
+    # When ANTHROPIC_API_KEY is empty the matcher degrades to fuzzy-only
+    # mode; columns that the fuzzy matcher couldn't classify simply return
+    # no proposed rules instead of failing.
+    ANTHROPIC_API_KEY: str = ""
+    DQ_LLM_MODEL: str = "claude-haiku-4-5-20251001"
     DQ_LLM_MAX_OUTPUT_TOKENS: int = 1024
-    DQ_LLM_TIMEOUT_S: int = 45               # parallel matcher fan-out — fail fast, retry next click
 
     # External pickup portal
     PICKUP_TOKEN_TTL_HOURS: int = 72

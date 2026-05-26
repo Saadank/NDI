@@ -50,18 +50,6 @@ class IssueRepository(PostgresqlAsyncRepository):
              (diagnostic_text or "")[:2000] or None),
         )
 
-    async def find_by_id(self, issue_id: int, tenant_id: int) -> dict | None:
-        """Fetch a single issue by id (scoped by tenant). Used by the
-        violator-examples endpoint to look up which (rule, table, column)
-        an issue belongs to before running the live-peek probe."""
-        return await self._fetch_row_optional(
-            """SELECT i.*, c.concept AS c_concept
-                 FROM dq.t_dq_issues i
-                 JOIN dq.t_dq_concepts c ON c.id = i.concept_id
-                WHERE i.id = $1 AND i.tenant_id = $2""",
-            (issue_id, tenant_id),
-        )
-
     async def find_by_scan(self, scan_id: int, tenant_id: int) -> list[dict]:
         return await self._fetch_all(
             """SELECT i.*, c.concept AS c_concept

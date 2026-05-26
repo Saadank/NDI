@@ -136,41 +136,26 @@ COMPLETENESS: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
-# Uniqueness (1) — should this column be unique?
-#
-# Migration 029 collapsed the previous three concepts (primary_identifier_
-# unique / business_key_unique / natural_key_unique) into this single one.
-# Reason: with entity_key_columns driving validator behaviour at the
-# *table* level, the three concepts produced identical SQL — they were
-# three knobs that all did the same thing.
-#
-# When the table's entity_key_columns is set, the validator groups by
-# the entity key and checks per-entity uniqueness. When it's empty, the
-# legacy "globally unique" SQL runs. Either way, the same concept fires.
+# Uniqueness (3) — should each value appear once?
 # ---------------------------------------------------------------------------
 UNIQUENESS: list[dict] = [
-    {"concept": "column_must_be_unique",
-     "synonyms": [
-         # Surrogate / row-PK shapes
-         "id", "uuid", "guid", "key", "primary_key", "pk",
-         # Business identifiers
-         "national_id", "national_no", "customer_id", "client_id",
-         "customer_code", "account_number", "account_no", "external_id",
-         "person_id", "subscriber_id",
-         # Codes / SKUs
-         "code", "sku", "isbn",
-         # Natural keys
-         "email", "username", "login", "handle",
-     ],
+    {"concept": "primary_identifier_unique",
+     "synonyms": ["id", "uuid", "guid", "key", "primary_key", "pk"],
      "rule_type": "unique", "parameter": {},
-     "severity": "high", "applies_to_types": None,
-     "notes": (
-         "Column values must be unique. When the table has an entity key "
-         "configured (Definition tab), uniqueness is checked across distinct "
-         "entity keys — one client repeating the same mobile across many "
-         "claims is fine; two clients sharing a mobile is a violation. When "
-         "no entity key is set, the column must be globally unique."
-     )},
+     "severity": "critical", "applies_to_types": None,
+     "notes": "Identifier-shaped columns must be unique. Real PKs are DB-enforced; this catches *de-facto* identifiers."},
+
+    {"concept": "business_key_unique",
+     "synonyms": ["code", "sku", "customer_code", "account_number", "business_key", "external_id"],
+     "rule_type": "unique", "parameter": {},
+     "severity": "high", "applies_to_types": ["master_data"],
+     "notes": "Business keys (SKUs, customer codes) must be unique across master-data records."},
+
+    {"concept": "natural_key_unique",
+     "synonyms": ["email", "username", "login", "handle"],
+     "rule_type": "unique", "parameter": {},
+     "severity": "medium", "applies_to_types": ["master_data"],
+     "notes": "Natural keys like email/username must be unique on master-data records."},
 ]
 
 

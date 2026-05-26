@@ -1,67 +1,47 @@
-# Data Management Platform
+# Datarix Monorepo
 
-Multi-product SaaS portal for Saudi Arabian enterprises. The platform provides a governed, PDPL-compliant channel for data sharing between departments and organisations.
+Unified workspace for Datarix Data Sharing Platform.
 
-## Architecture
+## Structure
+- frontend/ — Next.js 15 app (port 3001)
+- backend/  — FastAPI service (port 8000)
+- infrastructure/ — Docker Compose + ops
+- docs/ — specs and references
+- scripts/ — verification + helper scripts
 
-```
-LOGIN → PRODUCT PORTAL → [ Data Sharing ] [ Data Quality ] [ NDMO ] [ DSR ]
-                               ↓
-                         (enter product)
-```
+## First run
 
-**Platform Core** (`app/platform/`) — shared auth, tenants, users, product registry.
-**Products** (`app/products/`) — one subfolder per product module.
+The frontend was copied WITHOUT `node_modules` or `.next`. Reinstall
+dependencies and rebuild on first run:
 
-## Stack
+    cd frontend
+    npm install
+    npm run dev
 
-- Python 3.12 / FastAPI
-- PostgreSQL 15
-- Redis 7
-- MinIO (S3-compatible object storage)
-- Keycloak (identity & SSO)
-- Docker / Docker Compose
+Backend dependencies live in `backend/pyproject.toml` and are
+installed inside the API container automatically on `docker compose
+up` — no extra step locally.
 
-## Quick Start (Dev)
+## Running
 
-```bash
-# Start all services
-docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+Backend:
 
-# API docs: http://localhost:8000/api/docs
-# MailHog:  http://localhost:8025
-# MinIO:    http://localhost:9001
-# Keycloak: http://localhost:8080
-```
+    cd infrastructure
+    docker compose -f docker-compose.dev.yml up -d
 
-## Project Structure
+Frontend:
 
-```
-backend/
-├── app/
-│   ├── core/           # Config, database, security, tenant context
-│   ├── platform/       # Platform Core (auth, users, tenants, products)
-│   ├── products/       # Product modules
-│   │   ├── data_sharing/
-│   │   └── data_quality/   (placeholder)
-│   ├── gateways/       # External service integrations
-│   ├── structures/     # Base classes and shared models
-│   └── utils/          # Exceptions, pagination, helpers
-├── setup/db/           # SQL migrations
-└── tests/
-```
+    cd frontend
+    npm install   # only needed on first run after the copy
+    npm run dev
 
-## Adding a New Product
+Visit http://localhost:3001
 
-1. Create `app/products/{slug}/` with routers, services, repositories, workers, enums.
-2. Add a row to `t_products` seed data.
-3. Register its router in `main.py` under `/api/v1/products/{slug}/`.
-4. Add SQL migrations under `setup/db/`.
-5. The portal screen automatically shows it for any tenant that has it enabled.
+## Test users
+See `docs/CHECKLIST_FRONTEND.md` (section "Test Users").
 
-## Git Workflow
-
-- `main` — production
-- `dev` — development
-- `feature/*` — feature branches cut from `dev`
-- Conventional commits: `feat:`, `fix:`, `chore:`, `refactor:`
+## What was NOT carried over from the source repos
+- frontend/node_modules and frontend/.next (rebuild with `npm install` / `npm run dev`)
+- backend __pycache__ / *.pyc / .venv
+- The OLD frontend copy that lived at `NDI-dev 3/frontend` (the
+  authoritative frontend is the one now under `frontend/`).

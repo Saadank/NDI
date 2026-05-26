@@ -1,8 +1,8 @@
 # IDQP — Step 6 Plan (Excel + LLM SQL Generation)
 
-**Status:** ✅ **All sub-steps complete (2026-05-13)** — see `IDQP_STATUS.md` for the chronological log.
-**Last updated:** 2026-05-13.
-**Provider used:** local Ollama (`qwen2.5-coder:7b`) — not Anthropic. See architectural decision #10 in `IDQP_STATUS.md`. Migration numbers ended up 024 (not 023 as planned) because 023 was used for the Step 5.5 column-stats fields.
+**Status:** Planned — not yet implemented.
+**Last updated:** 2026-05-01.
+**Prereq:** `ANTHROPIC_API_KEY` provisioned in `.env.dev` (currently empty).
 
 ---
 

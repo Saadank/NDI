@@ -1,34 +1,13 @@
 """Dictionary CRUD + default-seed orchestration."""
 from __future__ import annotations
 
-import json
 import re
 
 from app.products.data_quality.permissions import can_use_dq, require
 from app.products.data_quality.repositories.concept_repository import ConceptRepository
 from app.products.data_quality.services.concept_seed import all_seed_concepts
 from app.structures.auth_user import AuthUser
-from app.utils.exceptions import ConflictException, ResourceNotFoundException, ValidationException
-
-
-def _coerce_concept(row: dict | None) -> dict | None:
-    """asyncpg returns jsonb columns as strings when no codec is registered.
-    FastAPI then serializes the string verbatim, so the frontend receives
-    `parameter` as `'{"pattern":"..."}'` instead of `{"pattern":"..."}` —
-    making `c.parameter.pattern` undefined client-side. Parse it here so
-    every concept response is consistent. Mirrors _coerce_jsonb in
-    active_rule_service."""
-    if row is None:
-        return None
-    raw = row.get("parameter")
-    if isinstance(raw, str):
-        try:
-            row["parameter"] = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            row["parameter"] = {}
-    elif raw is None:
-        row["parameter"] = {}
-    return row
+from app.utils.exceptions import ResourceNotFoundException, ValidationException
 
 _VALID_DIMENSIONS = {"completeness", "validity", "uniqueness"}
 _VALID_RULE_TYPES = {"not_null", "max_null_rate", "no_pseudo_nulls", "unique", "format_regex"}
@@ -88,17 +67,16 @@ class ConceptService:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
         if dimension is not None and dimension not in _VALID_DIMENSIONS:
             raise ValidationException(f"Unknown dimension: {dimension}")
-        rows = await self.repo.find_by_tenant(
+        return await self.repo.find_by_tenant(
             auth_user.tenant_id, dimension=dimension, enabled_only=enabled_only,
         )
-        return [_coerce_concept(r) for r in rows]
 
     async def get_concept(self, concept_id: int, auth_user: AuthUser) -> dict:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
         row = await self.repo.find_by_id(concept_id, auth_user.tenant_id)
         if not row:
             raise ResourceNotFoundException("Concept not found")
-        return _coerce_concept(row)
+        return row
 
     async def create_concept(self, *, dimension: str, concept: str,
                              synonyms: list[str], rule_type: str,
@@ -109,14 +87,13 @@ class ConceptService:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
         self._validate_inputs(dimension, concept, rule_type, severity, applies_to_types)
         parameter = _validate_parameter(rule_type, parameter)
-        row = await self.repo.insert(
+        return await self.repo.insert(
             tenant_id=auth_user.tenant_id, dimension=dimension,
             concept=concept.strip(), synonyms=_normalize_synonyms(synonyms),
             rule_type=rule_type, parameter=parameter, severity=severity,
             applies_to_types=applies_to_types or None, notes=notes,
             enabled=enabled, is_seed=False, created_by=auth_user.user_id,
         )
-        return _coerce_concept(row)
 
     async def update_concept(self, concept_id: int, *, synonyms: list[str] | None,
                              rule_type: str | None, parameter: dict | None,
@@ -143,34 +120,18 @@ class ConceptService:
         if parameter is not None:
             parameter = _validate_parameter(effective_rule_type, parameter)
 
-        row = await self.repo.update(
+        return await self.repo.update(
             concept_id, auth_user.tenant_id,
             synonyms=_normalize_synonyms(synonyms) if synonyms is not None else None,
             rule_type=rule_type, parameter=parameter, severity=severity,
             applies_to_types=applies_to_types, notes=notes, enabled=enabled,
         )
-        return _coerce_concept(row)
 
     async def delete_concept(self, concept_id: int, auth_user: AuthUser) -> None:
         require(can_use_dq(auth_user), "Data Quality is not available for this account")
         existing = await self.repo.find_by_id(concept_id, auth_user.tenant_id)
         if not existing:
             raise ResourceNotFoundException("Concept not found")
-        # Pre-check the t_dq_issues.concept_id FK (RESTRICT). Without this,
-        # the DB raises a raw FK violation that leaks as a 500.
-        blockers = await self.repo.find_delete_blockers(concept_id, auth_user.tenant_id)
-        if blockers["issue_count"] > 0:
-            profiles = sorted(blockers["profile_ids"] or [])
-            preview = ", ".join(str(p) for p in profiles[:5])
-            if len(profiles) > 5:
-                preview += f", +{len(profiles) - 5} more"
-            raise ConflictException(
-                f"Cannot delete concept '{existing['concept']}' — it is still "
-                f"referenced by {blockers['issue_count']} scan issue(s) across "
-                f"{blockers['profile_count']} profile(s) "
-                f"(profile id: {preview}). "
-                f"Delete those profiles (or just their scans) first, then retry."
-            )
         await self.repo.delete(concept_id, auth_user.tenant_id)
 
     async def seed_defaults(self, auth_user: AuthUser) -> dict:
@@ -199,46 +160,6 @@ class ConceptService:
             inserted += 1
 
         return {"inserted": inserted, "total_after": len(existing_before) + inserted}
-
-    async def refresh_seeded(self, auth_user: AuthUser) -> dict:
-        """Re-apply the current seed file to every is_seed=TRUE concept for
-        the caller's tenant. Missing concepts are inserted; existing seeded
-        rows have their synonyms/rule/parameter/severity/notes overwritten
-        from the seed file. User-customized rows (is_seed=FALSE) are left
-        untouched. Use this to backfill fields that were added to the seed
-        after the original install (e.g. regex patterns)."""
-        require(can_use_dq(auth_user), "Data Quality is not available for this account")
-        existing_before = await self.repo.find_by_tenant(auth_user.tenant_id)
-        by_key = {(c["dimension"], c["concept"]): c for c in existing_before}
-
-        inserted = updated = skipped_custom = 0
-        for dimension, c in all_seed_concepts():
-            existing = by_key.get((dimension, c["concept"]))
-            if existing is None:
-                inserted += 1
-            elif existing["is_seed"]:
-                updated += 1
-            else:
-                skipped_custom += 1
-                continue  # don't call refresh_seed — DO UPDATE would no-op anyway
-            await self.repo.refresh_seed(
-                tenant_id=auth_user.tenant_id,
-                dimension=dimension,
-                concept=c["concept"],
-                synonyms=_normalize_synonyms(c["synonyms"]),
-                rule_type=c["rule_type"],
-                parameter=c.get("parameter", {}),
-                severity=c.get("severity", "medium"),
-                applies_to_types=c.get("applies_to_types"),
-                notes=c.get("notes"),
-            )
-
-        return {
-            "inserted": inserted,
-            "updated": updated,
-            "skipped_custom": skipped_custom,
-            "total_after": len(existing_before) + inserted,
-        }
 
     # -- internals ----------------------------------------------------------
 

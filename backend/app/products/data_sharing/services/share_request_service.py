@@ -13,7 +13,7 @@ from app.products.data_sharing.services.conflict_service import ConflictService
 from app.products.data_sharing.services.external_recipient_service import ExternalRecipientService
 from app.products.data_sharing.services.workflow_engine import WorkflowEngine
 from app.structures.auth_user import AuthUser
-from app.utils.exceptions import ForbiddenException, ValidationException
+from app.utils.exceptions import BaseAppException, ForbiddenException, ValidationException
 from app.utils.pagination import get_pagination_data
 
 logger = logging.getLogger(__name__)
@@ -182,10 +182,11 @@ class ShareRequestService:
         direction_check = (request.get("request_direction") or "pull").lower()
         sharing_check = (request.get("sharing_type") or "internal").lower()
         if direction_check == "pull" and sharing_check == "external":
-            raise ValidationException(
+            raise BaseAppException(
                 "Pull from external sources is not supported. To receive "
                 "data from an external party, coordinate via push from "
-                "your side or contact your DPO."
+                "your side or contact your DPO.",
+                status_code=422,
             )
 
         # PUSH validation: the requester is sending data they already
