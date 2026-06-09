@@ -104,7 +104,10 @@ class ApprovalService:
         )
         return updated_step
 
-    async def request_changes(self, request_id: UUID, step_id: UUID, comment: str, auth_user: AuthUser) -> dict:
+    async def request_changes(
+        self, request_id: UUID, step_id: UUID, comment: str, auth_user: AuthUser,
+        required_documents: list[dict] | None = None,
+    ) -> dict:
         if not comment:
             raise ValidationException("Comment is required when requesting changes")
 
@@ -118,12 +121,28 @@ class ApprovalService:
             completed_at=now(), completed_by=auth_user.user_id,
             delegated_from_user_id=delegated_from,
         )
-        await self.request_repo.update_status(request_id, "draft", auth_user.user_id)
+        # Send the request back to the requester (NOT to a silent 'draft').
+        # 'changes_requested' surfaces the "sent back" banner + Edit/Resubmit
+        # action on the requester's detail screen, and submit_request accepts
+        # it as a valid resubmission source.
+        fields: dict = {"status": "changes_requested", "updated_by": auth_user.user_id}
+        if required_documents is not None:
+            # Normalise to {label, satisfied} so the requester sees a checklist.
+            fields["required_documents"] = [
+                {"label": str(d.get("label", "")).strip(), "satisfied": bool(d.get("satisfied", False))}
+                for d in required_documents
+                if str(d.get("label", "")).strip()
+            ]
+        await self.request_repo.update(request_id, **fields)
 
         await self.audit.log(
             tenant_id=auth_user.tenant_id, action_type="step.changes_requested", resource_type="workflow_step",
             resource_id=str(step_id), actor_id=auth_user.user_id, request_id=request_id,
-            metadata={"comment": comment, "delegated_from_user_id": delegated_from},
+            metadata={
+                "comment": comment,
+                "delegated_from_user_id": delegated_from,
+                "required_documents": fields.get("required_documents"),
+            },
         )
         return updated_step
 

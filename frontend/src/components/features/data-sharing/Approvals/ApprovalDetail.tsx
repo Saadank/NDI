@@ -15,6 +15,7 @@ import { MetaCard, FilesCard, QueryCard, TablesCard } from "./ApprovalDetailMeta
 import { WorkflowCard, TimelineCard, buildTimeline } from "./ApprovalDetailRight";
 import { RequestChangesModal, RejectModal, ApproveModal, FlagModal } from "./ApprovalDetailModals";
 import { explainNoAction } from "./noActionReason";
+import type { RequiredDocument } from "@/lib/types/data-sharing/request.types";
 
 type ModalKey = null | "approve" | "reject" | "changes" | "flag";
 
@@ -86,9 +87,13 @@ export function ApprovalDetail({ id }: { id: string }) {
 
   const timeline = buildTimeline(steps, r.created_at, `User #${r.requester_id}`);
 
-  const actAndRedirect = async (status: "approved" | "rejected" | "changes_requested", comment: string) => {
+  const actAndRedirect = async (
+    status: "approved" | "rejected" | "changes_requested",
+    comment: string,
+    requiredDocuments?: RequiredDocument[],
+  ) => {
     if (!myStep) return;
-    await act.mutateAsync({ stepId: myStep.id, status, comment: comment || undefined });
+    await act.mutateAsync({ stepId: myStep.id, status, comment: comment || undefined, requiredDocuments });
     setModal(null);
     router.push("/approvals");
   };
@@ -276,7 +281,7 @@ export function ApprovalDetail({ id }: { id: string }) {
       {/* Modals */}
       {modal === "changes" && (
         <RequestChangesModal onClose={() => setModal(null)} pending={act.isPending}
-          onConfirm={(c) => actAndRedirect("changes_requested", c)} />
+          onConfirm={(c, docs) => actAndRedirect("changes_requested", c, docs)} />
       )}
       {modal === "reject" && (
         <RejectModal onClose={() => setModal(null)} pending={act.isPending}

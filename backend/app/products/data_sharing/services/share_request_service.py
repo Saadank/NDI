@@ -4,7 +4,7 @@ from uuid import UUID
 from app.platform.services.audit_service import AuditService
 from app.products.data_sharing.enums.sharing_role import SharingRole
 from app.products.data_sharing.permissions import (
-    can_cancel_request, can_create_request, can_see_all_requests,
+    can_cancel_request, can_create_request, can_edit_request, can_see_all_requests,
     can_see_assigned_requests, can_see_own_requests_only, can_see_received_requests,
     can_submit_request, can_view_request, require,
 )
@@ -232,10 +232,14 @@ class ShareRequestService:
         else:
             # Re-submit after changes_requested. Spec v4.0 §4.4 — if any
             # PDPL-material field changed since the last submitted snapshot,
-            # the DPO step is re-triggered automatically.
-            await self._maybe_retrigger_dpo(
+            # the DPO step is re-triggered (restart from PDPL review).
+            # Otherwise, resume at whichever step sent the request back so
+            # the workflow always has an actionable pending step.
+            retriggered = await self._maybe_retrigger_dpo(
                 request_id, request, auth_user
             )
+            if not retriggered:
+                await self._resume_after_changes(request_id, auth_user)
 
         updated = await self.repo.update_status(request_id, "submitted", auth_user.user_id)
 
@@ -253,7 +257,89 @@ class ShareRequestService:
         )
         return updated
 
-    async def _maybe_retrigger_dpo(self, request_id: UUID, request: dict, auth_user: AuthUser) -> None:
+    # Fields the requester may edit on a draft / sent-back request. Anything
+    # outside this allow-list is ignored to keep structural/ownership columns
+    # (requester, groups, direction, tenant routing) frozen after creation.
+    EDITABLE_FIELDS = (
+        "title",
+        "purpose",
+        "legal_basis",
+        "data_classification",
+        "personal_data_involved",
+        "estimated_data_subjects",
+        "data_subject_categories",
+        "source_description",
+        "dpia_confirmed",
+        "selection_mode",
+        "selected_items",
+        "custom_sql",
+        # The requester ticks off required-document checklist items as they
+        # attach the matching files; the reviewer's labels are preserved.
+        "required_documents",
+    )
+
+    async def update_request(self, request_id: UUID, data: dict, auth_user: AuthUser) -> dict:
+        request = await self.repo.find_by_id(request_id, auth_user.tenant_id)
+        require(
+            can_edit_request(auth_user, request),
+            "You can only edit your own draft or sent-back requests",
+        )
+
+        fields = {k: data[k] for k in self.EDITABLE_FIELDS if k in data}
+        if not fields:
+            return request
+
+        # Structured-request integrity: keep selection_mode and its payload
+        # consistent so a half-edited request can't pass submit validation.
+        new_mode = fields.get("selection_mode", request.get("selection_mode"))
+        if (request.get("data_type") or "file") == "structured":
+            if new_mode == "tables" and "selected_items" in fields and not fields["selected_items"]:
+                raise ValidationException("selected_items is required when selection_mode is 'tables'")
+            if new_mode == "query" and "custom_sql" in fields and not fields["custom_sql"]:
+                raise ValidationException("custom_sql is required when selection_mode is 'query'")
+
+        # required_documents is a checklist of {label, satisfied}; normalise.
+        if "required_documents" in fields and fields["required_documents"] is not None:
+            fields["required_documents"] = [
+                {"label": str(d.get("label", "")).strip(), "satisfied": bool(d.get("satisfied", False))}
+                for d in fields["required_documents"]
+                if str(d.get("label", "")).strip()
+            ]
+
+        fields["updated_by"] = auth_user.user_id
+        before = {k: request.get(k) for k in fields}
+        updated = await self.repo.update(request_id, **fields)
+
+        await self.audit.log(
+            tenant_id=auth_user.tenant_id, action_type="request.updated",
+            resource_type="share_request", resource_id=str(request_id),
+            actor_id=auth_user.user_id, request_id=request_id,
+            before_state=before, after_state={k: updated.get(k) for k in fields},
+        )
+        return updated
+
+    async def _resume_after_changes(self, request_id: UUID, auth_user: AuthUser) -> None:
+        """Resume a resubmitted request at the step that sent it back.
+
+        When no PDPL-material field changed we don't restart the whole DPO
+        review — we simply reactivate the reviewer's step (the one currently
+        in 'changes_requested') so they can re-review the resubmission, and
+        push any later steps back to 'waiting'.
+        """
+        steps = await self.workflow_engine.repo.find_steps_by_request(request_id)
+        sent_back = [s for s in steps if s.get("status") == "changes_requested"]
+        if not sent_back:
+            return
+        target = min(sent_back, key=lambda s: s["step_order"])
+        await self.workflow_engine.repo.update_step(
+            target["id"], status="pending", completed_at=None,
+            completed_by=None, decision=None,
+        )
+        for s in steps:
+            if s["step_order"] > target["step_order"]:
+                await self.workflow_engine.repo.update_step(s["id"], status="waiting")
+
+    async def _maybe_retrigger_dpo(self, request_id: UUID, request: dict, auth_user: AuthUser) -> bool:
         """Spec v4.0 §4.4: 'If the steward changes the classification, the
         legal basis, the personal-data flag, or the data selection itself,
         the DPO step is re-triggered automatically.'
@@ -262,7 +348,8 @@ class ShareRequestService:
         last `request.submitted` / `request.resubmitted` audit snapshot.
         If any field differs, finds the existing DPO step and resets it
         to status='pending'; resets every later step to 'waiting' so the
-        workflow restarts from PDPL review.
+        workflow restarts from PDPL review. Returns True if it reset the
+        DPO step, False otherwise.
         """
         prior = await self.audit._fetch_row_optional(
             """SELECT after_state FROM t_audit_events
@@ -290,7 +377,7 @@ class ShareRequestService:
             should_retrigger = bool(changed)
 
         if not should_retrigger:
-            return
+            return False
 
         # Find the DPO step on this request and reset it.
         steps = await self.workflow_engine.repo.find_steps_by_request(request_id)
@@ -304,7 +391,7 @@ class ShareRequestService:
             None,
         )
         if not dpo_step:
-            return
+            return False
 
         # Reset DPO step to pending; reset every later step to waiting.
         await self.workflow_engine.repo.update_step(
@@ -324,6 +411,7 @@ class ShareRequestService:
             request_id=request_id,
             metadata={"spec": "v4.0_section_4.4", "changed_fields": changed},
         )
+        return True
 
     async def get_request(self, request_id: UUID, auth_user: AuthUser) -> dict:
         request = await self.repo.find_by_id(request_id, auth_user.tenant_id)

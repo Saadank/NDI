@@ -151,7 +151,9 @@ class FileService:
 
     async def get_download_url(self, file_id: UUID, auth_user: AuthUser) -> str:
         file_record = await self.repo.find_by_id(file_id)
-        if file_record["status"] != "uploaded":
+        # A file is downloadable once it is in the store and not quarantined:
+        # 'uploaded' (no AV scan wired) or 'clean' (scan passed).
+        if file_record["status"] not in ("uploaded", "clean"):
             raise ValidationException("File is not available for download")
 
         # Verify user has access to the parent request

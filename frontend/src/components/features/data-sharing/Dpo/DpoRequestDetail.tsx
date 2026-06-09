@@ -26,6 +26,9 @@ import { useGroups } from "@/lib/hooks/platform/useGroups";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils/formatters";
 import type { StepStatus, WorkflowStep } from "@/lib/types/data-sharing/step.types";
+import type { RequiredDocument } from "@/lib/types/data-sharing/request.types";
+import { FilesCard } from "../Approvals/ApprovalDetailMeta";
+import { RequiredDocsPicker } from "../RequiredDocsPicker";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -571,11 +574,13 @@ export function DpoRequestDetail({ id }: { id: string }) {
 
   const reqQuery = useRequestDetail(id);
   const stepsQuery = useApprovalSteps(id);
+  const filesQuery = useRequestFiles(id);
   const groupsQuery = useGroups();
   const act = useActOnStep(id);
 
   const [modal, setModal] = useState<ModalKey>(null);
   const [comment, setComment] = useState("");
+  const [requiredDocs, setRequiredDocs] = useState<RequiredDocument[]>([]);
   // Track the most recent failure so the modal can surface a real reason
   // instead of silently closing/re-enabling the button. Must live BEFORE
   // any conditional return to keep hook order stable across renders.
@@ -606,7 +611,12 @@ export function DpoRequestDetail({ id }: { id: string }) {
     if (!myStep) return;
     try {
       setActionError(null);
-      await act.mutateAsync({ stepId: myStep.id, status, comment: comment || undefined });
+      await act.mutateAsync({
+        stepId: myStep.id,
+        status,
+        comment: comment || undefined,
+        requiredDocuments: status === "changes_requested" ? requiredDocs : undefined,
+      });
       setModal(null);
       router.push("/dpo");
     } catch (e) {
@@ -718,6 +728,9 @@ export function DpoRequestDetail({ id }: { id: string }) {
               <MetaRow label="Purpose" value={r.purpose} />
             </div>
           </section>
+
+          {/* Attached files (file mode) — DPO can review + download them */}
+          {r.data_type === "file" && <FilesCard files={filesQuery.data ?? []} />}
 
           {/* Query preview (structured mode) */}
           {r.data_type === "structured" && r.custom_sql && (
@@ -864,6 +877,7 @@ export function DpoRequestDetail({ id }: { id: string }) {
             className="h-28 w-full resize-none rounded-md border p-3 text-[13px] outline-none"
             style={{ borderColor: "#EEEEEE" }}
           />
+          <RequiredDocsPicker value={requiredDocs} onChange={setRequiredDocs} />
           {actionError && (
             <p className="text-xs" style={{ color: "#D32F2F" }}>{actionError}</p>
           )}

@@ -100,6 +100,29 @@ async def delete_template(
     return await service.delete_template(template_id, auth_user)
 
 
+@router.post("/templates/{template_id}/activate")
+async def activate_template(
+    template_id: UUID,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: WorkflowTemplateService = Depends(get_workflow_template_service),
+):
+    """Mark a template active. Exclusive within its scope — any other active
+    template sharing the same sharing_type + data_classification is
+    deactivated, so only one workflow is the default at a time."""
+    return await service.activate_template(template_id, auth_user.tenant_id, auth_user)
+
+
+@router.post("/templates/{template_id}/deactivate")
+async def deactivate_template(
+    template_id: UUID,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: WorkflowTemplateService = Depends(get_workflow_template_service),
+):
+    """Mark a template inactive (no workflow is applied to new requests in
+    its scope until another is activated)."""
+    return await service.deactivate_template(template_id, auth_user)
+
+
 class BackfillBody(BaseModel):
     request_id: UUID | None = None
     all_stuck: bool = False

@@ -84,6 +84,7 @@ export default function ApprovalsInboxPage() {
   const requestsQuery = useRequests({ page: 1, limit: 100 });
   const groupsQuery = useGroups();
   const myGroupId = useAuthStore((s) => s.user?.group_id ?? null);
+  const myUserId = useAuthStore((s) => s.user?.id ?? null);
   const myProductRole = useAuthStore((s) => s.user?.product_role ?? null);
 
   const groupNameById = useMemo(() => {
@@ -112,11 +113,27 @@ export default function ApprovalsInboxPage() {
     const out: typeof all = [];
     const inc: typeof all = [];
     for (const r of all) {
-      const role = r.current_step?.assignee_role ?? null;
-      if (role === "data_owner" || role === "source") {
-        out.push(r);
-      } else if (role === "receiver") {
-        inc.push(r);
+      const cs = r.current_step;
+      const role = cs?.assignee_role ?? null;
+      if (cs) {
+        // The list now also returns requests this user has ALREADY actioned
+        // (so they keep history — issue 6). Those have a pending step that
+        // belongs to SOMEONE ELSE; they must not clutter the inbox. Only
+        // bucket a request when its current pending step is actionable by
+        // this user.
+        const mineByUser = cs.assignee_user_id != null && cs.assignee_user_id === myUserId;
+        if (role === "receiver") {
+          // Incoming — confirm receipt. Mine if assigned to me by id or my
+          // group is the receiver.
+          if (mineByUser || r.receiver_group_id === myGroupId) inc.push(r);
+        } else if (role === "data_owner" || role === "source") {
+          // Outgoing — approve release. Mine if assigned to me by id, or it's
+          // an open (null-assignee) step my role can pick up.
+          if (mineByUser || (cs.assignee_user_id == null && myProductRole === "data_owner")) {
+            out.push(r);
+          }
+        }
+        // else (e.g. dpo step, or someone else's plate): history only.
       } else {
         // No current_step (workflow finished / not started, or this
         // row predates the annotation) — fall back to the group-based
@@ -129,7 +146,7 @@ export default function ApprovalsInboxPage() {
       }
     }
     return { outgoing: out, incoming: inc };
-  }, [requestsQuery.data?.data, myGroupId]);
+  }, [requestsQuery.data?.data, myGroupId, myUserId, myProductRole]);
 
   if (!isReady) return null;
 
@@ -235,11 +252,11 @@ export default function ApprovalsInboxPage() {
             </div>
             <div className="flex items-center gap-3">
               <Link
-                href="/my-department"
+                href="/data-sharing?tab=all"
                 className="flex h-9 items-center rounded-md border px-4 text-[13px] font-medium"
                 style={{ borderColor: "#EEEEEE", color: "#515157" }}
               >
-                View recent department activity
+                View request history
               </Link>
               <Link
                 href="/"

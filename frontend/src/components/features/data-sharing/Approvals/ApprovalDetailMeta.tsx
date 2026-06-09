@@ -6,6 +6,7 @@ import type { LucideIcon } from "lucide-react";
 import { formatBytes } from "@/lib/utils/formatters";
 import type { ShareRequest } from "@/lib/types/data-sharing/request.types";
 import type { RequestFile, FileStatus } from "@/lib/types/data-sharing/file.types";
+import { FileDownloadButton } from "../FileDownloadButton";
 
 // ─── Shared card header ───────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ export function FilesCard({ files }: { files: RequestFile[] }) {
                 </span>
               </div>
               <ScanChip status={f.status} />
+              <FileDownloadButton fileId={f.id} status={f.status} variant="icon" />
             </div>
           );
         })}

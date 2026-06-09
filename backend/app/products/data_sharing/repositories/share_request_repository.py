@@ -1,9 +1,34 @@
+import json
 from uuid import UUID
 
 from app.structures.postgresql_async_repository import PostgresqlAsyncRepository
 
 
 class ShareRequestRepository(PostgresqlAsyncRepository):
+
+    # JSONB columns. asyncpg has no jsonb codec registered on the pool, so it
+    # hands these back as raw JSON strings — decode them on read so callers
+    # (and the API response) see real lists/objects, not strings.
+    # `current_step` is a computed jsonb annotation (find_for_user) and is
+    # decoded the same way so the inbox can read step fields off it.
+    _JSON_READ_FIELDS = ("selected_items", "required_documents", "current_step")
+
+    @classmethod
+    def _decode(cls, row: dict | None) -> dict | None:
+        if not row:
+            return row
+        for f in cls._JSON_READ_FIELDS:
+            v = row.get(f)
+            if isinstance(v, str):
+                try:
+                    row[f] = json.loads(v)
+                except (ValueError, TypeError):
+                    pass
+        return row
+
+    @classmethod
+    def _decode_all(cls, rows: list[dict]) -> list[dict]:
+        return [cls._decode(r) for r in rows]
 
     async def create(self, tenant_id: int, request_number: str, title: str, purpose: str, legal_basis: str,
                      sharing_type: str, data_classification: str, personal_data_involved: bool,
@@ -16,9 +41,8 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
                      external_recipient_id: int | None = None, external_contact_id: int | None = None,
                      delivery_channel: str = "portal",
                      request_direction: str = "pull") -> dict:
-        import json
         selected_items_json = json.dumps(selected_items) if selected_items is not None else None
-        return await self._fetch_row(
+        return self._decode(await self._fetch_row(
             """INSERT INTO t_share_requests
                (tenant_id, request_number, title, purpose, legal_basis, sharing_type, data_classification,
                 personal_data_involved, estimated_data_subjects, data_subject_categories, source_description,
@@ -33,13 +57,13 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
              requester_id, receiving_tenant_id, requester_group_id, receiver_group_id, created_by, dpia_confirmed,
              data_type, connection_id, selection_mode, selected_items_json, custom_sql,
              external_recipient_id, external_contact_id, delivery_channel, request_direction),
-        )
+        ))
 
     async def find_by_id(self, request_id: UUID, tenant_id: int) -> dict:
-        return await self._fetch_row(
+        return self._decode(await self._fetch_row(
             "SELECT * FROM t_share_requests WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL",
             (request_id, tenant_id),
-        )
+        ))
 
     async def find_by_tenant(self, tenant_id: int, status: str | None, page: int, limit: int) -> list[dict]:
         conditions = ["tenant_id = $1", "deleted_at IS NULL"]
@@ -52,10 +76,10 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         args.extend([limit, offset])
-        return await self._fetch_all(
+        return self._decode_all(await self._fetch_all(
             f"SELECT * FROM t_share_requests WHERE {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
-        )
+        ))
 
     async def count_by_tenant(self, tenant_id: int, status: str | None) -> int:
         if status:
@@ -68,27 +92,36 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         )
 
     async def update_status(self, request_id: UUID, status: str, updated_by: int | None = None) -> dict:
-        return await self._fetch_row(
+        return self._decode(await self._fetch_row(
             """UPDATE t_share_requests SET status = $1, updated_at = CURRENT_TIMESTAMP, updated_by = $2
                WHERE id = $3 RETURNING *""",
             (status, updated_by, request_id),
-        )
+        ))
+
+    # Columns stored as JSONB — values arrive as Python lists/dicts and must
+    # be serialised + cast. Everything else (incl. the TEXT[] column
+    # data_subject_categories) binds natively through asyncpg.
+    _JSONB_COLUMNS = {"selected_items", "required_documents"}
 
     async def update(self, request_id: UUID, **fields) -> dict:
         set_clauses = []
         args = []
         idx = 1
         for key, val in fields.items():
-            set_clauses.append(f"{key} = ${idx}")
-            args.append(val)
+            if key in self._JSONB_COLUMNS and val is not None:
+                set_clauses.append(f"{key} = ${idx}::jsonb")
+                args.append(json.dumps(val))
+            else:
+                set_clauses.append(f"{key} = ${idx}")
+                args.append(val)
             idx += 1
         set_clauses.append("updated_at = CURRENT_TIMESTAMP")
         set_clauses.append("version = version + 1")
         args.append(request_id)
-        return await self._fetch_row(
+        return self._decode(await self._fetch_row(
             f"UPDATE t_share_requests SET {', '.join(set_clauses)} WHERE id = ${idx} RETURNING *",
             tuple(args),
-        )
+        ))
 
     # --- Requester: own requests only ---
 
@@ -104,10 +137,10 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         args.extend([limit, offset])
-        return await self._fetch_all(
+        return self._decode_all(await self._fetch_all(
             f"SELECT * FROM t_share_requests WHERE {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
-        )
+        ))
 
     async def count_by_requester(self, tenant_id: int, requester_id: int, status: str | None) -> int:
         conditions = ["tenant_id = $1", "requester_id = $2", "deleted_at IS NULL"]
@@ -140,10 +173,10 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         args.extend([limit, offset])
-        return await self._fetch_all(
+        return self._decode_all(await self._fetch_all(
             f"SELECT r.* FROM t_share_requests r WHERE {where} ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
-        )
+        ))
 
     async def count_by_receiver(self, tenant_id: int, group_id: int | None, status: str | None) -> int:
         receiver_conds = ["r.receiving_tenant_id = $1"]
@@ -177,10 +210,10 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         args.extend([limit, offset])
-        return await self._fetch_all(
+        return self._decode_all(await self._fetch_all(
             f"SELECT r.* FROM t_share_requests r WHERE {where} ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
-        )
+        ))
 
     async def count_assigned_to_role(self, tenant_id: int, role: str, status: str | None) -> int:
         conditions = ["r.tenant_id = $1", "r.deleted_at IS NULL",
@@ -217,10 +250,13 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
         """
         visibility = [
             "r.requester_id = $2",
-            # NEW: any pending step assigned specifically to this user.
+            # Any step this user is assigned to OR has already acted on —
+            # regardless of step status. This keeps a reviewer's HISTORY
+            # visible after they approve/reject (issue 6): the step is no
+            # longer 'pending' but completed_by still points at them.
             "EXISTS (SELECT 1 FROM t_workflow_steps ws "
-            "        WHERE ws.request_id = r.id AND ws.status = 'pending' "
-            "          AND ws.assignee_user_id = $2)",
+            "        WHERE ws.request_id = r.id "
+            "          AND (ws.assignee_user_id = $2 OR ws.completed_by = $2))",
         ]
         args: list = [tenant_id, user_id]
         idx = 3
@@ -262,20 +298,22 @@ class ShareRequestRepository(PostgresqlAsyncRepository):
             "   WHERE ws.request_id = r.id AND ws.status = 'pending' "
             "   ORDER BY ws.step_order LIMIT 1) cs) AS current_step"
         )
-        return await self._fetch_all(
+        return self._decode_all(await self._fetch_all(
             f"SELECT DISTINCT r.*, {select_current_step} "
             f"FROM t_share_requests r WHERE {where} "
             f"ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             tuple(args),
-        )
+        ))
 
     async def count_for_user(self, tenant_id: int, user_id: int, group_id: int | None,
                              assigned_role: str | None, status: str | None) -> int:
         visibility = [
             "r.requester_id = $2",
+            # Mirror find_for_user: assigned-to OR acted-on, any status, so
+            # the count matches the history list (issue 6).
             "EXISTS (SELECT 1 FROM t_workflow_steps ws "
-            "        WHERE ws.request_id = r.id AND ws.status = 'pending' "
-            "          AND ws.assignee_user_id = $2)",
+            "        WHERE ws.request_id = r.id "
+            "          AND (ws.assignee_user_id = $2 OR ws.completed_by = $2))",
         ]
         args: list = [tenant_id, user_id]
         idx = 3

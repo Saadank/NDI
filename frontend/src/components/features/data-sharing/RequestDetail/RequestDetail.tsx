@@ -17,6 +17,7 @@ import { useApprovalSteps } from "@/lib/hooks/data-sharing/useApprovalSteps";
 import { useRoleGuard } from "@/lib/hooks/useRoleGuard";
 import { cancelRequest } from "@/lib/api/products/data-sharing/requests.api";
 import { getDownloadUrl } from "@/lib/api/products/data-sharing/files.api";
+import { FileDownloadButton } from "../FileDownloadButton";
 import { REQUEST_STATUS_LABELS } from "@/lib/utils/constants";
 import { formatDate, formatBytes, formatRelativeTime } from "@/lib/utils/formatters";
 import type { RequestStatus } from "@/lib/types/data-sharing/request.types";
@@ -255,8 +256,22 @@ export function RequestDetail({ id }: RequestDetailProps) {
               </p>
               {changesStep?.comment && (
                 <p className="text-xs" style={{ color: "#92400E" }}>
-                  &ldquo;{changesStep.comment}&rdquo;
+                  &ldquo;{changesStep.comment.replace(/^\[FLAG:\s*[^\]]+\]\s*/i, "")}&rdquo;
                 </p>
+              )}
+              {(r.required_documents?.length ?? 0) > 0 && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-semibold" style={{ color: "#92400E" }}>
+                    Documents to provide:
+                  </span>
+                  <ul className="flex flex-col gap-0.5">
+                    {r.required_documents!.map((d, i) => (
+                      <li key={i} className="text-xs" style={{ color: "#92400E" }}>
+                        {d.satisfied ? "✓" : "•"} {d.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               <p className="text-xs" style={{ color: "#92400E" }}>
                 Make changes to classification, legal basis, personal-data flag, or data
@@ -369,6 +384,7 @@ export function RequestDetail({ id }: RequestDetailProps) {
                       <span className="text-xs" style={{ color: "#9E9E9E" }}>
                         {formatBytes(f.file_size_bytes)}
                       </span>
+                      <FileDownloadButton fileId={f.id} status={f.status} variant="icon" />
                     </div>
                   ))}
                 </div>

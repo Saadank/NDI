@@ -1,8 +1,9 @@
-import { get, post } from "@/lib/api/client";
+import { get, patch, post } from "@/lib/api/client";
 import type { PaginatedResponse } from "@/lib/types/common.types";
 import type {
   CreateShareRequestBody,
   ShareRequest,
+  UpdateShareRequestBody,
 } from "@/lib/types/data-sharing/request.types";
 
 // Backend router is mounted at `/requests` and exposes routes at `/`. With
@@ -26,6 +27,13 @@ export function createRequest(
 
 export function getRequest(id: string): Promise<ShareRequest> {
   return get<ShareRequest>(`${BASE}/${id}`);
+}
+
+export function updateRequest(
+  id: string,
+  body: UpdateShareRequestBody,
+): Promise<ShareRequest> {
+  return patch<ShareRequest, UpdateShareRequestBody>(`${BASE}/${id}`, body);
 }
 
 export function submitRequest(id: string): Promise<ShareRequest> {

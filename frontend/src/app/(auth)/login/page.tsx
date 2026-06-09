@@ -56,7 +56,14 @@ export default function LoginPage() {
 
   const onSubmit = handleSubmit((values) => {
     loginMutation.mutate(values, {
-      onSuccess: () => router.push("/data-sharing"),
+      onSuccess: () => {
+        // Land on the Product Portal ("/") so the user picks a product first,
+        // unless the middleware bounced them here from a protected deep link
+        // (?next=…), in which case return them there.  The startsWith("/")
+        // guard prevents an open redirect to an external URL.
+        const next = new URLSearchParams(window.location.search).get("next");
+        router.push(next && next.startsWith("/") ? next : "/");
+      },
     });
   });
 

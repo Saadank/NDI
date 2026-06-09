@@ -28,8 +28,6 @@ import {
 // items — those pages are reached by clicking rows in the list/inbox.
 // FileText and ClipboardList icons are no longer needed here.
 import type { LucideIcon } from "lucide-react";
-
-import { Logo } from "@/components/shared/Logo";
 import { useAuthStore } from "@/lib/store/auth.store";
 import { useNotifications } from "@/lib/hooks/platform/useNotifications";
 import { useRequests } from "@/lib/hooks/data-sharing/useRequests";
@@ -190,11 +188,11 @@ const GOVERNANCE_SECTION: NavSection = {
   ],
 };
 
-// NDMO Compliance — appears as a dedicated section in roles that own
-// compliance work.  Visible to org_admin (the default Compliance Analyst
-// home) and platform_admin (cross-tenant operators).  When the route
-// itself is /ndmo-compliance/*, this is the ONLY section shown (see the
-// pathname override in PRIMARY_NAV usage below).
+// NDMO Compliance is its OWN product (reached via the Product Portal card),
+// not a section of the Data Sharing / Governance / Admin sidebar.  It is
+// therefore intentionally absent from the role-based PRIMARY_NAV entries and
+// is shown ONLY when the route is /ndmo-compliance/* — at which point it is
+// the sole section (see the isNdmoRoute override in the Sidebar component).
 const NDMO_SECTION: NavSection = {
   title: "NDMO COMPLIANCE",
   items: [
@@ -216,9 +214,8 @@ const PRIMARY_NAV: Record<EffectiveRole, NavSection[]> = {
       title: "ADMINISTRATION",
       items: [ITEM.adminDepartments, ITEM.adminUsers, ITEM.adminConnections, ITEM.adminHolidays, ITEM.adminRetention],
     },
-    NDMO_SECTION,
   ],
-  platform_admin: [{ items: [ITEM.organisations, ITEM.onboardCompany] }, NDMO_SECTION],
+  platform_admin: [{ items: [ITEM.organisations, ITEM.onboardCompany] }],
 };
 
 // When the user is anywhere under /ndmo-compliance, swap to a focused
@@ -359,8 +356,9 @@ export function Sidebar() {
 
   return (
     <aside className="sticky top-0 z-20 flex h-screen w-[240px] shrink-0 flex-col border-r border-auth-border bg-white px-3 py-5">
-      {/* Header */}
-      {isPlatformAdmin ? (
+      {/* Header — the global Topbar already shows the brand mark, so the
+          sidebar only carries the Platform Admin badge (no duplicate logo). */}
+      {isPlatformAdmin && (
         <div className="mb-4 flex items-center gap-2 px-3">
           <div className="flex flex-1 flex-col gap-0.5">
             <span className="text-[11px] font-bold uppercase tracking-[0.8px] text-[#515157]">
@@ -374,10 +372,6 @@ export function Sidebar() {
             ADMIN
           </span>
         </div>
-      ) : (
-        <Link href="/" aria-label="Datarix home" className="mb-4 flex items-center gap-2 px-3">
-          <Logo height={22} />
-        </Link>
       )}
 
       {/* Primary nav */}

@@ -9,6 +9,7 @@ import {
   requestChangesOnStep,
 } from "@/lib/api/products/data-sharing/steps.api";
 import type { StepStatus } from "@/lib/types/data-sharing/step.types";
+import type { RequiredDocument } from "@/lib/types/data-sharing/request.types";
 
 export function useApprovalSteps(requestId: string) {
   return useQuery({
@@ -27,12 +28,18 @@ export function useActOnStep(requestId: string) {
       stepId: string;
       status: StepStatus;
       comment?: string;
+      requiredDocuments?: RequiredDocument[];
     }) => {
       if (vars.status === "approved")
         return approveStep(requestId, vars.stepId, vars.comment);
       if (vars.status === "rejected")
         return rejectStep(requestId, vars.stepId, vars.comment ?? "");
-      return requestChangesOnStep(requestId, vars.stepId, vars.comment ?? "");
+      return requestChangesOnStep(
+        requestId,
+        vars.stepId,
+        vars.comment ?? "",
+        vars.requiredDocuments,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["data-sharing", "steps", requestId] });

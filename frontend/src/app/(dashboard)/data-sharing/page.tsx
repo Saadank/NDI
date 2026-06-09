@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Plus, Search, X } from "lucide-react";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { RequestsTable } from "@/components/features/data-sharing/RequestsTable";
 import { useRequests } from "@/lib/hooks/data-sharing/useRequests";
@@ -11,7 +12,23 @@ import { useAuthStore } from "@/lib/store/auth.store";
 type Tab = "mine" | "incoming" | "all";
 
 export default function DataSharingPage() {
-  const [tab, setTab] = useState<Tab>("mine");
+  // useSearchParams must sit under a Suspense boundary in the app router.
+  return (
+    <Suspense fallback={null}>
+      <DataSharingPageInner />
+    </Suspense>
+  );
+}
+
+function DataSharingPageInner() {
+  const searchParams = useSearchParams();
+  const initialTab: Tab =
+    searchParams.get("tab") === "all"
+      ? "all"
+      : searchParams.get("tab") === "incoming"
+        ? "incoming"
+        : "mine";
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [search, setSearch] = useState("");
   const [actionRequired, setActionRequired] = useState(false);
 

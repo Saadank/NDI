@@ -54,6 +54,17 @@ export function deleteWorkflowTemplate(
   return del<DeleteTemplateResponse>(`${BASE}/templates/${id}`);
 }
 
+// Activation is exclusive per scope: activating one template deactivates any
+// other active template sharing its sharing_type + data_classification, so for
+// the default "All / All" scope only one workflow is active at a time.
+export function activateWorkflowTemplate(id: string): Promise<WorkflowTemplate> {
+  return post<WorkflowTemplate>(`${BASE}/templates/${id}/activate`);
+}
+
+export function deactivateWorkflowTemplate(id: string): Promise<WorkflowTemplate> {
+  return post<WorkflowTemplate>(`${BASE}/templates/${id}/deactivate`);
+}
+
 export interface BackfillResponse {
   backfilled: number;
   skipped: { request_id: string; reason: string }[];

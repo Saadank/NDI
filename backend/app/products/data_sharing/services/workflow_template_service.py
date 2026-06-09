@@ -68,6 +68,18 @@ class WorkflowTemplateService:
         steps_list = await self.repo.find_template_steps(template_id)
         return {**template, "steps": steps_list}
 
+    async def activate_template(self, template_id: UUID, tenant_id: int, auth_user: AuthUser) -> dict:
+        """Activate a template and deactivate any other active template that
+        shares its scope (sharing_type + data_classification). For the common
+        'All / All classifications' scope this enforces a single active
+        workflow tenant-wide — only one can be the default at a time."""
+        require(can_manage_workflows(auth_user), "You do not have permission to manage workflows")
+        template = await self.repo.update_template(template_id, is_active=True)
+        await self.repo.deactivate_others(
+            tenant_id, template.get("sharing_type"), template.get("data_classification"), template_id,
+        )
+        return template
+
     async def deactivate_template(self, template_id: UUID, auth_user: AuthUser) -> dict:
         require(can_manage_workflows(auth_user), "You do not have permission to manage workflows")
         return await self.repo.update_template(template_id, is_active=False)

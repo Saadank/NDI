@@ -1,5 +1,6 @@
 import { get, post } from "@/lib/api/client";
 import type { WorkflowStep } from "@/lib/types/data-sharing/step.types";
+import type { RequiredDocument } from "@/lib/types/data-sharing/request.types";
 
 // Steps live under TWO different prefixes on the backend:
 //   GET  …/workflows/requests/{request_id}/steps      → list steps for a request
@@ -38,9 +39,13 @@ export function requestChangesOnStep(
   requestId: string,
   stepId: string,
   comment: string,
+  requiredDocuments?: RequiredDocument[],
 ): Promise<WorkflowStep> {
-  return post<WorkflowStep, { comment: string }>(
-    `${REQ_BASE}/${requestId}/steps/${stepId}/request-changes`,
-    { comment },
-  );
+  return post<
+    WorkflowStep,
+    { comment: string; required_documents?: RequiredDocument[] }
+  >(`${REQ_BASE}/${requestId}/steps/${stepId}/request-changes`, {
+    comment,
+    ...(requiredDocuments ? { required_documents: requiredDocuments } : {}),
+  });
 }

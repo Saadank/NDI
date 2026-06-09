@@ -3,9 +3,18 @@
 import { useState } from "react";
 import { CircleX, Flag, MessageSquare, TriangleAlert, X } from "lucide-react";
 
+import type { RequiredDocument } from "@/lib/types/data-sharing/request.types";
+import { RequiredDocsPicker } from "../RequiredDocsPicker";
+
 interface ModalProps {
   onClose: () => void;
   onConfirm: (value: string) => Promise<void>;
+  pending: boolean;
+}
+
+interface RequestChangesModalProps {
+  onClose: () => void;
+  onConfirm: (comment: string, requiredDocuments: RequiredDocument[]) => Promise<void>;
   pending: boolean;
 }
 
@@ -21,12 +30,13 @@ function ModalShell({ onClose, children }: { onClose: () => void; children: Reac
 
 const REJECT_REASONS = ["Insufficient justification", "PDPL basis unclear"];
 
-export function RequestChangesModal({ onClose, onConfirm, pending }: ModalProps) {
+export function RequestChangesModal({ onClose, onConfirm, pending }: RequestChangesModalProps) {
   const [comment, setComment] = useState("");
+  const [requiredDocs, setRequiredDocs] = useState<RequiredDocument[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const submit = async () => {
     if (!comment.trim()) { setErr("Comment is required."); return; }
-    try { await onConfirm(comment.trim()); } catch (e) { setErr(e instanceof Error ? e.message : "Failed"); }
+    try { await onConfirm(comment.trim(), requiredDocs); } catch (e) { setErr(e instanceof Error ? e.message : "Failed"); }
   };
   return (
     <ModalShell onClose={onClose}>
@@ -53,6 +63,7 @@ export function RequestChangesModal({ onClose, onConfirm, pending }: ModalProps)
           style={{ backgroundColor: "#F9FAFB", border: "1px solid #E5E7EB", color: "#374151" }}
         />
       </div>
+      <RequiredDocsPicker value={requiredDocs} onChange={setRequiredDocs} />
       <div className="flex items-start gap-2 rounded-md p-3 text-[12px]" style={{ backgroundColor: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E" }}>
         <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: "#D97706" }} />
         <span>If the requester changes classification, legal basis, personal data flag, or data selection, DPO review will re-trigger automatically.</span>

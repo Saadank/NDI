@@ -48,6 +48,13 @@ export interface ExternalRecipientInline {
   phone?: string;
 }
 
+// A document a reviewer asked the requester to provide before resubmitting
+// (issue 5). `satisfied` is ticked by the requester as they attach the file.
+export interface RequiredDocument {
+  label: string;
+  satisfied: boolean;
+}
+
 // PUSH/EXTERNAL wizard collects DPA text inline so the steward can
 // edit the canned agreement before sending. The backend ignores this
 // for now (the recipient's t_external_recipients row owns the DPA);
@@ -110,6 +117,26 @@ export interface ShareRequest {
   // Annotated by the list endpoint (`find_for_user`); absent on
   // single-request GETs.
   current_step?: CurrentStepSummary | null;
+  // Checklist of supporting documents a reviewer requested (issue 5).
+  required_documents?: RequiredDocument[] | null;
+}
+
+// Body for PATCH /api/v1/products/data-sharing/requests/{id}. Every field
+// optional — only supplied fields are written.
+export interface UpdateShareRequestBody {
+  title?: string;
+  purpose?: string;
+  legal_basis?: string;
+  data_classification?: DataClassification;
+  personal_data_involved?: boolean;
+  estimated_data_subjects?: number | null;
+  data_subject_categories?: string[] | null;
+  source_description?: string | null;
+  dpia_confirmed?: boolean;
+  selection_mode?: SelectionMode | null;
+  selected_items?: SelectedTableItem[] | null;
+  custom_sql?: string | null;
+  required_documents?: RequiredDocument[] | null;
 }
 
 // Body for POST /api/v1/products/data-sharing/requests/.

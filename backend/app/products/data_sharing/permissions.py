@@ -82,6 +82,26 @@ def can_submit_request(auth_user: AuthUser, request: dict) -> bool:
     return False
 
 
+def can_edit_request(auth_user: AuthUser, request: dict) -> bool:
+    """Who may edit a request's content + supporting files.
+
+    Only the owner of an in-progress draft may edit it, and only while it is
+    still editable (draft, or sent back via changes_requested). Once it is
+    submitted/approved/closed the content is frozen.
+    """
+    if _is_platform_admin(auth_user):
+        return False
+    if request.get("status") not in ("draft", "changes_requested"):
+        return False
+    if _is_org_admin(auth_user):
+        return True
+    if _role(auth_user) in (SharingRole.DPO, SharingRole.DATA_OWNER):
+        return request["created_by"] == auth_user.user_id
+    if _role(auth_user) == SharingRole.REQUESTER:
+        return request["requester_id"] == auth_user.user_id
+    return False
+
+
 def can_cancel_request(auth_user: AuthUser, request: dict) -> bool:
     if _is_platform_admin(auth_user):
         return False
@@ -189,12 +209,15 @@ def can_approve_step(auth_user: AuthUser, step: dict, request: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def can_manage_workflows(auth_user: AuthUser) -> bool:
-    """Only Org Admins create / edit / delete their tenant's workflows.
+    """Org Admins and DPOs create / edit / activate / delete their tenant's
+    workflows.
 
-    Platform Admin can activate products but not design a tenant's workflows
-    (BRD §2.1 CRITICAL — no visibility into data-controller configuration).
+    The DPO is the data-controller's privacy authority and owns the approval
+    chain design alongside the Org Admin. Platform Admin can activate products
+    but not design a tenant's workflows (BRD §2.1 CRITICAL — no visibility into
+    data-controller configuration).
     """
-    return _is_org_admin(auth_user)
+    return _is_org_admin(auth_user) or _role(auth_user) == SharingRole.DPO
 
 
 def can_view_workflows(auth_user: AuthUser) -> bool:

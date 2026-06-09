@@ -67,6 +67,33 @@ async def create_request(
     return await service.create_draft(body.model_dump(), auth_user)
 
 
+class RequiredDocumentItem(BaseModel):
+    label: str
+    satisfied: bool = False
+
+
+class UpdateShareRequestBody(BaseModel):
+    """Partial update for an editable (draft / changes_requested) request.
+
+    Every field is optional — only the ones supplied are written. Structural
+    columns (requester, groups, direction, tenant routing) are intentionally
+    not editable here.
+    """
+    title: str | None = Field(default=None, min_length=1)
+    purpose: str | None = Field(default=None, min_length=1)
+    legal_basis: str | None = None
+    data_classification: DataClassification | None = None
+    personal_data_involved: bool | None = None
+    estimated_data_subjects: int | None = None
+    data_subject_categories: list[str] | None = None
+    source_description: str | None = None
+    dpia_confirmed: bool | None = None
+    selection_mode: Literal["tables", "query"] | None = None
+    selected_items: list[dict] | None = None
+    custom_sql: str | None = None
+    required_documents: list[RequiredDocumentItem] | None = None
+
+
 @router.get("/{request_id}")
 async def get_request(
     request_id: UUID,
@@ -74,6 +101,19 @@ async def get_request(
     service: ShareRequestService = Depends(get_share_request_service),
 ):
     return await service.get_request(request_id, auth_user)
+
+
+@router.patch("/{request_id}")
+async def update_request(
+    request_id: UUID,
+    body: UpdateShareRequestBody,
+    auth_user: AuthUser = Depends(get_current_user),
+    service: ShareRequestService = Depends(get_share_request_service),
+):
+    # exclude_unset so an omitted field is left untouched (true PATCH semantics).
+    return await service.update_request(
+        request_id, body.model_dump(exclude_unset=True), auth_user
+    )
 
 
 @router.post("/{request_id}/submit")

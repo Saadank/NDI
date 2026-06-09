@@ -7,7 +7,9 @@ import { toast } from "sonner";
 
 import { post, put } from "@/lib/api/client";
 import {
+  activateWorkflowTemplate,
   backfillWorkflows,
+  deactivateWorkflowTemplate,
   deleteWorkflowTemplate,
   getWorkflowTemplates,
   getWorkflowTemplate,
@@ -111,6 +113,41 @@ function StatusBadge({ active }: { active: boolean }) {
     >
       {active ? "Active" : "Draft"}
     </span>
+  );
+}
+
+// Interactive status pill for authors. Green "Active" deactivates on click;
+// grey "Activate" turns it on. Activation is exclusive per scope, so turning
+// one on flips any other active workflow in the same scope off.
+function ActiveToggle({
+  active,
+  pending,
+  onToggle,
+}: {
+  active: boolean;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={pending}
+      title={active ? "Active — click to deactivate" : "Inactive — click to activate"}
+      className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold disabled:opacity-50"
+      style={
+        active
+          ? { backgroundColor: "#F0FAF0", color: "#449235" }
+          : { backgroundColor: "#F5F5F5", color: "#9E9E9E", border: "1px solid #EEEEEE" }
+      }
+    >
+      {pending ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: active ? "#449235" : "#BABABA" }} />
+      )}
+      {active ? "Active" : "Activate"}
+    </button>
   );
 }
 
@@ -443,9 +480,12 @@ function WorkflowEditorPanel({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  // BRD §2.1: Org Admin authors workflows; DPO views only.
+  // Org Admin and DPO author workflows (mirrors backend can_manage_workflows).
+  // Platform Admin stays read-only — it has no product_role and the backend
+  // rejects it (BRD §2.1: no visibility into data-controller configuration).
   const platformRole = useAuthStore((s) => s.user?.platform_role);
-  const canEdit = platformRole === "org_admin";
+  const productRole = useAuthStore((s) => s.user?.product_role);
+  const canEdit = platformRole === "org_admin" || productRole === "dpo";
   const templateQuery = useQuery({
     queryKey: ["data-sharing", "workflow-template", templateId],
     queryFn: () => getWorkflowTemplate(templateId),
@@ -509,7 +549,11 @@ function WorkflowEditorPanel({
         name: templateQuery.data?.name ?? "",
         sharing_type: sharingType || null,
         data_classification: classification || null,
-        is_active: true,
+        // Preserve the template's current active/inactive state on save —
+        // activation is controlled explicitly via the list toggle, not as a
+        // side effect of editing steps. (Was hardcoded true, which silently
+        // re-activated a deactivated workflow on every save.)
+        is_active: templateQuery.data?.is_active ?? true,
         // apply_to_active + justification are UI-only audit-trail breadcrumbs
         // that the backend currently ignores. Sent as extras for forward-
         // compatibility with the audit endpoint when it lands.
@@ -822,11 +866,12 @@ function WorkflowEditorPanel({
 
 export default function WorkflowEditorPage() {
   const { isReady } = useRoleGuard({ allow: ["dpo", "org_admin", "platform_admin"] });
-  // Per backend permissions (BRD §2.1) only Org Admin can author workflows.
-  // DPO + Platform Admin get a read-only view of this same page so they can
-  // inspect templates without being able to mutate them.
+  // Org Admin and DPO can author workflows (mirrors backend
+  // can_manage_workflows). Platform Admin gets a read-only view of this page —
+  // it can inspect templates but not mutate them (BRD §2.1).
   const platformRole = useAuthStore((s) => s.user?.platform_role);
-  const canEdit = platformRole === "org_admin";
+  const productRole = useAuthStore((s) => s.user?.product_role);
+  const canEdit = platformRole === "org_admin" || productRole === "dpo";
   const [editId, setEditId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const qc = useQueryClient();
@@ -877,6 +922,24 @@ export default function WorkflowEditorPage() {
       const msg = e instanceof Error ? e.message : "Failed to delete workflow";
       setListDeleteError(msg);
       toast.error(msg);
+    },
+  });
+
+  // Activate / deactivate a workflow. Activation is exclusive (one active per
+  // scope), so the backend may flip other rows too — we invalidate the whole
+  // list to pick that up rather than patching a single row.
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, activate }: { id: string; activate: boolean }) =>
+      activate ? activateWorkflowTemplate(id) : deactivateWorkflowTemplate(id),
+    onMutate: ({ id }) => setTogglingId(id),
+    onSettled: () => setTogglingId(null),
+    onSuccess: (_res, { activate }) => {
+      qc.invalidateQueries({ queryKey: ["data-sharing", "workflow-templates"] });
+      toast.success(activate ? "Workflow activated" : "Workflow deactivated");
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Failed to update workflow status");
     },
   });
 
@@ -1041,7 +1104,17 @@ export default function WorkflowEditorPage() {
                   {formatDate(t.created_at)}
                 </span>
                 <div className="w-[90px]">
-                  <StatusBadge active={t.is_active} />
+                  {canEdit ? (
+                    <ActiveToggle
+                      active={t.is_active}
+                      pending={toggleActiveMutation.isPending && togglingId === t.id}
+                      onToggle={() =>
+                        toggleActiveMutation.mutate({ id: t.id, activate: !t.is_active })
+                      }
+                    />
+                  ) : (
+                    <StatusBadge active={t.is_active} />
+                  )}
                 </div>
                 <div className="flex w-[80px] items-center gap-1">
                   <button
