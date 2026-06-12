@@ -63,6 +63,30 @@ except ModuleNotFoundError as _ndmo_err:
     )
     _NDMO_AVAILABLE = False
 
+# Business Glossary — registered INDEPENDENTLY of the ML-heavy NDMO core.
+# Slice 1 has no openai/paddleocr/qdrant dependency, so the glossary stays
+# available even in a DQ-only / lightweight dev environment where the `ndmo`
+# uv extra isn't installed.  Still gated by the NDMO product entitlement.
+try:
+    from app.products.ndmo_compliance.dependencies import (
+        require_ndmo_compliance as _require_ndmo_glossary,
+    )
+    from app.products.ndmo_compliance.routers import (
+        glossary_domains as ndmo_glossary_domains,
+        glossary_terms as ndmo_glossary_terms,
+        glossary_assist as ndmo_glossary_assist,
+        glossary_extraction as ndmo_glossary_extraction,
+        glossary_import_export as ndmo_glossary_import_export,
+    )
+    _NDMO_GLOSSARY_AVAILABLE = True
+except ModuleNotFoundError as _glossary_err:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "NDMO Business Glossary routes disabled — missing dependency: %s.",
+        _glossary_err.name,
+    )
+    _NDMO_GLOSSARY_AVAILABLE = False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -150,6 +174,17 @@ if _NDMO_AVAILABLE:
         ndmo_webhooks.router,
         prefix="/api/v1/products/ndmo-compliance",
     )
+
+# Business Glossary — same /ndmo-compliance prefix + entitlement gate, but
+# registered separately so it survives a lightweight env without the ML extra.
+if _NDMO_GLOSSARY_AVAILABLE:
+    for r in [ndmo_glossary_domains, ndmo_glossary_terms, ndmo_glossary_assist,
+              ndmo_glossary_extraction, ndmo_glossary_import_export]:
+        app.include_router(
+            r.router,
+            prefix="/api/v1/products/ndmo-compliance",
+            dependencies=[Depends(_require_ndmo_glossary)],
+        )
 
 
 @app.get("/health")

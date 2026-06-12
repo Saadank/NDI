@@ -4,11 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bell,
+  BookText,
   Building2,
   CalendarOff,
   Database,
   FileSpreadsheet,
   FileText,
+  FolderTree,
   GitBranch,
   Inbox,
   LayoutDashboard,
@@ -31,6 +33,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAuthStore } from "@/lib/store/auth.store";
 import { useNotifications } from "@/lib/hooks/platform/useNotifications";
 import { useRequests } from "@/lib/hooks/data-sharing/useRequests";
+import { useGlossaryRole } from "@/lib/hooks/ndmo-compliance/useGlossary";
 import { useLogout } from "@/lib/hooks/platform/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +48,7 @@ interface NavItem {
   href: string;
   icon: LucideIcon;
   match?: Matcher;
-  badgeKey?: "requests" | "approvals";
+  badgeKey?: "requests" | "approvals" | "glossaryReviews";
   tooltip?: string;
 }
 
@@ -167,6 +170,44 @@ const ITEM = {
     match: (p: string) => p.startsWith("/ndmo-compliance/settings"),
   } as NavItem,
 
+  // NDMO — Business Glossary (LTR/English subtree).  Visibility is gated by
+  // the caller's derived glossary role (see the NDMO_GLOSSARY_NAV builder).
+  glossaryBrowse: {
+    label: "Glossary",
+    href: "/ndmo-compliance/glossary",
+    icon: BookText,
+    match: (p: string) =>
+      p === "/ndmo-compliance/glossary" ||
+      (p.startsWith("/ndmo-compliance/glossary/") &&
+        !p.startsWith("/ndmo-compliance/glossary/review") &&
+        !p.startsWith("/ndmo-compliance/glossary/domains")),
+  } as NavItem,
+  glossaryReview: {
+    label: "Review Queue",
+    href: "/ndmo-compliance/glossary/review",
+    icon: Inbox,
+    badgeKey: "glossaryReviews",
+    match: (p: string) => p.startsWith("/ndmo-compliance/glossary/review"),
+  } as NavItem,
+  glossaryDomains: {
+    label: "Domains",
+    href: "/ndmo-compliance/glossary/domains",
+    icon: FolderTree,
+    match: (p: string) => p.startsWith("/ndmo-compliance/glossary/domains"),
+  } as NavItem,
+  glossaryExtraction: {
+    label: "DB Extraction",
+    href: "/ndmo-compliance/glossary/extraction",
+    icon: Database,
+    match: (p: string) => p.startsWith("/ndmo-compliance/glossary/extraction"),
+  } as NavItem,
+  glossaryImportExport: {
+    label: "Import / Export",
+    href: "/ndmo-compliance/glossary/import",
+    icon: FileSpreadsheet,
+    match: (p: string) => p.startsWith("/ndmo-compliance/glossary/import"),
+  } as NavItem,
+
   // Footer
   allProducts: { label: "All Products", href: "/", icon: LayoutGrid } as NavItem,
   productPortal: { label: "Product Portal", href: "/", icon: LayoutGrid } as NavItem,
@@ -222,6 +263,32 @@ const PRIMARY_NAV: Record<EffectiveRole, NavSection[]> = {
 // NDMO-only sidebar regardless of their role.  This keeps the product
 // experience clean (no governance/admin items while doing assessment work).
 const NDMO_PRIMARY_NAV: NavSection[] = [NDMO_SECTION];
+
+// Business Glossary section — built per glossary role:
+//   - Glossary (browse): EVERY NDMO user (all users can browse/search the
+//     published glossary — BRD FR-040), including those with no assigned domain
+//   - Domains: Org Admin, Data Owners, and Data Stewards (stewards can add
+//     sub-domains in domains they steward)
+//   - Review Queue: Data Owners + Org Admin only (badge = pending count)
+function buildGlossarySection(
+  effectiveRole: string | undefined,
+): NavSection {
+  const items: NavItem[] = [ITEM.glossaryBrowse];
+  const isOwnerOrAdmin =
+    effectiveRole === "org_admin" || effectiveRole === "glossary_data_owner";
+  const isSteward = effectiveRole === "glossary_data_steward";
+  if (isOwnerOrAdmin) {
+    items.push(ITEM.glossaryReview);
+  }
+  if (isOwnerOrAdmin || isSteward) {
+    items.push(ITEM.glossaryDomains);
+  }
+  if (isOwnerOrAdmin) {
+    // DB Extraction + Import/Export are Org-Admin / Data-Owner only.
+    items.push(ITEM.glossaryExtraction, ITEM.glossaryImportExport);
+  }
+  return { title: "BUSINESS GLOSSARY", items };
+}
 
 const FOOTER_NAV: Record<EffectiveRole, NavItem[]> = {
   requester: [ITEM.allProducts, ITEM.notifications, ITEM.profile],
@@ -314,7 +381,18 @@ export function Sidebar() {
   // sidebar regardless of their role.  Footer (Product Portal, Profile, …)
   // is still role-based so they can navigate back to other products.
   const isNdmoRoute = pathname.startsWith("/ndmo-compliance");
-  const primary = isNdmoRoute ? NDMO_PRIMARY_NAV : PRIMARY_NAV[role];
+  // Glossary role drives the glossary nav section + review-queue badge.
+  // Only fetched while in the NDMO product to avoid 403 noise elsewhere.
+  const glossaryRoleQuery = useGlossaryRole({ enabled: isNdmoRoute });
+  const glossaryRole = glossaryRoleQuery.data;
+  const glossarySection = isNdmoRoute
+    ? buildGlossarySection(glossaryRole?.effective_role)
+    : null;
+  const primary = isNdmoRoute
+    ? glossarySection
+      ? [...NDMO_PRIMARY_NAV, glossarySection]
+      : NDMO_PRIMARY_NAV
+    : PRIMARY_NAV[role];
   const footer = FOOTER_NAV[role];
 
   const logoutMutation = useLogout();
@@ -342,6 +420,7 @@ export function Sidebar() {
   const getBadge = (item: NavItem) => {
     if (item.badgeKey === "requests") return myRequestsBadge;
     if (item.badgeKey === "approvals") return approvalsBadge;
+    if (item.badgeKey === "glossaryReviews") return glossaryRole?.review_queue_count || undefined;
     return undefined;
   };
 
